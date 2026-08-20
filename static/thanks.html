@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Booked · Dr. Matt Brown</title>
+  <script>(function(){try{var k="dmb-theme";var s=localStorage.getItem(k);var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var t=(s==="light"||s==="dark")?s:(d?"dark":"light");var r=document.documentElement;if(t==="dark")r.classList.add("dark");else r.classList.remove("dark");r.style.colorScheme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/booker.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand brand-split">
+      <div class="brand-side">
+        <a class="brand-logo-link" href="/" aria-label="Book home">
+          <img class="brand-logo" src="/api/practice/logo" width="120" height="110" alt="Practice logo" />
+        </a>
+      </div>
+      <div class="brand-text">
+        <div class="kicker">Dr. Matt Brown · Telehealth</div>
+      <h1>You're booked</h1>
+      <p id="summary">A confirmation email with a cancel link is on the way.</p>
+        
+      </div>
+    </div>
+    <div class="card">
+      <div class="msg ok">Your visit is on the practice calendar.</div>
+      <div class="thanks-actions">
+        <p id="cal-wrap" hidden>
+          <a id="cal-link" class="btn" href="#">Add to calendar</a>
+        </p>
+        <p id="cancel-wrap" hidden>
+          <a id="cancel-link" class="btn secondary" href="#">Cancel this visit</a>
+        </p>
+        <p>
+          <a class="btn secondary" href="/">Back to booking</a>
+        </p>
+      </div>
+    </div>
+    <p class="foot">Join: <a href="https://meet.drmattbrown.com">meet.drmattbrown.com</a></p>
+  </div>
+  <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark mode" title="Dark mode">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5z" />
+    </svg>
+  </button>
+  <script src="/static/js/theme.js"></script>
+  <script>
+    const p = new URLSearchParams(location.search);
+    const bits = [];
+    if (p.get("name")) bits.push(p.get("name"));
+    if (p.get("type")) bits.push(p.get("type"));
+    if (p.get("when")) bits.push(p.get("when"));
+    if (bits.length) document.getElementById("summary").textContent = bits.join(" · ") + " — confirmation email sent with a cancel link.";
+    const price = p.get("price");
+    if (price) {
+      const pl = document.getElementById("price-line");
+      if (pl) { pl.hidden = false; pl.textContent = "Fee: " + price + " (due on the day of the visit)."; }
+    }
+    const c = p.get("cancel");
+    if (c) {
+      const a = document.getElementById("cancel-link");
+      a.href = c;
+      document.getElementById("cancel-wrap").hidden = false;
+      try {
+        const tok = new URL(c, location.origin).searchParams.get("token");
+        if (tok) {
+          const cal = document.getElementById("cal-link");
+          cal.href = "/cal/visit.ics?token=" + encodeURIComponent(tok);
+          document.getElementById("cal-wrap").hidden = false;
+        }
+      } catch (e) {}
+    }
+    const ics = p.get("ics");
+    if (ics) {
+      const cal = document.getElementById("cal-link");
+      cal.href = ics;
+      document.getElementById("cal-wrap").hidden = false;
+    }
+  </script>
+</body>
+</html>

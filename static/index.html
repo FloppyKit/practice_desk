@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Book · Dr. Matt Brown</title>
+  <script>(function(){try{var k="dmb-theme";var s=localStorage.getItem(k);var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var t=(s==="light"||s==="dark")?s:(d?"dark":"light");var r=document.documentElement;if(t==="dark")r.classList.add("dark");else r.classList.remove("dark");r.style.colorScheme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/booker.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand brand-split">
+      <div class="brand-side">
+        <a class="brand-logo-link" href="/" aria-label="Book home">
+          <img class="brand-logo" src="/api/practice/logo" width="120" height="110" alt="Practice logo" />
+        </a>
+      </div>
+      <div class="brand-text">
+        <div class="kicker">Psychiatrist · Telehealth · IL · KS · MO</div>
+      <h1>Book a visit</h1>
+      <p>Choose the visit type that fits. Times come from the live practice calendar.</p>
+      <p class="loc-line">
+        <strong>Location:</strong> Video visit (telehealth) ·
+        <a href="https://meet.drmattbrown.com">meet.drmattbrown.com</a>
+      </p>
+        
+      </div>
+    </div>
+    <div class="grid cols-3" id="type-cards">
+      <a class="type-card" href="/new-client">
+        <h2>New client</h2>
+        <div class="meta">90 minutes · first consultation</div>
+        <div class="price">$600</div>
+        <div class="loc">Video · meet.drmattbrown.com</div>
+        <span class="cta">Book →</span>
+      </a>
+      <a class="type-card" href="/follow-up">
+        <h2>Follow-up</h2>
+        <div class="meta">30 or 60 minutes</div>
+        <div class="price">$265 · $420</div>
+        <div class="loc">Video · meet.drmattbrown.com</div>
+        <span class="cta">Book →</span>
+      </a>
+      <a class="type-card" href="/intro-15">
+        <h2>Get-to-know-you</h2>
+        <div class="meta">15 minutes · fit / coordination</div>
+        <div class="price">No charge</div>
+        <div class="loc">Video · meet.drmattbrown.com</div>
+        <span class="cta">Book →</span>
+      </a>
+    </div>
+    <p class="foot">
+      All visits are <strong>video</strong>. Join at
+      <a href="https://meet.drmattbrown.com">meet.drmattbrown.com</a>
+      · Practice site <a href="https://drmattbrown.com">drmattbrown.com</a>
+      · Payment due on the day of the visit (FSA/HSA, card, ACH, Bitcoin). Out of network — superbill available.
+    </p>
+  </div>
+  <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark mode" title="Dark mode">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5z" />
+    </svg>
+  </button>
+  <script src="/static/js/theme.js"></script>
+  <script>
+    fetch("/api/types").then(function (r) { return r.json(); }).then(function (data) {
+      var list = data.types || [];
+      var box = document.getElementById("type-cards");
+      if (!box || !list.length) return;
+      function esc(s) {
+        return String(s || "").replace(/[&<>"']/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+        });
+      }
+      box.innerHTML = list.map(function (t) {
+        var durs = t.durations || [];
+        var prices = t.prices || {};
+        var meta = durs.length ? durs.join(" or ") + " minutes" : "";
+        var price = durs.map(function (d) { return prices[String(d)] || prices[d] || ""; }).filter(Boolean).join(" · ");
+        var loc = (t.location || "Video").split(" · ")[0];
+        var href = t.path || ("/" + String(t.slug || "").replace(/[^a-z0-9-]/g, ""));
+        return '<a class="type-card" href="' + esc(href) + '">' +
+          "<h2>" + esc(t.title || t.slug) + "</h2>" +
+          '<div class="meta">' + esc(meta) + "</div>" +
+          '<div class="price">' + esc(price || "") + "</div>" +
+          '<div class="loc">' + esc(loc) + "</div>" +
+          '<span class="cta">Book →</span></a>';
+      }).join("");
+    }).catch(function () {});
+  </script>
+</body>
+</html>

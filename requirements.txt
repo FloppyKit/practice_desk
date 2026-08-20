@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+google-auth==2.37.0
+google-api-python-client==2.159.0
+pyyaml==6.0.2
+python-dateutil==2.9.0.post0
+pydantic==2.10.4
+email-validator==2.2.0
+python-multipart==0.0.20
+caldav==1.4.0
+icalendar==6.1.1

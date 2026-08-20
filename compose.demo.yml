@@ -1,0 +1,15 @@
+# Demo stack only — fake data, no Google/CalDAV/Stripe/Twilio/Proton.
+# Run: docker compose -f compose.demo.yml up --build
+services:
+  desk:
+    build: .
+    env_file:
+      - .env.demo
+    ports:
+      - "8090:8090"
+    volumes:
+      - demo-data:/data/demo
+    restart: unless-stopped
+
+volumes:
+  demo-data:

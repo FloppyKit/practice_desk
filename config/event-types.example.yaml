@@ -1,0 +1,52 @@
+# Generic hours for OSS / demo. Live clinic overlay is gitignored.
+timezone: America/Chicago
+
+location: "Video visit (telehealth)"
+location_url: "https://example.invalid/join"
+location_note: "Secure video — join from the confirmation mail."
+
+busy_calendars: []
+
+event_types:
+  new-client:
+    title: New client visit
+    duration_minutes: 90
+    calendar_duration_minutes: 120
+    price_usd: 200
+    price_label: "$200"
+    slot_interval_minutes: 30
+    buffer_before_minutes: 0
+    buffer_after_minutes: 0
+    minimum_notice_minutes: 1440
+    booking_window_days: 30
+    enabled: true
+    public: true
+    weekly_hours:
+      monday:    { start: "09:00", end: "15:00" }
+      tuesday:   { start: "09:00", end: "15:00" }
+      wednesday: { start: "09:00", end: "15:00" }
+      thursday:  { start: "09:00", end: "15:00" }
+      friday:    { start: "09:00", end: "12:00" }
+
+  follow-up:
+    title: Follow-up
+    duration_minutes: [30, 60]
+    price_by_duration:
+      30: 100
+      60: 160
+    price_labels:
+      30: "$100"
+      60: "$160"
+    slot_interval_minutes: 30
+    buffer_before_minutes: 0
+    buffer_after_minutes: 0
+    minimum_notice_minutes: 120
+    booking_window_days: 45
+    enabled: true
+    public: true
+    weekly_hours:
+      monday:    { start: "09:00", end: "17:00" }
+      tuesday:   { start: "09:00", end: "17:00" }
+      wednesday: { start: "09:00", end: "17:00" }
+      thursday:  { start: "09:00", end: "17:00" }
+      friday:    { start: "09:00", end: "15:00" }

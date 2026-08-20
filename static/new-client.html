@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <script>(function(){try{var k="dmb-theme";var s=localStorage.getItem(k);var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var t=(s==="light"||s==="dark")?s:(d?"dark":"light");var r=document.documentElement;if(t==="dark")r.classList.add("dark");else r.classList.remove("dark");r.style.colorScheme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/booker.css" />
+  <title>New client visit · Dr. Matt Brown</title>
+</head>
+<body>
+  <main class="wrap wrap-book">
+    <div class="brand brand-split">
+      <div class="brand-side">
+        <a class="back" href="/">← All booking options</a>
+        <a class="brand-logo-link" href="/" aria-label="Book home">
+          <img class="brand-logo" src="/api/practice/logo" width="120" height="110" alt="Practice logo" />
+        </a>
+        <div class="kicker">Dr. Matt Brown · Telehealth</div>
+      </div>
+      <div class="brand-text">
+<h1>New client visit</h1>
+      <p class="brand-lead">90-minute initial consultation · <strong>$600</strong></p>
+      <p class="loc-line"><strong>Location:</strong> Video visit · <a href="https://meet.drmattbrown.com">meet.drmattbrown.com</a></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="msg" class="msg info" hidden></div>
+      <div class="picker">
+        <div class="cal-panel">
+          <div class="cal-header">
+            <button type="button" class="cal-nav" id="cal-prev" aria-label="Previous month">‹</button>
+            <span class="cal-month-label" id="cal-month-label"></span>
+            <button type="button" class="cal-nav" id="cal-next" aria-label="Next month">›</button>
+          </div>
+          <div class="cal-weekdays" aria-hidden="true">
+            <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+          </div>
+          <div class="cal-grid" id="cal-grid" role="grid" aria-label="Available dates"></div>
+        </div>
+        <div class="times-panel">
+          <div class="times-header" id="times-header">Select a date</div>
+          <p class="times-sub" id="times-sub">90-minute openings · Chicago time</p>
+          <div id="slots" class="slots" role="listbox" aria-label="Available times"></div>
+        </div>
+      </div>
+
+      <div class="selection-chip selection-chip-inline" id="selection-chip" hidden>
+        <span class="chip-kicker">Selected</span>
+        <span class="chip-main" id="chip-main"></span>
+        <span class="chip-meta" id="chip-meta"></span>
+      </div>
+    </div>
+    <p class="foot">Secure telehealth for IL, KS, and MO. Questions: <a href="https://drmattbrown.com">drmattbrown.com</a></p>
+  </div>
+  <div class="details-modal" id="details-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="details-heading">
+    <button type="button" class="details-modal-backdrop" id="details-modal-backdrop" aria-label="Close"></button>
+    <div class="details-modal-sheet">
+      <div class="details-modal-handle" aria-hidden="true"></div>
+      <div class="details-modal-top">
+        <h2 class="step-title" id="details-heading">Your details</h2>
+        <button type="button" class="details-modal-close" id="details-modal-close" aria-label="Close">×</button>
+      </div>
+      <p class="step-sub">We’ll email a confirmation with a cancel link.</p>
+      <div class="selection-chip" id="modal-selection-chip">
+        <span class="chip-kicker">Selected</span>
+        <span class="chip-main" id="modal-chip-main"></span>
+        <span class="chip-meta" id="modal-chip-meta"></span>
+      </div>
+      <div id="modal-msg" class="msg info" hidden></div>
+      <form id="book-form" class="form">
+        <label>Name<input name="name" required autocomplete="name" /></label>
+        <label>Email<input name="email" type="email" required autocomplete="email" /></label>
+
+        <div class="notify-extra-wrap">
+          <div class="notify-extra-fields"></div>
+          <button type="button" class="notify-add-btn" aria-label="Add another email to notify" onclick="return window.bookerAddNotifyExtra(this)">
+            <span class="notify-add-plus" aria-hidden="true">+</span><span class="notify-add-label">Notify someone else</span>
+          </button>
+        </div>
+
+<label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="Optional — needed for SMS" /></label>
+        <label class="check">
+          <input name="sms_consent" type="checkbox" />
+          <span>I agree to receive SMS texts from Brown Psychiatric Services at this number for appointment reminders, scheduling, and care coordination. Message frequency varies. Message and data rates may apply. Reply STOP to cancel, HELP for help. Consent is not a condition of care. <a href="https://privacy.drmattbrown.com" target="_blank" rel="noopener">Privacy</a> · <a href="https://terms.drmattbrown.com" target="_blank" rel="noopener">Terms</a></span>
+        </label>
+<label>Notes<textarea name="notes" rows="4" placeholder="Optional — non-clinical only"></textarea></label>
+        <button class="btn" id="submit" type="submit" disabled>Confirm booking</button>
+      </form>
+    </div>
+  </main>
+  <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark mode" title="Dark mode">
+    <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+    <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5z" />
+    </svg>
+  </button>
+  
+  <script>
+  (function () {
+    var MAX = 4;
+    function fieldsEl(wrap) {
+      return wrap && wrap.querySelector(".notify-extra-fields");
+    }
+    function count(wrap) {
+      var f = fieldsEl(wrap);
+      return f ? f.querySelectorAll("input[data-notify-extra]").length : 0;
+    }
+    function renumber(wrap) {
+      var f = fieldsEl(wrap);
+      if (!f) return;
+      f.querySelectorAll(".notify-extra-row").forEach(function (row, idx) {
+        var lab = row.querySelector(".notify-extra-field-label");
+        if (lab) lab.textContent = "Extra email " + (idx + 1);
+      });
+      var btn = wrap.querySelector(".notify-add-btn");
+      if (btn) {
+        btn.hidden = count(wrap) >= MAX;
+        btn.disabled = count(wrap) >= MAX;
+      }
+    }
+    window.bookerAddNotifyExtra = function (btn) {
+      try {
+        var wrap = (btn && btn.closest && btn.closest(".notify-extra-wrap")) || document.querySelector(".notify-extra-wrap");
+        if (!wrap) return false;
+        var fields = fieldsEl(wrap);
+        if (!fields || count(wrap) >= MAX) return false;
+        var idx = count(wrap) + 1;
+        var row = document.createElement("div");
+        row.className = "notify-extra-row";
+        row.innerHTML =
+          '<div class="notify-extra-field-label">Extra email ' + idx + "</div>" +
+          '<div class="notify-extra-row-inner">' +
+          '<input type="email" data-notify-extra="1" autocomplete="email" placeholder="name@example.com" />' +
+          '<button type="button" class="notify-remove-btn" aria-label="Remove this email" onclick="return window.bookerRemoveNotifyExtra(this)">×</button>' +
+          "</div>";
+        fields.appendChild(row);
+        renumber(wrap);
+        var input = row.querySelector("input");
+        if (input) input.focus();
+      } catch (e) {
+        console.error(e);
+      }
+      return false;
+    };
+    window.bookerRemoveNotifyExtra = function (btn) {
+      try {
+        var wrap = btn && btn.closest && btn.closest(".notify-extra-wrap");
+        var row = btn && btn.closest && btn.closest(".notify-extra-row");
+        if (row) row.remove();
+        if (wrap) renumber(wrap);
+      } catch (e) {
+        console.error(e);
+      }
+      return false;
+    };
+  })();
+  </script>
+
+  <script src="/static/js/theme.js"></script>
+  <script type="module">
+    import { initBooker } from "/static/js/booker.js?v=prefill1";
+    initBooker({ type: "new-client", title: "New client visit", defaultDuration: 90, price: "$600", location: "Video · meet.drmattbrown.com" });
+  </script>
+</body>
+</html>

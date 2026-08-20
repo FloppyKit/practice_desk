@@ -1,0 +1,7 @@
+{
+  "title": "Addendum",
+  "sections": [
+    {"id": "dos", "label": "Date of service", "type": "date"},
+    {"id": "addendum", "label": "Addendum", "type": "paragraph"}
+  ]
+}

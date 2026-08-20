@@ -1,0 +1,3777 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#111111" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Desk" />
+  <link rel="manifest" href="/static/desk.webmanifest" />
+  <link rel="apple-touch-icon" href="/static/logo.png" />
+  <title>Practice desk · Dr. Matt Brown</title>
+  <script>(function(){try{var k="dmb-theme";var s=localStorage.getItem(k);var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var t=(s==="light"||s==="dark")?s:(d?"dark":"light");var r=document.documentElement;if(t==="dark")r.classList.add("dark");else r.classList.remove("dark");r.style.colorScheme=t;}catch(e){}})();</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/booker.css" />
+  <style>
+    .desk-row { display:flex; flex-wrap:wrap; gap:0.65rem 1rem; align-items:center; justify-content:space-between; padding:0.9rem 0; border-top:1px solid var(--border); }
+    .desk-row:first-child { border-top:0; }
+    .desk-meta { font-size:0.85rem; color:var(--muted); }
+    .desk-actions { display:flex; flex-wrap:wrap; gap:0.4rem; }
+    .desk-actions .btn { font-size:0.82rem; padding:0.45rem 0.75rem; }
+    label.field { display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted); margin:0 0 0.75rem; }
+    label.field input, label.field select, label.field textarea { font:inherit; color:var(--foreground); background:var(--background); border:1px solid var(--border); border-radius:0.6rem; padding:0.55rem 0.7rem; }
+    .secret-bar { display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem; }
+    .secret-bar input { flex:1; }
+    #msg { margin:0.75rem 0; font-size:0.9rem; }
+    html, body { height: 100%; }
+    body {
+      display: flex; flex-direction: column;
+      min-height: 100dvh; max-height: 100dvh; overflow: hidden;
+    }
+    .wrap-desk {
+      flex: 1 1 auto; min-height: 0; width: 100%;
+      max-width: 110rem;
+      padding: 0.55rem 0.85rem 0.65rem;
+      overflow: hidden; box-sizing: border-box;
+      display: flex; flex-direction: column;
+    }
+    html.desk-hero-fill .wrap-desk { max-width: none; }
+    .week-nav { display:flex; gap:0.5rem; align-items:center; margin-bottom:0.45rem; flex-wrap:wrap; }
+    .week-nav-range, .week-nav-tools, .week-nav-more { display:flex; gap:0.4rem; align-items:center; }
+    .week-arrow {
+      width:1.85rem; height:1.85rem; padding:0; display:inline-flex; align-items:center; justify-content:center;
+      font-size:0.9rem; line-height:1;
+    }
+    .week-gear { width:1.05rem; height:1.05rem; display:block; }
+    .desk-banner {
+      position:relative; flex:0 0 auto; z-index:50;
+      display:flex; align-items:center; justify-content:space-between;
+      gap:0.5rem 0.85rem; flex-wrap:wrap;
+      padding:0.45rem 0.85rem;
+      background:color-mix(in srgb, var(--surface, #fff) 92%, transparent);
+      border-bottom:1px solid var(--border);
+      backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    }
+    .desk-banner-left, .desk-banner-right {
+      display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; min-width:0;
+    }
+    .desk-banner-title {
+      font-size:1.02rem; font-weight:600; letter-spacing:-0.02em;
+      margin:0 0.15rem 0 0.1rem; white-space:nowrap;
+    }
+    .desk-banner .theme-toggle {
+      position:static; top:auto; right:auto; left:auto;
+      width:2.25rem; height:2.25rem; box-shadow:none;
+    }
+    .desk-banner .btn {
+      font-size:0.8rem; padding:0.38rem 0.7rem; margin:0;
+    }
+    .desk-banner .btn.is-on,
+    .desk-banner .btn[aria-pressed="true"] {
+      background:var(--foreground); color:var(--background); border-color:var(--foreground);
+    }
+    .desk-banner #btn-leave-banner[hidden] { display:none !important; }
+    #video-card.is-pip {
+      position:fixed; z-index:45;
+      width:min(22rem, 46vw); height:min(13.5rem, 28vh);
+      right:0.75rem; bottom:0.75rem;
+      border-radius:0.85rem; box-shadow:0 16px 40px rgba(0,0,0,.28);
+      flex:none !important; min-height:0 !important; max-height:none !important;
+    }
+    #video-card.is-pip .video-bar { padding:0.35rem 0.5rem; }
+    #video-card.is-pip .video-bar-right .host-bar-btn { font-size:0.72rem; padding:0.2rem 0.4rem; }
+    .desk-more { position:relative; }
+    .desk-more-btn {
+      width:2.25rem; height:2.25rem; padding:0;
+      display:inline-flex; align-items:center; justify-content:center;
+    }
+    .desk-more-icon { display:flex; flex-direction:column; justify-content:center; gap:3px; width:14px; }
+    .desk-more-icon i { display:block; height:1.5px; background:currentColor; border-radius:1px; }
+    .desk-more-menu {
+      position:fixed; z-index:80;
+      min-width:10.5rem; padding:0.3rem;
+      background:var(--surface, #fff); color:var(--foreground);
+      border:1px solid var(--border); border-radius:0.65rem;
+      box-shadow:0 12px 28px rgba(0,0,0,.14);
+    }
+    .desk-more-menu[hidden] { display:none; }
+    .desk-more-menu button {
+      display:block; width:100%; text-align:left; font:inherit; font-size:0.82rem;
+      padding:0.42rem 0.6rem; margin:0; border:0; background:none; color:inherit;
+      border-radius:0.45rem; cursor:pointer;
+    }
+    .desk-more-menu button:hover { background:color-mix(in srgb, var(--foreground) 8%, transparent); }
+    .desk-more-menu button.is-on { font-weight:600; }
+    .skip-link {
+      position:absolute; left:0.6rem; top:-3rem; z-index:200;
+      padding:0.4rem 0.7rem; background:var(--foreground); color:var(--background);
+      border-radius:0.4rem; font:inherit; font-size:0.85rem; text-decoration:none;
+    }
+    .skip-link:focus { top:0.5rem; }
+    .week-head { display:flex; gap:0.85rem; align-items:flex-start; justify-content:space-between; margin:0 0 0.75rem; flex-wrap:wrap; }
+    .week-head-main { flex:1; min-width:0; }
+    .mini-cal { width:11.6rem; flex:0 0 11.6rem; margin-left:auto; }
+    .mini-cal-nav { display:flex; align-items:center; justify-content:space-between; gap:0.35rem; margin:0 0 0.25rem; }
+    .mini-cal-nav strong { font-size:0.78rem; }
+    .mini-cal-nav button {
+      width:1.7rem; height:1.7rem; border:1px solid var(--border); background:var(--background);
+      color:var(--foreground); border-radius:0.4rem; cursor:pointer; font:inherit; line-height:1;
+    }
+    .mini-cal-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:1px; }
+    .mini-cal-grid .dow { font-size:0.62rem; color:var(--muted); text-align:center; padding:0.1rem 0; }
+    .mini-cal-grid button {
+      border:0; background:none; color:inherit; font:inherit; font-size:0.72rem;
+      padding:0.28rem 0; border-radius:0.35rem; cursor:pointer; line-height:1;
+    }
+    .mini-cal-grid button.out { color:var(--muted); opacity:0.45; }
+    .mini-cal-grid button.in-week { background:color-mix(in srgb, var(--foreground) 8%, transparent); }
+    .mini-cal-grid button.is-today { font-weight:600; box-shadow:inset 0 0 0 1px var(--foreground); }
+    .mini-cal-grid button:hover { background:color-mix(in srgb, var(--foreground) 14%, transparent); }
+    #week.is-pending { opacity:0.5; }
+    #week-card { display:flex; flex-direction:column; overflow:hidden; margin-bottom:0; flex:1 1 0; min-height:18rem; }
+    #week { flex:1 1 auto; min-height:12rem; overflow:auto; display:block; }
+    .grid-cal { display:grid; grid-template-columns: 3.2rem repeat(7, 1fr); border:1px solid var(--border); border-radius:0.75rem; overflow:visible; background:var(--background); min-height:0; }
+    .grid-cal.is-day { grid-template-columns: 3.2rem 1fr; }
+    .cal-span { display:inline-flex; gap:0; margin:0; }
+    .cal-span button { min-width:3.4rem; border-radius:0; }
+    .cal-span button:first-child { border-radius:999px 0 0 999px; }
+    .cal-span button:last-child { border-radius:0 999px 999px 0; }
+    .grid-head { position:sticky; top:0; z-index:2; background:var(--surface, #fff); border-bottom:1px solid var(--border); padding:0.45rem 0.3rem; font-size:0.72rem; text-align:center; color:var(--muted); }
+    .grid-head.today { color:var(--foreground); font-weight:600; }
+    .grid-gutter { border-right:1px solid var(--border); position:relative; }
+    .grid-hour { position:absolute; left:0; right:0; font-size:0.65rem; color:var(--muted); text-align:right; padding-right:0.25rem; line-height:1; }
+    .grid-day { position:relative; border-right:1px solid var(--border); cursor:crosshair; }
+    .grid-day:last-child { border-right:0; }
+    .grid-day.today { background: color-mix(in srgb, var(--foreground) 4%, transparent); }
+    .grid-line { position:absolute; left:0; right:0; border-top:1px solid var(--border); opacity:0.7; }
+    .grid-line.half { border-top-style: dotted; opacity:0.4; }
+    .grid-now { position:absolute; left:0; right:0; height:2px; background:var(--foreground); z-index:3; pointer-events:none; }
+    .grid-ev { position:absolute; left:3px; right:3px; overflow:hidden; border-radius:0.4rem; border:1px solid var(--border); background:var(--surface, #fff); padding:0.2rem 0.35rem; font-size:0.7rem; line-height:1.25; cursor:pointer; z-index:1; }
+    .grid-ev strong { display:block; font-size:0.72rem; }
+    .grid-ev.booker { background:var(--foreground); color:var(--background); border-color:var(--foreground); }
+    .grid-ev.booker .desk-meta { color: inherit; opacity:0.8; }
+    .hits { border:1px solid var(--border); border-radius:0.6rem; max-height:10rem; overflow:auto; margin:0 0 0.55rem; background:var(--background); }
+    .hits button { display:block; width:100%; text-align:left; background:none; border:0; border-bottom:1px solid var(--border); padding:0.45rem 0.6rem; font:inherit; cursor:pointer; color:var(--foreground); font-size:0.82rem; }
+    .hits button:last-child { border-bottom:0; }
+    .hits button:hover { background:var(--slot-bg, #f5f5f5); }
+    html.desk-sheet-open,
+    html.desk-sheet-open body { overflow: hidden; }
+    .book-pop {
+      position: fixed;
+      z-index: 40;
+      width: min(22rem, calc(100vw - 1.5rem));
+      max-height: calc(100dvh - 24px);
+      overflow-x: hidden;
+      overflow-y: hidden;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      background: var(--surface, #fff);
+      color: var(--foreground);
+      border: 1px solid var(--border);
+      border-radius: 0.9rem;
+      box-shadow: 0 16px 40px color-mix(in srgb, #000 18%, transparent);
+      padding: 0.85rem 0.95rem 1rem;
+    }
+    .book-pop-top { display:flex; align-items:flex-start; justify-content:space-between; gap:0.5rem; margin-bottom:0.55rem; }
+    .book-pop-kicker { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); }
+    .book-pop-time { font-size:0.95rem; font-weight:600; margin:0.1rem 0 0; }
+    .book-pop-close { border:0; background:none; font-size:1.2rem; line-height:1; cursor:pointer; color:var(--muted); padding:0 0.15rem; }
+    .book-pop-close:hover { color:var(--foreground); }
+    .seg-mini { display:flex; flex-wrap:wrap; gap:0.3rem; margin:0 0 0.65rem; }
+    .seg-mini button { flex:1 1 auto; min-width:4.4rem; border:1px solid var(--border); background:var(--background); color:var(--foreground); border-radius:999px; padding:0.35rem 0.4rem; font:inherit; font-size:0.78rem; cursor:pointer; }
+    .bk-confirm { display:flex; align-items:center; gap:0.45rem; font-size:0.82rem; margin:0.15rem 0 0.7rem; cursor:pointer; color:var(--foreground); user-select:none; }
+    .seg-mini button.active { background:var(--foreground); color:var(--background); border-color:var(--foreground); }
+    .book-pop .field { margin-bottom:0.5rem; }
+    .book-pop .btn { width:100%; justify-content:center; }
+    .time-row { display:flex; gap:0.35rem; align-items:stretch; }
+    .time-row select, .time-row input[type="time"] { flex:1; min-width:0; }
+    .time-nudge {
+      width:2.2rem; flex:0 0 2.2rem; border:1px solid var(--border);
+      background:var(--background); color:var(--foreground); border-radius:0.6rem;
+      font:inherit; font-size:1.1rem; cursor:pointer; line-height:1;
+    }
+    .time-nudge:hover { background:var(--foreground); color:var(--background); }
+    .send-list { display:flex; flex-direction:column; gap:0.2rem; margin:0 0 0.65rem; }
+    .send-list label {
+      display:flex; align-items:center; gap:0.5rem;
+      border:1px solid var(--border); border-radius:0.55rem;
+      padding:0.4rem 0.55rem; font-size:0.82rem; cursor:pointer;
+    }
+    .send-list label:has(input:checked) {
+      border-color:var(--foreground); background:color-mix(in srgb, var(--foreground) 8%, transparent);
+    }
+    .week-nav .btn { font-size:0.82rem; }
+    @media (max-width: 979px) {
+      .week-nav { flex-direction:column; align-items:stretch; gap:0.4rem; margin-bottom:0.35rem; }
+      .week-nav-range { justify-content:space-between; }
+      .week-nav-range #week-label { flex:1; text-align:center; font-size:0.82rem; white-space:nowrap; }
+      .week-arrow { width:1.65rem; height:1.65rem; font-size:0.8rem; }
+      .week-nav-tools, .week-nav-more { flex-wrap:nowrap; }
+      .week-nav-tools .btn, .week-nav-more .btn { flex:1; justify-content:center; }
+    }
+    .agent-log { max-height: 16rem; overflow:auto; margin:0 0 0.65rem; font-size:0.88rem; }
+    .agent-turn { padding:0.45rem 0; border-bottom:1px solid var(--border); }
+    .agent-turn:last-child { border-bottom:0; }
+    .agent-turn .who { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); }
+    .agent-turn p { margin:0.2rem 0 0; white-space:pre-wrap; }
+    .pdrive { font-size: 0.82rem; }
+    .pdrive-bar { display:flex; align-items:center; gap:0.35rem; margin:0 0 0.4rem; }
+    .pdrive-path { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:0.75rem; }
+    .pdrive-up, .pdrive-ref { width:1.8rem; height:1.8rem; border:1px solid var(--border); background:var(--background); color:var(--foreground); border-radius:0.4rem; cursor:pointer; font:inherit; }
+    .pdrive-list { max-height:18rem; overflow:auto; }
+    .pdrive-item { display:flex; justify-content:space-between; width:100%; text-align:left; border:0; border-bottom:1px solid var(--border); background:none; color:inherit; font:inherit; padding:0.4rem 0.15rem; cursor:pointer; }
+    .pdrive-item em { color:var(--muted); font-style:normal; font-size:0.72rem; }
+    .pdrive-item.is-folder { font-weight:600; }
+    #files-pop .book-pop-time { font-weight:500; }
+    .wrap-desk .brand { text-align:left; margin-bottom:1.15rem; }
+    .wrap-desk .brand p { margin-left:0; max-width:36rem; }
+    .desk-stage { display:flex; gap:1rem; align-items:stretch; min-height:0; flex:1 1 auto; height:auto; max-height:none; }
+    .desk-shell { display:flex; flex:1 1 auto; min-width:0; min-height:0; }
+    .desk-board { display:flex; gap:1rem; flex:1 1 auto; min-width:0; min-height:0; align-items:stretch; }
+    .desk-tile {
+      flex:0 0 21rem; width:21rem; max-width:100%;
+      margin:0; overflow:auto; max-height:100%;
+      position:relative; top:auto;
+    }
+    .desk-tile-wide {
+      flex:2 1 0; min-width:0; width:auto; max-width:none;
+      margin:0; overflow:hidden; max-height:100%;
+      position:relative; top:auto;
+      display:flex; flex-direction:column;
+    }
+    .desk-tile[hidden], .desk-tile-wide[hidden] { display:none !important; }
+    #mail-card { padding:0; overflow:hidden; }
+    .mail-split { display:flex; min-height:0; height:100%; }
+    .mail-list {
+      flex:0 0 15.5rem; width:15.5rem; border-right:1px solid var(--border);
+      overflow:auto; display:flex; flex-direction:column;
+    }
+    .mail-list-head {
+      display:flex; align-items:center; justify-content:space-between; gap:0.4rem;
+      padding:0.65rem 0.75rem; border-bottom:1px solid var(--border); flex:0 0 auto;
+    }
+    .mail-list-head strong { font-size:0.88rem; }
+    .mail-rows { list-style:none; margin:0; padding:0; flex:1; overflow:auto; }
+    .mail-row {
+      display:block; width:100%; text-align:left; border:0; border-bottom:1px solid var(--border);
+      background:none; color:inherit; font:inherit; padding:0.55rem 0.7rem; cursor:pointer;
+    }
+    .mail-row:hover { background:color-mix(in srgb, var(--foreground) 6%, transparent); }
+    .mail-row.is-on { background:color-mix(in srgb, var(--foreground) 10%, transparent); }
+    .mail-row .who { font-size:0.82rem; font-weight:600; }
+    .mail-row.unread .who { font-weight:700; }
+    .mail-row .sub { font-size:0.75rem; color:var(--muted); margin-top:0.12rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mail-row .who-row { display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap; }
+    .mail-chip {
+      display:inline-block; font-size:0.62rem; font-weight:600; letter-spacing:0.04em;
+      text-transform:uppercase; border-radius:999px; padding:0.08rem 0.38rem; line-height:1.2;
+    }
+    .mail-chip.email { background:#e4e4e7; color:#3f3f46; }
+    .mail-chip.fax { background:#dbeafe; color:#1e40af; }
+    .mail-chip.voicemail { background:#fef3c7; color:#92400e; }
+    .mail-chip.chat { background:#dcfce7; color:#166534; }
+    html.dark .mail-chip.email { background:#3f3f46; color:#e4e4e7; }
+    html.dark .mail-chip.fax { background:#1e3a5f; color:#93c5fd; }
+    html.dark .mail-chip.voicemail { background:#78350f; color:#fde68a; }
+    html.dark .mail-chip.chat { background:#14532d; color:#86efac; }
+    .mail-atts { display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.4rem; }
+    .mail-att {
+      font:inherit; font-size:0.75rem; border:1px solid var(--border); background:var(--background);
+      color:inherit; border-radius:0.45rem; padding:0.2rem 0.45rem; cursor:pointer;
+    }
+    .mail-bubble.me .mail-att { border-color:color-mix(in srgb, var(--background) 40%, transparent); }
+    .mail-emoji { display:flex; flex-wrap:wrap; gap:0.15rem; padding:0.15rem 0.75rem 0; }
+    .mail-emoji button {
+      border:0; background:none; font-size:1.05rem; line-height:1; cursor:pointer; padding:0.15rem;
+    }
+    .mail-reply { flex-wrap:wrap; }
+    .mail-reply-tools { display:flex; align-items:center; gap:0.3rem; }
+    .mail-thread { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+    .mail-thread-head { padding:0.65rem 0.85rem; border-bottom:1px solid var(--border); flex:0 0 auto; }
+    .mail-thread-head h3 { margin:0; font-size:0.95rem; }
+    .mail-thread-head p { margin:0.15rem 0 0; font-size:0.78rem; color:var(--muted); }
+    .mail-chat { flex:1 1 auto; min-height:0; overflow:auto; padding:0.75rem 0.85rem; display:flex; flex-direction:column; gap:0.55rem; }
+    .mail-bubble {
+      max-width:78%; padding:0.55rem 0.7rem; border-radius:0.85rem; font-size:0.82rem;
+      white-space:pre-wrap; line-height:1.4; border:1px solid var(--border);
+    }
+    .mail-bubble.them { align-self:flex-start; background:var(--slot-bg, #f4f4f5); }
+    .mail-bubble.me { align-self:flex-end; background:var(--foreground); color:var(--background); border-color:var(--foreground); }
+    .mail-bubble .meta { font-size:0.68rem; opacity:0.7; margin-bottom:0.2rem; }
+    .mail-reply {
+      display:flex; gap:0.4rem; padding:0.55rem 0.75rem; border-top:1px solid var(--border); flex:0 0 auto;
+    }
+    .mail-reply textarea {
+      flex:1; min-height:2.6rem; max-height:7rem; resize:vertical; font:inherit; font-size:0.82rem;
+      color:var(--foreground); background:var(--background); border:1px solid var(--border);
+      border-radius:0.6rem; padding:0.45rem 0.55rem;
+    }
+    .mail-empty { color:var(--muted); font-size:0.85rem; padding:1rem 0.85rem; }
+    html.desk-view-video .wrap-desk { max-width:none; padding-left:0.75rem; padding-right:0.75rem; }
+    #video-card {
+      background:#0a0a0b; color:#f4f4f5; padding:0; border-color:#27272a;
+      flex:1 1 0; min-height:18rem; overflow:hidden;
+    }
+    #video-card .video-bar {
+      display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+      gap:0.45rem 0.75rem; padding:0.55rem 0.75rem; border-bottom:1px solid #27272a; flex:0 0 auto;
+    }
+    #video-card .video-bar-left { display:flex; align-items:center; gap:0.45rem; font-size:0.85rem; }
+    #video-card .video-bar-left code { background:#27272a; color:#e4e4e7; padding:0.1rem 0.35rem; border-radius:0.35rem; }
+    #video-card .host-conn { color:#a1a1aa; font-size:0.78rem; }
+    #video-card .video-stage { flex:1 1 auto; min-height:14rem; position:relative; background:#000; }
+    #video-card .letterbox {
+      position:absolute; inset:0.45rem; display:flex; align-items:center; justify-content:center;
+    }
+    #video-card .host-video-grid {
+      width:100%; height:100%; background:#0a0a0b; border:1px solid #27272a; border-radius:0.65rem;
+      overflow:hidden; position:relative; display:grid; grid-template-columns:1fr; gap:2px;
+    }
+    #video-card .host-video-grid.has-remote { grid-template-columns:1fr 1fr; }
+    #video-card .host-video-grid.has-screen { display:block; }
+    #video-card #stage, #video-card .desk-video-stage {
+      display:flex; flex-direction:column; flex:1; min-height:0; height:100%;
+    }
+    #video-card .host-video-grid.has-screen .host-tile.is-screen {
+      width:100%; height:100%;
+    }
+    #video-card .host-video-grid.has-screen .host-tile.is-remote:not(.is-screen),
+    #video-card .host-video-grid.has-screen .host-tile.is-local:not(.is-screen) {
+      position:absolute; z-index:5; width:min(160px,26%); aspect-ratio:16/10;
+      border-radius:0.55rem; border:1px solid #52525b;
+    }
+    #video-card .host-video-grid.has-screen .host-tile.is-local:not(.is-screen) { right:0.6rem; bottom:0.6rem; }
+    #video-card .host-video-grid.has-screen .host-tile.is-remote:not(.is-screen) { left:0.6rem; bottom:0.6rem; }
+    @media (max-width: 979px) {
+      .wrap-desk { overflow:auto; }
+      .desk-stage { height:auto; max-height:none; }
+      .desk-stage, .desk-board { flex-direction:column; }
+      .desk-tile-wide { min-height:min(70dvh, 42rem); max-height:none; position:static; overflow:auto; }
+      #week-card, #video-card { flex:1 1 auto; }
+    }
+    #video-card .host-tile { position:relative; background:#18181b; min-height:0; overflow:hidden; }
+    #video-card .host-tile-media, #video-card .host-tile video {
+      width:100%; height:100%; object-fit:cover; background:#000; display:block;
+    }
+    #video-card .host-tile.is-local video { transform:scaleX(-1); }
+    #video-card .host-tile-label {
+      position:absolute; left:0.5rem; bottom:0.5rem; padding:0.15rem 0.45rem; border-radius:999px;
+      font-size:0.72rem; background:rgba(0,0,0,.55); color:#fafafa;
+    }
+    #video-card .host-tile-timer {
+      position:absolute; right:0.5rem; bottom:0.5rem; padding:0.15rem 0.45rem; border-radius:999px;
+      font-size:0.7rem; background:rgba(0,0,0,.6); color:#e4e4e7; font-variant-numeric:tabular-nums;
+    }
+    #video-card .stage-empty {
+      position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+      color:#71717a; font-size:0.9rem; pointer-events:none;
+    }
+    #video-card .stage-empty.hidden { display:none; }
+    #video-card .host-bar-btn {
+      width:auto; padding:0.35rem 0.6rem; font-size:0.78rem;
+      border:1px solid #3f3f46; color:#f4f4f5; background:#18181b; border-radius:999px; cursor:pointer;
+    }
+    #video-card .host-bar-btn.is-off { opacity:0.7; text-decoration:line-through; }
+    #video-card .host-bar-btn.is-on { border-color:#e4e4e7; background:#27272a; }
+    #home-card { display:flex; flex-direction:column; }
+    #wait-widget {
+      flex:0 0 auto; max-height:36%; overflow:auto; margin:0 0 0.65rem; padding:0 0 0.55rem;
+      border-bottom:1px solid var(--border);
+    }
+    #wait-widget[hidden] { display:none !important; }
+    #wait-widget .wait-widget-head { display:flex; align-items:center; justify-content:space-between; gap:0.4rem; margin:0 0 0.35rem; }
+    #wait-widget .wait-widget-title { display:flex; align-items:center; gap:0.35rem; font-size:0.88rem; }
+    #wait-widget .wait-count {
+      min-width:1.25rem; height:1.25rem; padding:0 0.3rem; border-radius:999px; font-size:0.72rem;
+      display:inline-flex; align-items:center; justify-content:center; background:var(--slot-bg); 
+    }
+    #wait-widget.has-waiters .wait-count { background:var(--foreground); color:var(--background); }
+    #wait-widget .wait-empty { margin:0.2rem 0; font-size:0.82rem; color:var(--muted); }
+    #wait-widget .wait-empty.hidden { display:none; }
+    #wait-widget .wait-list { list-style:none; margin:0; padding:0; }
+    #wait-widget .wait-item {
+      display:flex; align-items:center; justify-content:space-between; gap:0.4rem;
+      padding:0.45rem 0; border-bottom:1px solid var(--border); font-size:0.82rem;
+    }
+    #wait-widget .wait-item-actions { display:flex; gap:0.3rem; flex-shrink:0; }
+    #wait-widget .admit-btn {
+      border:0; border-radius:0.45rem; padding:0.35rem 0.65rem; font:inherit; font-size:0.78rem;
+      background:var(--foreground); color:var(--background); cursor:pointer;
+    }
+    #wait-widget .kick-btn, #wait-widget .wait-mini-btn {
+      border:1px solid var(--border); border-radius:0.45rem; padding:0.3rem 0.5rem;
+      font:inherit; font-size:0.75rem; background:var(--background); color:inherit; cursor:pointer;
+    }
+    #wait-widget .wait-widget-foot { display:flex; gap:0.35rem; margin-top:0.4rem; }
+    #wait-widget .wait-help { margin:0.4rem 0 0; font-size:0.72rem; color:var(--muted); }
+    #wait-widget .badge { font-size:0.68rem; color:var(--muted); margin-left:0.35rem; }
+    .hidden { display:none !important; }
+    #video-card .host-stage-err {
+      position:absolute; left:50%; top:0.6rem; transform:translateX(-50%);
+      z-index:6; max-width:90%; padding:0.4rem 0.65rem; border-radius:0.45rem;
+    }
+    .tile-head { display:flex; align-items:flex-start; justify-content:space-between; gap:0.5rem; margin:0 0 0.55rem; }
+    .tile-head .step-title { margin:0; }
+    .desk-client-scrim { display:none; }
+    html.desk-overlay-open,
+    html.desk-overlay-open body { overflow:hidden; }
+    html.desk-overlay-open .desk-client-scrim {
+      display:block; position:fixed; inset:0; z-index:35;
+      background:color-mix(in srgb, #000 28%, transparent);
+    }
+    .desk-tile.is-overlay {
+      position:fixed; top:3.4rem; right:0; bottom:0; z-index:36;
+      width:min(22.5rem, 92vw); max-height:calc(100dvh - 3.4rem); margin:0;
+      border-radius:0.9rem 0 0 0.9rem;
+      box-shadow:-16px 0 40px color-mix(in srgb, #000 18%, transparent);
+    }
+    #practice-pop.is-overlay { z-index:37; }
+    .desk-practice .secret-bar { margin-bottom:0.65rem; }
+    html:not(.desk-unlocked) .desk-practice .prac-acc,
+    html:not(.desk-unlocked) .desk-practice .desk-actions { display:none; }
+    .home-search { position:relative; }
+    .home-search input { width:100%; font:inherit; color:var(--foreground); background:var(--background); border:1px solid var(--border); border-radius:0.6rem; padding:0.55rem 0.7rem; }
+    .home-search .hits { position:absolute; left:0; right:0; z-index:8; margin-top:0.25rem; background:var(--surface,#fff); }
+    .home-id { margin-top:0.95rem; }
+    .home-id-top { display:flex; align-items:flex-start; justify-content:space-between; gap:0.5rem; }
+    .home-id h3 { margin:0 0 0.2rem; font-size:1.2rem; letter-spacing:-0.03em; }
+    .home-close {
+      border:0; background:none; color:var(--muted); cursor:pointer;
+      font:inherit; font-size:1.15rem; line-height:1; padding:0 0.15rem;
+    }
+    .home-close:hover { color:var(--foreground); }
+    .home-kv { font-size:0.85rem; color:var(--muted); margin:0.15rem 0; }
+    .home-kv a { color:inherit; }
+    .home-chips { display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.45rem; }
+    .home-chip { display:inline-block; font-size:0.75rem; border:1px solid var(--border); border-radius:999px; padding:0.15rem 0.5rem; }
+    .home-chip.ok { border-color:var(--ok,#166534); color:var(--ok,#166534); }
+    .home-chip.owed { border-color:#a16207; color:#a16207; }
+    .home-books-list li { display:flex; justify-content:space-between; gap:0.5rem; font-size:0.82rem; padding:0.3rem 0; }
+    .home-list { list-style:none; margin:0.35rem 0 0; padding:0; }
+    .home-list li { border-bottom:1px solid var(--border); }
+    .home-list li:last-child { border-bottom:0; }
+    .home-visit-row { display:flex; align-items:stretch; gap:0.3rem; }
+    .home-visit-row .home-visit { flex:1; min-width:0; }
+    .home-noshow {
+      flex:0 0 auto; align-self:center; font:inherit; font-size:0.68rem;
+      border:1px solid var(--border); background:none; color:var(--muted);
+      border-radius:0.4rem; padding:0.2rem 0.4rem; cursor:pointer;
+    }
+    .home-noshow.is-on { border-color:#a16207; color:#a16207; cursor:default; }
+    .home-visit {
+      display:flex; justify-content:space-between; align-items:baseline; gap:0.5rem;
+      width:100%; text-align:left; border:0; background:none; color:inherit;
+      font:inherit; font-size:0.82rem; padding:0.4rem 0; cursor:pointer;
+    }
+    .home-visit:hover { opacity:0.75; }
+    .home-more-dot {
+      display:block; width:1.45rem; height:1.45rem; margin:0.4rem auto 0;
+      border:1px solid var(--border); border-radius:999px; background:var(--background);
+      color:var(--muted); font:inherit; font-size:0.95rem; line-height:1; letter-spacing:0.04em;
+      cursor:pointer; padding:0;
+    }
+    .home-more-dot:hover { color:var(--foreground); border-color:var(--foreground); }
+    .home-empty { color:var(--muted); font-size:0.85rem; margin:0.75rem 0 0; }
+    .home-actions { display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.75rem; }
+    .home-actions .btn { font-size:0.82rem; padding:0.45rem 0.75rem; }
+    .nt-box { border:1px solid var(--border); border-radius:0.55rem; padding:0.45rem 0.55rem; margin:0 0 0.4rem; }
+    .nt-box-top { display:flex; gap:0.35rem; align-items:center; margin-bottom:0.3rem; }
+    .nt-box-top input, .nt-box-top select { flex:1; min-width:0; font:inherit; font-size:0.82rem; }
+    .nt-box-top .x, .nt-box-top .mv { width:1.8rem; flex:0 0 1.8rem; border:1px solid var(--border); background:none; border-radius:0.4rem; cursor:pointer; font:inherit; }
+    .phrase-menu {
+      position:fixed; z-index:90; max-height:12.5rem; overflow:auto;
+      background:var(--surface, #fff); color:var(--foreground);
+      border:1px solid var(--border); border-radius:0.55rem;
+      box-shadow:0 8px 24px color-mix(in srgb, #000 16%, transparent);
+      padding:0.2rem;
+    }
+    .phrase-hit {
+      display:flex; flex-direction:column; align-items:flex-start; gap:0.1rem;
+      width:100%; text-align:left; border:0; background:none; cursor:pointer;
+      font:inherit; color:inherit; padding:0.4rem 0.5rem; border-radius:0.4rem;
+    }
+    .phrase-hit span { color:var(--muted); font-size:0.8rem; }
+    .phrase-hit em { font-style:normal; font-size:0.78rem; color:var(--muted); }
+    .phrase-hit.is-on, .phrase-hit:hover { background:color-mix(in srgb, var(--foreground) 7%, transparent); }
+    .nt-mgr { display:flex; align-items:center; gap:0.35rem; padding:0.4rem 0; border-bottom:1px solid var(--border); font-size:0.82rem; }
+    .nt-mgr span { flex:1; min-width:0; }
+    .nt-mgr .x, .nt-mgr .mv { width:1.8rem; flex:0 0 1.8rem; border:1px solid var(--border); background:none; border-radius:0.4rem; cursor:pointer; font:inherit; }
+    .home-files { display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.45rem; }
+    .home-files .btn { font-size:0.82rem; padding:0.45rem 0.75rem; }
+    .home-sec { margin-top:1rem; }
+    .home-sec h4 { margin:0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); }
+    .home-note-fields { margin:0.35rem 0 0; }
+    .home-note-fields p { margin:0.35rem 0 0; font-size:0.82rem; white-space:pre-wrap; }
+    .home-note-fields strong {
+      display:block; font-size:0.72rem; font-weight:500;
+      text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); margin-bottom:0.1rem;
+    }
+    .home-ghosts { margin-top:1.15rem; padding-top:0.85rem; border-top:1px solid var(--border); }
+    .home-note-fields { margin:0.35rem 0 0; }
+    .home-note-fields p { margin:0.35rem 0 0; font-size:0.82rem; white-space:pre-wrap; }
+    .home-note-fields strong {
+      display:block; font-size:0.72rem; font-weight:500;
+      text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); margin-bottom:0.1rem;
+    }
+    .home-ghost { font-size:0.82rem; color:var(--muted); margin:0.35rem 0 0; }
+    .home-ghost strong { display:block; font-size:0.72rem; font-weight:500; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.1rem; }
+    .home-hint { font-size:0.8rem; color:var(--muted); margin:0.55rem 0 0; min-height:1.1em; }
+    .grid-ev.is-focus { box-shadow: 0 0 0 2px var(--foreground); z-index:4; }
+    .prac-media { display:flex; gap:0.85rem; margin:0 0 0.75rem; }
+    .prac-slot { flex:1; min-width:0; }
+    .prac-slot .desk-meta { margin:0 0 0.3rem; }
+    .prac-frame {
+      width:5.6rem; height:5.6rem; border:1px solid var(--border);
+      background:var(--slot-bg,#f4f4f5); overflow:hidden; margin:0 0 0.35rem;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .prac-frame.logo { border-radius:0.7rem; }
+    .prac-frame.photo { border-radius:999px; }
+    .prac-frame img { width:100%; height:100%; object-fit:cover; display:block; }
+    .prac-frame.logo img { object-fit:contain; }
+    .prac-slot input[type=file] { font:inherit; font-size:0.72rem; width:100%; }
+    .desk-practice .book-pop-top { margin-bottom:0.55rem; }
+    .prac-acc { border:1px solid var(--border); border-radius:0.65rem; margin:0 0 0.45rem; overflow:hidden; }
+    .prac-acc > summary {
+      list-style:none; cursor:pointer; padding:0.55rem 0.7rem; font-size:0.82rem; font-weight:600;
+      display:flex; align-items:center; justify-content:space-between; gap:0.5rem;
+    }
+    .prac-acc > summary::-webkit-details-marker { display:none; }
+    .prac-acc > summary::after { content:"▾"; color:var(--muted); font-weight:400; }
+    .prac-acc[open] > summary::after { content:"▴"; }
+    .prac-acc > summary:hover { background:color-mix(in srgb, var(--foreground) 4%, transparent); }
+    .prac-acc .prac-acc-body { padding:0.15rem 0.7rem 0.65rem; }
+    .svc-row {
+      display:flex; align-items:flex-start; justify-content:space-between; gap:0.45rem;
+      width:100%; text-align:left; border:1px solid var(--border); background:none;
+      color:inherit; font:inherit; border-radius:0.55rem; padding:0.45rem 0.55rem;
+      margin:0 0 0.35rem; cursor:pointer;
+    }
+    .svc-row:hover { background:color-mix(in srgb, var(--foreground) 4%, transparent); }
+    .svc-row.is-on { border-color:var(--foreground); }
+    .svc-row.off { opacity:0.55; }
+    .svc-row strong { display:block; font-size:0.85rem; }
+    .svc-row .svc-meta { display:block; font-size:0.72rem; color:var(--muted); margin-top:0.12rem; }
+    .svc-ed { border:1px solid var(--border); border-radius:0.55rem; padding:0.5rem 0.55rem 0.35rem; margin:0 0 0.45rem; }
+    .svc-hours { display:grid; gap:0.28rem; margin:0.2rem 0 0.55rem; }
+    .svc-day {
+      display:grid; grid-template-columns:1.15rem 2.35rem minmax(0,1fr) 0.55rem minmax(0,1fr);
+      gap:0.28rem; align-items:center; font-size:0.78rem; color:var(--muted);
+    }
+    .svc-day input[type=time] {
+      min-width:0; font:inherit; font-size:0.78rem; color:var(--foreground);
+      background:var(--background); border:1px solid var(--border); border-radius:0.45rem;
+      padding:0.32rem 0.35rem;
+    }
+    .svc-day input[type=checkbox] { margin:0; }
+    .svc-day.is-off input[type=time] { opacity:0.4; }
+    #superbill-pop { width: min(28rem, calc(100vw - 1.5rem)); }
+    #books-pop.is-overlay { z-index:36; }
+    .books-stat { display:flex; justify-content:space-between; gap:0.75rem; padding:0.35rem 0; border-bottom:1px solid var(--border); font-size:0.9rem; }
+    .books-stat:last-child { border-bottom:0; }
+    .books-block { margin:0 0 0.85rem; }
+    .lic-row, .sb-dx, .sb-line { border:1px solid var(--border); border-radius:0.55rem; padding:0.4rem 0.5rem; margin:0 0 0.35rem; }
+    .lic-row { display:flex; gap:0.35rem; align-items:center; }
+    .lic-row select { width:8.2rem; flex:0 0 8.2rem; font:inherit; font-size:0.82rem; }
+    .lic-row input { flex:1; min-width:0; font:inherit; font-size:0.82rem; }
+    .lic-row .x { width:1.8rem; flex:0 0 1.8rem; border:1px solid var(--border); background:none; border-radius:0.4rem; cursor:pointer; font:inherit; }
+    .sb-dx input, .sb-line input { width:100%; font:inherit; font-size:0.82rem; margin:0 0 0.25rem; }
+    .sb-line-top { display:flex; gap:0.3rem; }
+    .sb-line-top input { flex:1; min-width:0; }
+    .sb-line-top .x { width:1.8rem; flex:0 0 1.8rem; border:1px solid var(--border); background:none; border-radius:0.4rem; cursor:pointer; font:inherit; }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#desk-main">Skip to desk</a>
+  <header class="desk-banner" id="desk-banner">
+    <div class="desk-banner-left">
+      <h1 class="desk-banner-title">Practice desk</h1>
+      <button class="btn secondary" type="button" id="open-calendar" aria-pressed="false">Calendar</button>
+      <button class="btn secondary" type="button" id="open-office" aria-pressed="false">Live office</button>
+      <button class="btn secondary" type="button" id="open-mail" aria-pressed="false">Messages</button>
+      <button class="btn secondary" type="button" id="btn-leave-banner" hidden>Leave</button>
+    </div>
+    <div class="desk-banner-right">
+      <div class="desk-more">
+        <button class="btn secondary desk-more-btn" type="button" id="open-more" aria-haspopup="true" aria-expanded="false" aria-controls="more-menu" aria-label="More">
+          <span class="desk-more-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+        </button>
+        <div class="desk-more-menu" id="more-menu" hidden>
+          <button type="button" id="open-unlock">Unlock</button>
+          <button type="button" id="open-client">Client</button>
+          <button type="button" id="open-books">Books</button>
+          <button type="button" id="open-practice">Settings</button>
+        </div>
+      </div>
+    </div>
+  </header>
+  <main class="wrap wrap-desk" id="desk-main">
+    <div class="desk-stage" id="desk-stage">
+    <div class="desk-shell" id="desk-shell" hidden>
+    <div class="desk-board">
+    <div class="card desk-tile-wide" id="video-card" hidden>
+      <div id="lobby" class="hidden" hidden></div>
+      <div id="stage" class="desk-video-stage">
+        <div class="video-bar">
+          <div class="video-bar-left">
+            <strong>Live office</strong>
+            <code id="room-label">office</code>
+            <span class="host-conn" id="conn-label"></span>
+          </div>
+          <div class="video-bar-right">
+            <button type="button" class="host-bar-btn" id="btn-toggle-cam">Camera on</button>
+            <button type="button" class="host-bar-btn" id="btn-toggle-mic">Mic on</button>
+            <button type="button" class="host-bar-btn" id="btn-toggle-share">Share screen</button>
+            <button type="button" class="host-bar-btn" id="btn-scribe" aria-pressed="true">Notes on</button>
+            <button type="button" class="host-bar-btn" id="btn-pop-video" title="Pop out video">Pop out</button>
+            <button type="button" class="host-bar-btn" id="btn-leave-call">Leave</button>
+          </div>
+        </div>
+        <div class="video-stage">
+          <div class="letterbox">
+            <div id="video-grid" class="host-video-grid solo"></div>
+            <div id="stage-empty" class="stage-empty">Starting camera…</div>
+          </div>
+          <div id="stage-err" class="err host-stage-err hidden"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card desk-tile-wide" id="week-card">
+      <div class="week-head">
+        <div class="week-head-main">
+          <div class="week-nav">
+            <div class="week-nav-range">
+              <button class="btn secondary week-arrow" type="button" id="prev-week" aria-label="Previous week">←</button>
+              <strong id="week-label"></strong>
+              <button class="btn secondary week-arrow" type="button" id="next-week" aria-label="Next week">→</button>
+            </div>
+            <div class="week-nav-tools">
+              <button class="btn secondary" type="button" id="this-week">Today</button>
+              <button class="btn secondary" type="button" id="cal-span-toggle" aria-pressed="false">Day</button>
+            </div>
+          </div>
+        </div>
+        <div class="mini-cal" id="mini-cal"></div>
+      </div>
+      <div id="week"></div>
+    </div>
+    <div class="card desk-tile-wide" id="mail-card" hidden>
+      <div class="mail-split">
+        <div class="mail-list">
+          <div class="mail-list-head">
+            <strong>Desk</strong>
+            <button class="btn secondary" type="button" id="mail-refresh">↻</button>
+          </div>
+          <ul class="mail-rows" id="mail-rows"></ul>
+          <p class="mail-empty" id="mail-list-empty">No mail in Desk yet.</p>
+        </div>
+        <div class="mail-thread">
+          <div class="mail-thread-head" id="mail-thread-head">
+            <h3>Messages</h3>
+            <p>Proton folder Desk only. Open a thread.</p>
+          </div>
+          <div class="mail-chat" id="mail-chat"></div>
+          <div class="mail-emoji" id="mail-emoji" hidden></div>
+          <form class="mail-reply" id="mail-reply" hidden>
+            <textarea id="mail-reply-body" rows="2" placeholder="Reply…"></textarea>
+            <div class="mail-reply-tools">
+              <input id="mail-files" type="file" multiple hidden />
+              <button class="btn secondary" type="button" id="mail-attach">Attach</button>
+              <button class="btn secondary" type="button" id="mail-emoji-btn" aria-pressed="false">☺</button>
+              <button class="btn" type="submit" id="mail-reply-go">Send</button>
+            </div>
+            <p class="desk-meta" id="mail-file-label" hidden></p>
+          </form>
+        </div>
+      </div>
+    </div>
+    </div>
+    </div>
+
+    <div class="card desk-client desk-tile" id="home-card" hidden>
+      <aside id="wait-widget" hidden>
+        <header class="wait-widget-head">
+          <div class="wait-widget-title">
+            <span class="wait-bell" id="wait-bell" aria-hidden="true">●</span>
+            <strong>Waiting</strong>
+            <span class="wait-count" id="wait-count">0</span>
+          </div>
+        </header>
+        <div class="wait-widget-body" id="wait-widget-body">
+          <p class="wait-empty" id="wait-empty">No one waiting yet</p>
+          <ul class="wait-list" id="wait-list"></ul>
+          <div class="wait-widget-foot">
+            <button type="button" class="wait-mini-btn" id="refresh-wait">Refresh</button>
+            <button type="button" class="wait-mini-btn" id="clear-wait">Clear all</button>
+          </div>
+          <p class="wait-help">Guests use <code>/guest</code>. Admit brings them into the call.</p>
+          <div id="host-err" class="err hidden"></div>
+        </div>
+      </aside>
+      <div class="tile-head">
+        <h2 class="step-title">Client</h2>
+        <button type="button" class="home-close" id="client-close" aria-label="Close client">×</button>
+      </div>
+      <div class="home-search">
+        <input id="home-q" type="search" placeholder="Find a client by name, email, or phone…" autocomplete="off" />
+        <div id="home-hits" class="hits" hidden></div>
+      </div>
+      <p id="home-empty" class="home-empty">Search, or click a visit on the week.</p>
+      <div id="home-body" hidden></div>
+      <p id="home-hint" class="home-hint" hidden></p>
+    </div>
+    <div class="card desk-practice desk-tile" id="practice-pop" hidden role="dialog" aria-label="Practice settings">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">Settings</div>
+        <p class="book-pop-time">Practice desk</p>
+      </div>
+      <button type="button" class="home-close" id="practice-close" aria-label="Close">×</button>
+    </div>
+    <details class="prac-acc">
+      <summary>Identity</summary>
+      <div class="prac-acc-body">
+        <label class="field">Practice name <input id="prac-display" /></label>
+        <label class="field">Legal name <input id="prac-legal" /></label>
+        <label class="field">Clinician <input id="prac-clinician" /></label>
+        <label class="field">Title <input id="prac-title" /></label>
+        <label class="field">Billing
+          <select id="prac-role">
+            <option value="psychiatrist">Psychiatrist (90792 + E/M)</option>
+            <option value="therapist">Therapist (90791 + 90832/34/37)</option>
+          </select>
+        </label>
+        <label class="field">Address <input id="prac-address" /></label>
+        <label class="field">Phone <input id="prac-phone" /></label>
+        <label class="field">Fax <input id="prac-fax" /></label>
+        <label class="field">Email <input id="prac-email" type="email" /></label>
+      </div>
+    </details>
+    <details class="prac-acc" id="prac-svc-acc">
+      <summary>Services</summary>
+      <div class="prac-acc-body">
+        <p class="desk-meta">What patients book, and which hours each visit uses. A new type gets its own page at /slug.</p>
+        <div id="prac-svc-list"></div>
+        <p class="desk-meta" id="prac-svc-st"></p>
+        <div class="desk-actions" style="margin:0.35rem 0 0.15rem">
+          <button class="btn secondary" type="button" id="prac-svc-add">+ Service</button>
+        </div>
+      </div>
+    </details>
+    <details class="prac-acc" id="prac-phrase-acc">
+      <summary>Dot phrases</summary>
+      <div class="prac-acc-body">
+        <p class="desk-meta">Stock lines for meds, supplements, and recs. In a note, type .name then space or tab.</p>
+        <div id="prac-phrase-list"></div>
+        <p class="desk-meta" id="prac-phrase-st"></p>
+        <div class="desk-actions" style="margin:0.35rem 0 0.15rem">
+          <button class="btn secondary" type="button" id="prac-phrase-add">+ Phrase</button>
+        </div>
+      </div>
+    </details>
+    <details class="prac-acc">
+      <summary>Office line</summary>
+      <div class="prac-acc-body">
+        <p class="desk-meta" id="prac-did-hint">Patients see the Twilio voice DID as caller ID — never your personal number.</p>
+        <label class="field" style="flex-direction:row;align-items:center;gap:0.45rem">
+          <input type="radio" name="prac-handset" id="prac-handset-browser" value="browser" checked />
+          <span>This computer — mic on this desk</span>
+        </label>
+        <label class="field" style="flex-direction:row;align-items:center;gap:0.45rem">
+          <input type="radio" name="prac-handset" id="prac-handset-phone" value="phone" />
+          <span>My phone — Twilio rings this number first</span>
+        </label>
+        <label class="field" id="prac-callback-wrap">
+          Your phone (handset)
+          <input id="prac-callback" type="tel" autocomplete="tel" placeholder="The phone Twilio should ring first" />
+        </label>
+        <p class="desk-meta">They never see your personal number. This computer needs a mic and a browser allow.</p>
+      </div>
+    </details>
+    <details class="prac-acc">
+      <summary>IDs &amp; licenses</summary>
+      <div class="prac-acc-body">
+        <label class="field">EIN <input id="prac-ein" inputmode="numeric" placeholder="XX-XXXXXXX" autocomplete="off" /></label>
+        <label class="field">NPI <input id="prac-npi" inputmode="numeric" placeholder="10 digits" autocomplete="off" /></label>
+        <p class="desk-meta">Licenses</p>
+        <div id="prac-lics"></div>
+        <div class="desk-actions" style="margin:0 0 0.15rem">
+          <button class="btn secondary" type="button" id="prac-lic-add">+ License</button>
+        </div>
+      </div>
+    </details>
+    <details class="prac-acc">
+      <summary>Logo &amp; photo</summary>
+      <div class="prac-acc-body">
+        <div class="prac-media">
+          <div class="prac-slot">
+            <p class="desk-meta">Logo</p>
+            <div class="prac-frame logo"><img id="prac-logo-img" alt="Practice logo" src="/api/practice/logo" /></div>
+            <input id="prac-logo-file" type="file" accept="image/jpeg,image/png,image/webp" />
+          </div>
+          <div class="prac-slot">
+            <p class="desk-meta">Clinician photo</p>
+            <div class="prac-frame photo"><img id="prac-photo-img" alt="Clinician photo" /></div>
+            <input id="prac-photo-file" type="file" accept="image/jpeg,image/png,image/webp" />
+          </div>
+        </div>
+      </div>
+    </details>
+    <details class="prac-acc">
+      <summary>Look</summary>
+      <div class="prac-acc-body">
+        <p class="desk-meta">Light / dark / custom. Or ask the desk agent.</p>
+        <label class="field">Theme
+          <select id="prac-theme-mode">
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <label class="field" id="prac-theme-toggle-wrap" style="flex-direction:row;align-items:center;gap:0.45rem">
+          <input id="prac-theme-toggle" type="checkbox" checked />
+          <span>Visitors can switch light / dark</span>
+        </label>
+        <div id="prac-theme-tokens" hidden></div>
+        <p class="desk-meta" style="margin-top:0.85rem">Focus pages — titles on the public site. Routes stay /ocd and /anxiety.</p>
+        <label class="field">First focus page <input id="prac-title-ocd" placeholder="OCD" /></label>
+        <label class="field">Second focus page <input id="prac-title-anxiety" placeholder="Anxiety" /></label>
+        <p class="desk-meta" style="margin-top:0.85rem">Backgrounds — one file per page. Empty is fine.</p>
+        <div id="prac-bgs"></div>
+      </div>
+    </details>
+    <p class="desk-meta">Install this desk from the browser for a local encrypted last-note store. Unlock decrypts it on this device.</p>
+    <p class="desk-meta" id="practice-status"></p>
+    <div class="desk-actions" style="margin-top:0.4rem">
+      <button class="btn" type="button" id="prac-save">Save practice</button>
+    </div>
+    </div>
+    </div>
+    <div class="card desk-books desk-tile" id="books-pop" hidden>
+      <div class="tile-head">
+        <h2 class="step-title" id="books-title">Books</h2>
+        <button type="button" class="home-close" id="books-close" aria-label="Close books">×</button>
+      </div>
+      <div class="week-nav" style="margin-bottom:0.65rem">
+        <button class="btn secondary week-arrow" type="button" id="books-prev" aria-label="Previous month">‹</button>
+        <button class="btn secondary" type="button" id="books-now">This month</button>
+        <button class="btn secondary week-arrow" type="button" id="books-next" aria-label="Next month">›</button>
+      </div>
+      <p class="desk-meta" id="books-status"></p>
+      <div id="books-body"></div>
+    </div>
+  </main>
+  <div id="home-scrim" class="desk-client-scrim" aria-hidden="true"></div>
+
+  <div id="unlock-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Unlock desk">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">Desk</div>
+        <p class="book-pop-time">Unlock</p>
+      </div>
+      <button type="button" class="book-pop-close" id="unlock-close" aria-label="Close">×</button>
+    </div>
+    <div class="secret-bar">
+      <input id="secret" type="password" placeholder="Staff secret" autocomplete="off" />
+      <button class="btn" type="button" id="unlock">Unlock</button>
+    </div>
+    <div id="msg" hidden role="status" aria-live="polite"></div>
+  </div>
+
+  <div id="book-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="New visit">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">New visit</div>
+        <p class="book-pop-time" id="pop-time"></p>
+      </div>
+      <button type="button" class="book-pop-close" id="pop-close" aria-label="Close">×</button>
+    </div>
+    <label class="field">Visit time
+      <div class="time-row">
+        <button type="button" class="time-nudge" id="pop-time-minus" aria-label="30 minutes earlier">−</button>
+        <select id="pop-time-sel" aria-label="Choose a 30-minute start time"></select>
+        <button type="button" class="time-nudge" id="pop-time-plus" aria-label="30 minutes later">+</button>
+      </div>
+    </label>
+    <label class="field">Or type a time
+      <input id="pop-time-in" type="time" step="1800" />
+    </label>
+    <div class="seg-mini" id="pop-dur" role="group">
+      <button type="button" data-dur="30" data-type="follow-up" class="active">30 min</button>
+      <button type="button" data-dur="60" data-type="follow-up">60 min</button>
+      <button type="button" data-dur="90" data-type="new-client">New patient</button>
+    </div>
+    <form id="book-form">
+      <input type="hidden" name="client_id" id="client_id" />
+      <input type="hidden" name="start_local" id="bk-when" />
+      <input type="hidden" name="event_type" id="bk-type" value="follow-up" />
+      <input type="hidden" name="duration_minutes" id="bk-dur" value="30" />
+      <label class="field">Name
+        <input name="name" id="bk-name" required autocomplete="off" placeholder="Start typing…" />
+      </label>
+      <div id="client-hits" class="hits" hidden></div>
+      <label class="field">Email <input name="email" id="bk-email" type="email" required /></label>
+      <label class="field">Phone <input name="phone" id="bk-phone" /></label>
+      <p class="desk-meta" id="client-extra"></p>
+      <label class="field">Note <textarea name="notes" rows="2"></textarea></label>
+      <label class="bk-confirm">
+        <input type="checkbox" id="bk-confirm" checked />
+        Send confirmation
+      </label>
+      <button class="btn" type="submit">Book</button>
+    </form>
+  </div>
+
+  <div id="files-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Practice files">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">Proton Drive</div>
+        <p class="book-pop-time" id="files-pop-title">Practice files</p>
+      </div>
+      <button type="button" class="book-pop-close" id="files-close" aria-label="Close">×</button>
+    </div>
+    <div id="pdrive-root"></div>
+  </div>
+
+  <div id="send-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Send forms">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">Send to patient</div>
+        <p class="book-pop-time">Check the forms they need</p>
+      </div>
+      <button type="button" class="book-pop-close" id="send-close" aria-label="Close">×</button>
+    </div>
+    <label class="field">Name
+      <input id="sd-name" autocomplete="off" placeholder="Start typing…" />
+    </label>
+    <div id="sd-hits" class="hits" hidden></div>
+    <label class="field">Email
+      <input id="sd-email" type="email" required placeholder="patient@email" />
+    </label>
+    <input type="hidden" id="sd-phone" />
+    <input type="hidden" id="sd-client" />
+    <p class="desk-meta" id="sd-extra"></p>
+    <p class="desk-meta" style="margin:0.4rem 0 0.25rem">What to send</p>
+    <div class="send-list" id="send-list"></div>
+    <label class="field">Note <textarea id="sd-notes" rows="2" placeholder="Optional line in the email"></textarea></label>
+    <p class="desk-meta" id="send-status"></p>
+    <div class="desk-actions" style="margin-top:0.4rem">
+      <button class="btn" type="button" id="sd-email-btn">Email link</button>
+      <button class="btn secondary" type="button" id="sd-copy-btn">Copy link</button>
+    </div>
+  </div>
+
+  <div id="note-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Note">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">After-visit summary</div>
+        <p class="book-pop-time">Your Visit notes shape</p>
+      </div>
+      <button type="button" class="book-pop-close" id="note-close" aria-label="Close">×</button>
+    </div>
+    <input type="hidden" id="nt-event" />
+    <label class="field">Template
+      <select id="nt-template"></select>
+    </label>
+    <div class="desk-actions" style="margin:0 0 0.65rem">
+      <button class="btn secondary" type="button" id="nt-new">New template</button>
+      <button class="btn secondary" type="button" id="nt-edit-btn">Edit template</button>
+      <button class="btn secondary" type="button" id="nt-manage">Manage templates</button>
+    </div>
+    <div id="nt-builder" hidden>
+      <label class="field">Template name
+        <input id="nt-title" placeholder="My note" />
+      </label>
+      <input type="hidden" id="nt-source" />
+      <div id="nt-boxes"></div>
+      <div class="desk-actions" style="margin:0.4rem 0 0.75rem">
+        <button class="btn secondary" type="button" id="nt-add-sec">Add section</button>
+        <button class="btn" type="button" id="nt-save-tpl">Save template</button>
+      </div>
+    </div>
+    <div id="nt-manage-box" hidden>
+      <div id="nt-manage-list"></div>
+    </div>
+    <div id="nt-fields"></div>
+    <p class="desk-meta">Type <strong>.name</strong> then space or tab to insert a phrase. Add them under Settings → Dot phrases.</p>
+    <label class="field">Transcript (optional)
+      <textarea id="nt-transcript" rows="2" placeholder="Paste or leave empty"></textarea>
+    </label>
+    <p class="desk-meta" id="note-status"></p>
+    <div class="desk-actions" style="margin-top:0.4rem">
+      <button class="btn secondary" type="button" id="nt-draft">Draft from transcript</button>
+      <button class="btn" type="button" id="nt-sign">Sign to Visit notes</button>
+    </div>
+  </div>
+
+  <div id="superbill-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Superbill">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">Billing</div>
+        <p class="book-pop-time">Superbill</p>
+      </div>
+      <button type="button" class="book-pop-close" id="superbill-close" aria-label="Close">×</button>
+    </div>
+    <p class="desk-meta">Same statement of reimbursement as the Billing folder. Letterhead comes from Practice.</p>
+    <div class="seg-mini" id="sb-presets" role="group"></div>
+    <label class="field">Date of service <input id="sb-dos" type="date" /></label>
+    <label class="field">Place of service <input id="sb-pos" value="10" /></label>
+    <label class="field">Client address <input id="sb-address" placeholder="Optional — street, city, state, zip" /></label>
+    <p class="desk-meta">Diagnoses</p>
+    <div id="sb-dxs"></div>
+    <div class="desk-actions" style="margin:0 0 0.55rem">
+      <button class="btn secondary" type="button" id="sb-dx-add">+ Diagnosis</button>
+    </div>
+    <p class="desk-meta">Services</p>
+    <div id="sb-lines"></div>
+    <div class="desk-actions" style="margin:0 0 0.55rem">
+      <button class="btn secondary" type="button" id="sb-line-add">+ Line</button>
+    </div>
+    <p class="desk-meta" id="superbill-status"></p>
+    <div class="desk-actions" style="margin-top:0.4rem">
+      <button class="btn" type="button" id="sb-save">Save to Billing</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.9/dist/livekit-client.umd.min.js"></script>
+  <script src="https://live.psycharts.org/static/js/host-office.js?v=12"></script>
+  <script src="/static/js/desk-auth.js?v=1"></script>
+  <script src="/static/js/desk-vault.js?v=2"></script>
+  <script src="/static/js/desk-books.js?v=2"></script>
+  <script src="/static/js/desk-services.js?v=1"></script>
+  <script src="/static/js/desk-phrases.js?v=1"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const msg = (t, ok) => {
+      const el = $("msg");
+      el.hidden = !t;
+      el.className = ok ? "msg ok" : "msg err";
+      el.textContent = t || "";
+    };
+    const secret = () => $("secret").value.trim();
+    $("secret").value = localStorage.getItem("dmb-desk") || "";
+    $("unlock").onclick = load;
+    $("secret").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+    let weekStart = mondayOf(new Date());
+    let dayFocus = new Date();
+    dayFocus.setHours(0,0,0,0);
+    let calSpan = "week";
+    let monthView = new Date(weekStart.getFullYear(), weekStart.getMonth(), 1);
+    let typeMeta = {};
+    const CAL_START = 7;   // 7am
+    const CAL_END = 19;    // 7pm
+    const PX_PER_MIN = 1.48;
+
+    function mondayOf(d) {
+      const x = new Date(d);
+      const day = (x.getDay() + 6) % 7;
+      x.setDate(x.getDate() - day);
+      x.setHours(0,0,0,0);
+      return x;
+    }
+    function ymd(d) {
+      return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+    }
+
+    $("prev-week").onclick = () => { closePop(); closeSend(); shiftCal(-1); };
+    $("next-week").onclick = () => { closePop(); closeSend(); shiftCal(1); };
+    $("this-week").onclick = () => {
+      closePop(); closeSend();
+      const now = new Date();
+      now.setHours(0,0,0,0);
+      dayFocus = now;
+      weekStart = mondayOf(now);
+      loadWeek();
+    };
+    function shiftCal(dir) {
+      if (calSpan === "day") {
+        dayFocus.setDate(dayFocus.getDate() + dir);
+        weekStart = mondayOf(dayFocus);
+      } else {
+        weekStart.setDate(weekStart.getDate() + 7 * dir);
+        dayFocus = new Date(weekStart);
+      }
+      loadWeek();
+    }
+    function setCalSpan(next) {
+      calSpan = next === "day" ? "day" : "week";
+      const t = $("cal-span-toggle");
+      if (t) {
+        t.textContent = calSpan === "day" ? "Week" : "Day";
+        t.setAttribute("aria-pressed", calSpan === "day" ? "true" : "false");
+        t.setAttribute("aria-label", calSpan === "day" ? "Show week" : "Show day");
+      }
+      const prev = $("prev-week");
+      const nxt = $("next-week");
+      if (prev) prev.setAttribute("aria-label", calSpan === "day" ? "Previous day" : "Previous week");
+      if (nxt) nxt.setAttribute("aria-label", calSpan === "day" ? "Next day" : "Next week");
+      loadWeek();
+    }
+    if ($("cal-span-toggle")) $("cal-span-toggle").onclick = () => setCalSpan(calSpan === "day" ? "week" : "day");
+
+    function sheetOpen() {
+      return ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"]
+        .some((id) => $(id) && !$(id).hidden);
+    }
+    function syncSheetLock() {
+      document.documentElement.classList.toggle("desk-sheet-open", sheetOpen());
+      const open = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"]
+        .map((id) => $(id)).find((el) => el && !el.hidden);
+      if (open) trapFocus(open);
+      else releaseFocus();
+    }
+    let trapRoot = null;
+    let trapPrev = null;
+    function focusables(root) {
+      return Array.from(root.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+        .filter((el) => !el.disabled && el.offsetParent !== null);
+    }
+    function trapFocus(root) {
+      trapRoot = root;
+      trapPrev = document.activeElement;
+      const first = focusables(root)[0];
+      if (first) first.focus();
+    }
+    function releaseFocus() {
+      trapRoot = null;
+      if (trapPrev && typeof trapPrev.focus === "function") {
+        try { trapPrev.focus(); } catch (e) {}
+      }
+      trapPrev = null;
+    }
+    document.addEventListener("keydown", (e) => {
+      if (!trapRoot || e.key !== "Tab") return;
+      const list = focusables(trapRoot);
+      if (!list.length) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    });
+    function fitSheet(el, clientX) {
+      const banner = $("desk-banner");
+      const topPad = banner ? Math.round(banner.getBoundingClientRect().bottom + 8) : 12;
+      const pad = 12;
+      const max = Math.max(240, window.innerHeight - topPad - pad);
+      el.style.maxHeight = max + "px";
+      el.style.height = "auto";
+      el.style.overflowY = "hidden";
+      if (clientX != null) {
+        const w = el.offsetWidth || 352;
+        let left = clientX + 12;
+        if (left + w > window.innerWidth - pad) left = clientX - w - 12;
+        if (left < pad) left = pad;
+        el.style.left = left + "px";
+        el.style.transform = "";
+      } else {
+        el.style.left = "50%";
+        el.style.transform = "translateX(-50%)";
+      }
+      el.style.top = topPad + "px";
+      requestAnimationFrame(() => {
+        if (el.hidden) return;
+        const need = el.scrollHeight;
+        if (need > max) {
+          el.style.height = max + "px";
+          el.style.maxHeight = max + "px";
+          el.style.overflowY = "auto";
+          el.style.top = pad + "px";
+        } else {
+          el.style.height = "auto";
+          el.style.overflowY = "hidden";
+          el.style.top = Math.max(topPad, Math.round((window.innerHeight - el.offsetHeight) / 2)) + "px";
+        }
+      });
+    }
+    function closePop() {
+      $("book-pop").hidden = true;
+      $("client-hits").hidden = true;
+      syncSheetLock();
+    }
+    function closeSend() {
+      $("send-pop").hidden = true;
+      $("sd-hits").hidden = true;
+      syncSheetLock();
+    }
+    function closeNote() {
+      $("note-pop").hidden = true;
+      syncSheetLock();
+    }
+    function isUnlocked() {
+      return $("desk-shell") && !$("desk-shell").hidden;
+    }
+    let clientClosed = false;
+    let settingsClosed = false;
+    let clientForced = false;
+    let settingsForced = false;
+    let deskView = (new URLSearchParams(location.search).get("view") || "desk").toLowerCase();
+    if (!["desk", "visit", "week", "video"].includes(deskView)) deskView = "desk";
+    let calendarOn = deskView !== "visit" && deskView !== "video";
+    let officeOn = deskView === "visit" || deskView === "week" || deskView === "video";
+    let hero = deskView === "video" || deskView === "visit" ? "office" : "calendar";
+    let mailOn = false;
+    let booksOn = false;
+    let mailCurrent = "";
+    let mailLoading = false;
+    let officeUrl = "";
+    let officeLive = false;
+    let liveElsewhere = false;
+    let officeHost = null;
+    let officeStarting = false;
+    let echoingClient = false;
+    const windowId = Math.random().toString(36).slice(2, 10);
+    const deskBus = (typeof BroadcastChannel === "function")
+      ? new BroadcastChannel("psycharts-desk")
+      : null;
+    function officeSecretFromUrl(url) {
+      const m = String(url || "").match(/\/r\/([A-Za-z0-9_-]{8,128})/);
+      return m ? m[1] : "";
+    }
+    function liveBase() {
+      try { return new URL(officeUrl || "https://live.psycharts.org/r/x").origin; }
+      catch (e) { return "https://live.psycharts.org"; }
+    }
+    function clientWanted() {
+      if (deskView === "video") return false;
+      if (clientForced) return true;
+      return false;
+    }
+    function settingsWanted() {
+      if (deskView === "video") return false;
+      if (settingsForced) return true;
+      return false;
+    }
+    function booksWanted() {
+      if (deskView === "video") return false;
+      return !!booksOn;
+    }
+    function videoWanted() {
+      if (!isUnlocked()) return false;
+      if (deskView === "video") return true;
+      if (hero === "office") return true;
+      return !!(officeLive && officeOn && hero !== "office");
+    }
+    function videoPip() {
+      return !!(officeLive && officeOn && hero !== "office" && deskView !== "video");
+    }
+    function calendarWanted() {
+      if (!isUnlocked() || deskView === "video") return false;
+      return hero === "calendar";
+    }
+    function mailWanted() {
+      if (!isUnlocked() || deskView === "video") return false;
+      return hero === "mail";
+    }
+    function showHero(next) {
+      if (needUnlock()) return;
+      if (deskView === "video") return;
+      hero = next;
+      calendarOn = next === "calendar";
+      mailOn = next === "mail";
+      if (next === "office") officeOn = true;
+      applyTiles();
+      if (next === "mail") loadMailList();
+    }
+    function toggleCalendar() {
+      showHero("calendar");
+    }
+    function toggleMail() {
+      if (hero === "mail") showHero("calendar");
+      else showHero("mail");
+    }
+    function setDeskView(next, { push } = {}) {
+      deskView = next;
+      if (push !== false) {
+        const u = new URL(location.href);
+        if (deskView === "desk") u.searchParams.delete("view");
+        else u.searchParams.set("view", deskView);
+        history.replaceState(null, "", u.pathname + u.search + u.hash);
+      }
+      document.documentElement.classList.toggle("desk-view-video", deskView === "video");
+      applyTiles();
+    }
+    function announceCall(live) {
+      if (deskBus) deskBus.postMessage({ type: "call", live: !!live, id: windowId });
+    }
+    if (deskBus) {
+      deskBus.onmessage = (ev) => {
+        const m = ev.data || {};
+        if (m.type === "call" && m.id !== windowId) {
+          liveElsewhere = !!m.live;
+          const wait = $("wait-widget");
+          if (wait && (liveElsewhere || officeLive)) wait.hidden = false;
+          if (wait && !liveElsewhere && !officeLive) wait.hidden = true;
+          applyTiles();
+        }
+        if (m.type === "client" && (m.id || m.email || m.name) && deskView !== "video") {
+          echoingClient = true;
+          Promise.resolve(openHome({ id: m.id || "", email: m.email || "", name: m.name || "" }))
+            .finally(() => { echoingClient = false; });
+        }
+      };
+    }
+    function closeAllDrawers() {
+      clientForced = false;
+      clientClosed = true;
+      settingsForced = false;
+      settingsClosed = true;
+      booksOn = false;
+      if ($("books-pop")) $("books-pop").hidden = true;
+    }
+    function collapseSettings() {
+      document.querySelectorAll("#practice-pop details.prac-acc").forEach((el) => {
+        el.open = false;
+      });
+    }
+    function drawerOverlay() {
+      return window.innerWidth < 1200;
+    }
+    function applyTiles() {
+      const home = $("home-card");
+      const prac = $("practice-pop");
+      const week = $("week-card");
+      const video = $("video-card");
+      const mail = $("mail-card");
+      const w = window.innerWidth;
+      let showV = videoWanted();
+      let showM = mailWanted();
+      let showCal = calendarWanted();
+      let showC = clientWanted();
+      let showS = settingsWanted();
+      let showB = booksWanted();
+      const pip = videoPip();
+      const books = $("books-pop");
+      const overlay = drawerOverlay() && !!(showC || showS || showB);
+      if (home) {
+        home.hidden = !showC;
+        home.classList.toggle("is-overlay", !!(showC && overlay));
+      }
+      if (prac) {
+        prac.hidden = !showS;
+        prac.classList.toggle("is-overlay", !!(showS && overlay));
+      }
+      if (books) {
+        books.hidden = !showB;
+        books.classList.toggle("is-overlay", !!(showB && overlay));
+      }
+      if (week) week.hidden = !showCal;
+      if (video) {
+        video.hidden = !showV;
+        video.classList.toggle("is-pip", !!(showV && pip));
+        if (!showV || !pip) {
+          video.style.height = "";
+          video.style.maxHeight = "";
+        }
+      }
+      if (mail) mail.hidden = !showM;
+      const mailBtn = $("open-mail");
+      if (mailBtn) {
+        mailBtn.setAttribute("aria-pressed", showM ? "true" : "false");
+        mailBtn.classList.toggle("is-on", !!showM);
+      }
+      const calBtn = $("open-calendar");
+      if (calBtn) {
+        calBtn.setAttribute("aria-pressed", showCal ? "true" : "false");
+        calBtn.classList.toggle("is-on", !!showCal);
+      }
+      const clientBtn = $("open-client");
+      if (clientBtn) {
+        clientBtn.setAttribute("aria-pressed", showC ? "true" : "false");
+        clientBtn.classList.toggle("is-on", !!showC);
+      }
+      const booksBtn = $("open-books");
+      if (booksBtn) {
+        booksBtn.setAttribute("aria-pressed", showB ? "true" : "false");
+        booksBtn.classList.toggle("is-on", !!showB);
+      }
+      const wait = $("wait-widget");
+      if (wait) wait.hidden = !(officeLive || liveElsewhere);
+      document.documentElement.classList.toggle("desk-overlay-open", overlay);
+      document.documentElement.classList.toggle("desk-view-video", deskView === "video");
+      const scrim = $("home-scrim");
+      if (scrim) scrim.setAttribute("aria-hidden", overlay ? "false" : "true");
+      const gear = $("open-practice");
+      if (gear) gear.setAttribute("aria-pressed", showS ? "true" : "false");
+      const officeBtn = $("open-office");
+      if (officeBtn) officeBtn.setAttribute("aria-pressed", hero === "office" || pip ? "true" : "false");
+      setLeaveVisible(hasLiveVideoFeed());
+      document.documentElement.classList.toggle("desk-hero-fill", !!(showCal || (showV && !pip) || showM));
+      const moreBtn = $("open-more");
+      if (moreBtn) moreBtn.classList.toggle("is-on", !!(showC || showS || showB));
+      const unlockBtn = $("open-unlock");
+      if (unlockBtn) unlockBtn.hidden = !!isUnlocked();
+      requestAnimationFrame(sizeWeekTile);
+    }
+    function setLeaveVisible(on) {
+      const leaveBan = $("btn-leave-banner");
+      if (!leaveBan) return;
+      if (on) leaveBan.removeAttribute("hidden");
+      else leaveBan.setAttribute("hidden", "");
+    }
+    function hasLiveVideoFeed() {
+      if (!officeLive) return false;
+      const grid = $("video-grid");
+      if (!grid) return false;
+      const vids = grid.querySelectorAll("video");
+      for (let i = 0; i < vids.length; i++) {
+        const v = vids[i];
+        if (!v) continue;
+        if (v.srcObject) return true;
+        if (v.readyState >= 2 && v.videoWidth > 0) return true;
+      }
+      return false;
+    }
+    function placeMoreMenu() {
+      const menu = $("more-menu");
+      const btn = $("open-more");
+      const banner = $("desk-banner");
+      if (!menu || menu.hidden || !btn) return;
+      const br = banner ? banner.getBoundingClientRect() : { bottom: 48 };
+      const r = btn.getBoundingClientRect();
+      const w = menu.offsetWidth || 168;
+      let left = r.right - w;
+      if (left < 8) left = 8;
+      if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+      menu.style.top = Math.round(br.bottom + 6) + "px";
+      menu.style.left = Math.round(left) + "px";
+      menu.style.right = "auto";
+    }
+    function resetOfficeHost() {
+      try {
+        if (officeHost && officeHost.leaveCall) officeHost.leaveCall();
+      } catch (e) {}
+      officeHost = null;
+      officeLive = false;
+      officeStarting = false;
+      window.__deskVideoLive = false;
+      liveElsewhere = false;
+    }
+    function endOffice() {
+      resetOfficeHost();
+      officeOn = false;
+      announceCall(false);
+      applyTiles();
+    }
+    function watchVideoFeed() {
+      const grid = $("video-grid");
+      if (!grid || grid._feedWatch) return;
+      grid._feedWatch = true;
+      const bump = () => applyTiles();
+      const mo = new MutationObserver(bump);
+      mo.observe(grid, { childList: true, subtree: true, attributes: true });
+      grid.addEventListener("loadeddata", bump, true);
+      grid.addEventListener("emptied", bump, true);
+    }
+    function closeMoreMenu() {
+      const menu = $("more-menu");
+      const btn = $("open-more");
+      if (menu) menu.hidden = true;
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+    function closeUnlock() {
+      const pop = $("unlock-pop");
+      if (pop) pop.hidden = true;
+      syncSheetLock();
+    }
+    function openUnlock() {
+      closeMoreMenu();
+      const pop = $("unlock-pop");
+      if (!pop) return;
+      pop.hidden = false;
+      syncSheetLock();
+      fitSheet(pop);
+      if ($("secret")) $("secret").focus();
+    }
+    function needUnlock() {
+      if (isUnlocked()) return false;
+      openUnlock();
+      return true;
+    }
+    function toggleMoreMenu() {
+      const menu = $("more-menu");
+      const btn = $("open-more");
+      if (!menu || !btn) return;
+      const open = menu.hidden;
+      menu.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) placeMoreMenu();
+    }
+    function openSettings() {
+      closeAllDrawers();
+      collapseSettings();
+      settingsClosed = false;
+      settingsForced = true;
+      applyTiles();
+      if (!isUnlocked()) return;
+      loadPractice().catch((e) => {
+        if ($("practice-status")) $("practice-status").textContent = "Could not load: " + e.message;
+      });
+    }
+    function closeSettings() {
+      settingsForced = false;
+      settingsClosed = true;
+      applyTiles();
+    }
+    function toggleSettings() {
+      if (settingsWanted()) closeSettings();
+      else openSettings();
+    }
+    function openClientTile() {
+      closeAllDrawers();
+      clientClosed = false;
+      clientForced = true;
+      applyTiles();
+    }
+    function closeClientTile() {
+      clientForced = false;
+      clientClosed = true;
+      applyTiles();
+    }
+    function toggleClientTile() {
+      if (clientWanted()) closeClientTile();
+      else openClientTile();
+    }
+    function closeOverlays() {
+      closeAllDrawers();
+      syncSheetLock();
+      applyTiles();
+    }
+    function ensureOfficeHost() {
+      if (officeHost) return officeHost;
+      const sec = officeSecretFromUrl(officeUrl);
+      if (!sec) throw new Error("Office link missing. Set LIVEKIT_OFFICE_URL.");
+      if (typeof HostOffice !== "function" || typeof LivekitClient === "undefined") {
+        throw new Error("Call libraries not loaded.");
+      }
+      officeHost = new HostOffice({
+        secret: sec,
+        pinRequired: false,
+        defaultName: "Dr. Matt",
+        mainRoom: "office",
+        apiBase: liveBase(),
+        onLive: function () {
+          officeLive = true;
+          window.__deskVideoLive = true;
+          liveElsewhere = false;
+          officeOn = true;
+          announceCall(true);
+          watchVideoFeed();
+          applyTiles();
+        },
+        onLeave: function () {
+          officeLive = false;
+          window.__deskVideoLive = false;
+          liveElsewhere = false;
+          officeStarting = false;
+          announceCall(false);
+          applyTiles();
+        },
+      });
+      officeHost.bindUi();
+      return officeHost;
+    }
+    async function startOffice() {
+      if (liveElsewhere && deskView !== "video") {
+        liveElsewhere = false;
+      }
+      officeOn = true;
+      applyTiles();
+      if (officeLive && officeHost && officeHost.room) return;
+      if (officeStarting) return;
+      officeStarting = true;
+      try {
+        if (!officeHost) ensureOfficeHost();
+        const host = officeHost;
+        const name = (practiceCache && practiceCache.clinician_name) || "Dr. Matt";
+        await host.startSession(name, "");
+      } catch (e) {
+        msg(e.message || "Could not open office.");
+        resetOfficeHost();
+        officeOn = true;
+        applyTiles();
+      } finally {
+        officeStarting = false;
+      }
+    }
+    function toggleOffice() {
+      if (needUnlock()) return;
+      if (deskView === "video") return;
+      if (hero === "office") {
+        showHero("calendar");
+        return;
+      }
+      showHero("office");
+      if (!officeLive) startOffice();
+    }
+    function popOutVideo() {
+      const u = new URL(location.href);
+      u.searchParams.set("view", "video");
+      u.hash = "";
+      const child = window.open(u.toString(), "psycharts-video", "popup=yes,width=1120,height=760");
+      if (!child) { msg("Pop-out blocked. Allow pop-ups for this site."); return; }
+      resetOfficeHost();
+      officeOn = false;
+      setDeskView("desk");
+      applyTiles();
+    }
+    if ($("open-office")) $("open-office").onclick = () => { closeMoreMenu(); toggleOffice(); };
+    if ($("open-unlock")) $("open-unlock").onclick = () => openUnlock();
+    if ($("unlock-close")) $("unlock-close").onclick = closeUnlock;
+    if ($("open-more")) $("open-more").onclick = (e) => { e.stopPropagation(); toggleMoreMenu(); };
+    document.addEventListener("click", (e) => {
+      const wrap = document.querySelector(".desk-more");
+      if (wrap && !wrap.contains(e.target)) closeMoreMenu();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMoreMenu();
+    });
+    if ($("btn-pop-video")) $("btn-pop-video").onclick = popOutVideo;
+    if ($("open-calendar")) $("open-calendar").onclick = toggleCalendar;
+    if ($("open-mail")) $("open-mail").onclick = () => { closeMoreMenu(); if (needUnlock()) return; toggleMail(); };
+    if ($("mail-refresh")) $("mail-refresh").onclick = () => loadMailList();
+    if ($("mail-reply")) $("mail-reply").onsubmit = (e) => { e.preventDefault(); sendMailReply(); };
+    if ($("mail-attach")) $("mail-attach").onclick = () => $("mail-files") && $("mail-files").click();
+    if ($("mail-files")) $("mail-files").onchange = () => {
+      const lab = $("mail-file-label");
+      const files = $("mail-files").files || [];
+      if (lab) {
+        lab.hidden = !files.length;
+        lab.textContent = files.length ? Array.from(files).map((f) => f.name).join(", ") : "";
+      }
+    };
+    if ($("mail-emoji-btn")) $("mail-emoji-btn").onclick = () => {
+      const box = $("mail-emoji");
+      if (!box) return;
+      box.hidden = !box.hidden;
+      $("mail-emoji-btn").setAttribute("aria-pressed", box.hidden ? "false" : "true");
+      if (!box.dataset.ready) {
+        ["👍","👋","😊","🙏","❤️","✅","❌","📅","📞","📄","💊","🩺","⏰"].forEach((em) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = em;
+          b.onclick = () => {
+            const ta = $("mail-reply-body");
+            if (!ta) return;
+            ta.value += em;
+            ta.focus();
+          };
+          box.appendChild(b);
+        });
+        box.dataset.ready = "1";
+      }
+    };
+    function mailWhen(unix) {
+      if (!unix) return "";
+      const d = new Date(Number(unix) * 1000);
+      if (Number.isNaN(d.getTime())) return "";
+      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    }
+    async function loadMailList() {
+      const rows = $("mail-rows");
+      const empty = $("mail-list-empty");
+      if (!rows) return;
+      rows.innerHTML = "";
+      if (empty) empty.textContent = "Loading Desk…";
+      try {
+        const res = await deskFetch("/api/desk/mail/list?folder=Desk");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          if (empty) empty.textContent = data.detail || data.error || "Could not list Desk.";
+          return;
+        }
+        const items = data.conversations || [];
+        if (empty) {
+          empty.hidden = !!items.length;
+          empty.textContent = items.length ? "" : "No mail in Desk yet. Filters send practice mail here.";
+        }
+        items.forEach((c) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "mail-row" + (c.unread ? " unread" : "") + (c.id === mailCurrent ? " is-on" : "");
+          b.dataset.id = c.id || "";
+          const ch = c.channel || "email";
+          b.innerHTML = "<div class='who-row'><span class='mail-chip " + esc(ch) + "'>" + esc(ch) + "</span>"
+            + "<span class='who'>" + esc(c.from_name || c.from || "Unknown") + "</span></div>"
+            + "<div class='sub'>" + esc(c.subject || "") + (c.time ? " · " + esc(mailWhen(c.time)) : "")
+            + (c.attachments ? " · 📎" : "") + "</div>";
+          b.onclick = () => openMailThread(c.id, c);
+          rows.appendChild(b);
+        });
+      } catch (e) {
+        if (empty) empty.textContent = "Mail failed: network.";
+      }
+    }
+    async function openMailThread(id, preview) {
+      mailCurrent = id || "";
+      document.querySelectorAll(".mail-row").forEach((el) => {
+        el.classList.toggle("is-on", el.dataset.id === mailCurrent);
+      });
+      const head = $("mail-thread-head");
+      const chat = $("mail-chat");
+      const form = $("mail-reply");
+      if (head) {
+        head.innerHTML = "<h3>" + esc((preview && preview.subject) || "Thread") + "</h3>"
+          + "<p>Loading…</p>";
+      }
+      if (chat) chat.innerHTML = "";
+      try {
+        const res = await deskFetch("/api/desk/mail/thread?id=" + encodeURIComponent(id));
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          if (head) head.querySelector("p").textContent = data.detail || data.error || "Could not open.";
+          return;
+        }
+        const ch = data.channel || "email";
+        if (head) {
+          let extra = data.from || "";
+          if (data.client && data.client.name) extra = data.client.name + (data.from ? " · " + data.from : "");
+          head.innerHTML = "<h3><span class='mail-chip " + esc(ch) + "'>" + esc(ch) + "</span> "
+            + esc(data.subject || "Thread") + "</h3><p>" + esc(extra) + "</p>";
+        }
+        if (chat) {
+          (data.messages || []).forEach((m) => {
+            const div = document.createElement("div");
+            div.className = "mail-bubble " + (m.mine ? "me" : "them");
+            let html = "<div class='meta'>" + esc(m.from_name || m.from || "") + (m.time ? " · " + esc(mailWhen(m.time)) : "") + "</div>"
+              + esc(m.text || "");
+            const atts = m.attachments || [];
+            if (atts.length) {
+              html += "<div class='mail-atts'>";
+              atts.forEach((a) => {
+                const href = "/api/desk/mail/attachment?message=" + encodeURIComponent(m.id || "")
+                  + "&id=" + encodeURIComponent(a.id || "")
+                  + "&name=" + encodeURIComponent(a.name || "file");
+                html += "<a class='mail-att' href='" + href + "' target='_blank' rel='noopener'>"
+                  + "📎 " + esc(a.name || "file") + "</a>";
+              });
+              html += "</div>";
+            }
+            div.innerHTML = html;
+            chat.appendChild(div);
+          });
+          chat.scrollTop = chat.scrollHeight;
+        }
+        if (form) form.hidden = false;
+        const skip = /^(no-?reply@|notifications@)/i.test(data.from || "")
+          || /carepatron\.com|sinch\.com$/i.test((data.from || "").split("@")[1] || "");
+        if (!skip && data.client && (data.client.id || data.client.email)) {
+          openClientTile();
+          openHome({ id: data.client.id || "", email: data.client.email || "", name: data.client.name || "" });
+        } else if (!skip && data.from) {
+          openClientTile();
+          openHome({ email: data.from, name: data.from_name || "" });
+        }
+      } catch (e) {
+        if (head) head.querySelector("p").textContent = "Network.";
+      }
+    }
+    function readFileB64(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => {
+          const s = String(r.result || "");
+          const i = s.indexOf(",");
+          resolve(i >= 0 ? s.slice(i + 1) : s);
+        };
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+    }
+    async function sendMailReply() {
+      const ta = $("mail-reply-body");
+      const text = ta ? ta.value.trim() : "";
+      const picked = $("mail-files") ? Array.from($("mail-files").files || []) : [];
+      if (!mailCurrent || (!text && !picked.length)) return;
+      const btn = $("mail-reply-go");
+      if (btn) btn.disabled = true;
+      try {
+        const files = [];
+        for (const f of picked.slice(0, 4)) {
+          files.push({ name: f.name, b64: await readFileB64(f) });
+        }
+        const res = await deskFetch("/api/desk/mail/reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: mailCurrent, body: text, files }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          msg(data.detail || data.error || "Reply failed.");
+          return;
+        }
+        if (ta) ta.value = "";
+        if ($("mail-files")) $("mail-files").value = "";
+        if ($("mail-file-label")) { $("mail-file-label").hidden = true; $("mail-file-label").textContent = ""; }
+        await openMailThread(mailCurrent);
+      } catch (e) {
+        msg("Reply failed: network.");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+    if ($("btn-leave-banner")) $("btn-leave-banner").onclick = () => { endOffice(); };
+    function closePractice() { closeSettings(); }
+    function togglePractice() { toggleSettings(); }
+    function closeSuperbill() {
+      $("superbill-pop").hidden = true;
+      syncSheetLock();
+    }
+    function closeBooks() {
+      booksOn = false;
+      if ($("books-pop")) $("books-pop").hidden = true;
+      syncSheetLock();
+      applyTiles();
+    }
+    async function openBooks() {
+      if (booksWanted()) { closeBooks(); return; }
+      closeAllDrawers();
+      closePop();
+      closeSend();
+      closeNote();
+      closeSuperbill();
+      if ($("files-pop")) $("files-pop").hidden = true;
+      booksOn = true;
+      $("books-pop").hidden = false;
+      applyTiles();
+      try { await loadBooks(booksMonth); }
+      catch (e) { if ($("books-status")) $("books-status").textContent = e.message || "failed"; }
+    }
+    if ($("open-books")) $("open-books").onclick = () => { closeMoreMenu(); if (needUnlock()) return; openBooks(); };
+    if ($("books-close")) $("books-close").onclick = closeBooks;
+    let booksMonth = "";
+    function shiftMonth(key, delta) {
+      const [y, m] = (key || "2026-01").split("-").map(Number);
+      const d = new Date(y, m - 1 + delta, 1);
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    }
+    function paintBooks(data) {
+      const mo = data.month || {};
+      const yr = data.year || {};
+      if ($("books-title")) $("books-title").textContent = mo.label || "Books";
+      function block(title, s, extra) {
+        return (
+          '<div class="books-block"><h4 style="margin:0 0 0.35rem">' + esc(title) + "</h4>" +
+          '<div class="books-stat"><span>Collected</span><strong>' + esc(s.collected_pretty || "$0.00") + "</strong></div>" +
+          '<div class="books-stat"><span>Outstanding</span><span>' + esc(s.owed_pretty || "$0.00") + "</span></div>" +
+          '<div class="books-stat"><span>Waived</span><span>' + esc(s.waived_pretty || "$0.00") + "</span></div>" +
+          '<div class="books-stat"><span>Visits · no-shows</span><span>' +
+          esc(String(s.visits || 0)) + " · " + esc(String(s.no_shows || 0)) + "</span></div>" +
+          (extra || "") +
+          "</div>"
+        );
+      }
+      const lines = (mo.lines || []).map(function (ln) {
+        return (
+          "<li><span>" + esc(ln.dos || "") +
+          (ln.client_name ? " · " + esc(ln.client_name) : "") +
+          (ln.note ? " · " + esc(ln.note) : "") +
+          "</span><span class='desk-meta'>" + esc(ln.amount_pretty || "") +
+          " · " + esc(ln.status || "") + "</span></li>"
+        );
+      }).join("");
+      const recent = lines
+        ? "<ul class='home-list'>" + lines + "</ul>"
+        : "<p class='desk-meta'>No ledger lines in this month yet.</p>";
+      $("books-body").innerHTML = block(mo.label || "This month", mo, recent) + block(yr.label ? "Year " + yr.label : "This year", yr, "");
+    }
+    async function loadBooks(month) {
+      const status = $("books-status");
+      if (status) status.textContent = "Loading…";
+      const q = month ? ("?month=" + encodeURIComponent(month)) : "";
+      const res = await deskFetch("/api/desk/books" + q);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        if (status) status.textContent = data.detail || "Could not load books.";
+        return;
+      }
+      booksMonth = (data.month && data.month.period) || month || "";
+      if (status) status.textContent = "";
+      paintBooks(data);
+    }
+    if ($("books-prev")) $("books-prev").onclick = () => loadBooks(shiftMonth(booksMonth, -1));
+    if ($("books-next")) $("books-next").onclick = () => loadBooks(shiftMonth(booksMonth, 1));
+    if ($("books-now")) $("books-now").onclick = () => { booksMonth = ""; loadBooks(""); };
+    let practiceCache = null;
+    let practiceServices = [];
+    function bust(url) {
+      if (!url) return "";
+      return url + (url.indexOf("?") >= 0 ? "&" : "?") + "v=" + Date.now();
+    }
+    function fillPracticeForm(p) {
+      practiceCache = p || practiceCache;
+      if (!p) return;
+      $("prac-display").value = p.display_name || "";
+      $("prac-legal").value = p.legal_name || "";
+      $("prac-clinician").value = p.clinician_name || "";
+      $("prac-title").value = p.clinician_title || "";
+      $("prac-role").value = p.billing_role === "therapist" ? "therapist" : "psychiatrist";
+      if (p.services) practiceServices = p.services;
+      $("prac-address").value = p.address || "";
+      $("prac-phone").value = p.phone || "";
+      $("prac-fax").value = p.fax || "";
+      $("prac-email").value = p.email || "";
+      if ($("prac-callback")) $("prac-callback").value = p.clinician_callback || "";
+      var hs = (p.call && p.call.handset) || p.call_handset || "browser";
+      if ($("prac-handset-browser")) $("prac-handset-browser").checked = hs !== "phone";
+      if ($("prac-handset-phone")) $("prac-handset-phone").checked = hs === "phone";
+      if ($("prac-callback-wrap")) $("prac-callback-wrap").hidden = hs !== "phone";
+      if ($("prac-did-hint") && p.call) {
+        var did = p.call.did_pretty || p.call.did || "";
+        $("prac-did-hint").textContent = did
+          ? "Patients see " + did + " as caller ID — never your personal number."
+          : "Patients see the Twilio voice DID as caller ID — never your personal number.";
+      }
+      $("prac-ein").value = p.ein || "";
+      $("prac-npi").value = p.npi || "";
+      $("prac-title-ocd").value = (p.page_titles && p.page_titles.ocd) || "OCD";
+      $("prac-title-anxiety").value = (p.page_titles && p.page_titles.anxiety) || "Anxiety";
+      renderLicenses(p.licenses || []);
+      fillTheme(p.theme || {});
+      $("prac-logo-img").src = bust(p.logo_url || "/api/practice/logo");
+      const photo = $("prac-photo-img");
+      if (p.photo_url) {
+        photo.src = bust(p.photo_url);
+        photo.hidden = false;
+      } else {
+        photo.removeAttribute("src");
+        photo.hidden = true;
+      }
+      renderPageBgs(p.pages || [], p.backgrounds || {});
+    }
+    async function loadPractice() {
+      const res = await deskFetch("/api/desk/practice");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.detail || res.status);
+      fillPracticeForm(data);
+      return data;
+    }
+    async function openPractice() {
+      closePop();
+      closeSend();
+      closeNote();
+      closeSuperbill();
+      if ($("files-pop")) $("files-pop").hidden = true;
+      syncSheetLock();
+      if ($("practice-status")) $("practice-status").textContent = "";
+      openSettings();
+    }
+    function openNotePop(dos) {
+      closeHomeDrawer();
+      closePop();
+      closeSend();
+      closePractice();
+      closeSuperbill();
+      $("files-pop").hidden = true;
+      if (!dos && homeCurrent) {
+        const vis = ((homeCurrent.visits || {}).upcoming || []).concat((homeCurrent.visits || {}).past || []);
+        const hit = vis.find((v) => v.event_id && v.event_id === focusEventId);
+        if (hit && hit.start_iso) dos = String(hit.start_iso).slice(0, 10);
+      }
+      noteDosPrefill = dos || new Date().toISOString().slice(0, 10);
+      $("nt-event").value = focusEventId || "";
+      $("note-status").textContent = "";
+      fillNoteTemplates().then(() => {
+        renderNoteFields();
+        const c = (homeCurrent && homeCurrent.client) || {};
+        applyVaultToNoteFields(c);
+        fitSheet($("note-pop"));
+      });
+      const pop = $("note-pop");
+      pop.hidden = false;
+      syncSheetLock();
+      fitSheet(pop);
+    }
+    $("pop-close").onclick = closePop;
+    $("send-close").onclick = closeSend;
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if ($("books-pop") && !$("books-pop").hidden) closeBooks();
+      else if (!$("superbill-pop").hidden) closeSuperbill();
+      else if (!$("note-pop").hidden) closeNote();
+      else if (!$("send-pop").hidden) closeSend();
+      else if (!$("book-pop").hidden) closePop();
+      else closeOverlays();
+    });
+    if ($("open-practice")) $("open-practice").onclick = () => { closeMoreMenu(); if (needUnlock()) return; togglePractice(); };
+    $("practice-close").onclick = closePractice;
+    function syncHandsetUi() {
+      const phoneOn = $("prac-handset-phone") && $("prac-handset-phone").checked;
+      if ($("prac-callback-wrap")) $("prac-callback-wrap").hidden = !phoneOn;
+    }
+    if ($("prac-handset-browser")) $("prac-handset-browser").onchange = syncHandsetUi;
+    if ($("prac-handset-phone")) $("prac-handset-phone").onchange = syncHandsetUi;
+    $("practice-pop").addEventListener("toggle", (e) => {
+      const el = e.target;
+      if (!el.open || !el.classList || !el.classList.contains("prac-acc")) return;
+      $("practice-pop").querySelectorAll("details.prac-acc").forEach((d) => {
+        if (d !== el) d.open = false;
+      });
+    }, true);
+    $("prac-save").onclick = async () => {
+      const status = $("practice-status");
+      status.textContent = "Saving…";
+      const res = await deskFetch("/api/desk/practice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          display_name: $("prac-display").value,
+          legal_name: $("prac-legal").value,
+          clinician_name: $("prac-clinician").value,
+          clinician_title: $("prac-title").value,
+          billing_role: $("prac-role").value,
+          address: $("prac-address").value,
+          phone: $("prac-phone").value,
+          fax: $("prac-fax").value,
+          email: $("prac-email").value,
+          clinician_callback: $("prac-callback") ? $("prac-callback").value : "",
+          call_handset: ($("prac-handset-phone") && $("prac-handset-phone").checked) ? "phone" : "browser",
+          ein: $("prac-ein").value,
+          npi: $("prac-npi").value,
+          licenses: readLicenses(),
+          theme: readTheme(),
+          page_titles: {
+            ocd: $("prac-title-ocd").value,
+            anxiety: $("prac-title-anxiety").value,
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        status.textContent = "Failed: " + (data.detail || res.status);
+        return;
+      }
+      fillPracticeForm(data);
+      status.textContent = "Saved. Notes, mail, site logo, and portal photo read this.";
+      msg("Practice saved.", true);
+    };
+    async function uploadPracticeAsset(kind, file) {
+      const status = $("practice-status");
+      if (!file) return;
+      status.textContent = "Uploading " + kind + "…";
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await deskFetch(
+        "/api/desk/practice/asset?kind=" + encodeURIComponent(kind),
+        { method: "POST", body: fd }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        status.textContent = "Upload failed: " + (data.detail || res.status);
+        return;
+      }
+      fillPracticeForm(data);
+      const label = kind === "logo" ? "Logo" : kind === "photo" ? "Photo" : "Background";
+      status.textContent = label + " updated.";
+      msg(label + " updated.", true);
+    }
+    $("prac-logo-file").onchange = (e) => uploadPracticeAsset("logo", e.target.files && e.target.files[0]);
+    $("prac-photo-file").onchange = (e) => uploadPracticeAsset("photo", e.target.files && e.target.files[0]);
+    const DEFAULT_PAGES = [
+      ["home","Home"],["about","About"],["ocd","OCD"],["anxiety","Anxiety"],
+      ["faq","FAQ"],["contact","Contact"],["services","Fees"],["telehealth","Telehealth"],
+      ["portal","Portal"],["forms","Forms"],["pay","Pay"],["privacy","Privacy"],["terms","Terms"]
+    ];
+    function renderPageBgs(pages, urls) {
+      const box = $("prac-bgs");
+      if (!box) return;
+      const list = (pages && pages.length) ? pages : DEFAULT_PAGES.map(([id,label]) => ({id,label}));
+      box.innerHTML = "";
+      list.forEach((pg) => {
+        const id = pg.id || pg[0];
+        const label = pg.label || pg[1] || id;
+        const row = document.createElement("div");
+        row.className = "lic-row";
+        const name = document.createElement("span");
+        name.style.flex = "0 0 6.2rem";
+        name.style.fontSize = "0.82rem";
+        name.textContent = label;
+        const img = document.createElement("img");
+        img.alt = "";
+        img.style.width = "2.2rem";
+        img.style.height = "2.2rem";
+        img.style.objectFit = "cover";
+        img.style.borderRadius = "0.35rem";
+        img.style.border = "1px solid var(--border)";
+        const url = urls && urls[id];
+        if (url) img.src = bust(url);
+        else img.style.opacity = "0.25";
+        const inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "image/jpeg,image/png,image/webp";
+        inp.style.flex = "1";
+        inp.style.minWidth = "0";
+        inp.style.fontSize = "0.72rem";
+        inp.onchange = () => uploadPracticeAsset("bg-" + id, inp.files && inp.files[0]);
+        row.appendChild(name);
+        row.appendChild(img);
+        row.appendChild(inp);
+        box.appendChild(row);
+      });
+    }
+    const THEME_TOKEN_KEYS = [
+      ["background", "Background"],
+      ["foreground", "Text"],
+      ["muted", "Muted"],
+      ["border", "Border"],
+      ["accent", "Accent"],
+      ["surface", "Surface"],
+      ["ring", "Focus ring"],
+      ["slot_bg", "Slots"],
+    ];
+    const THEME_DEFAULTS = {
+      background: "#fafafa", foreground: "#111111", muted: "#737373", border: "#e5e5e5",
+      accent: "#111111", surface: "#ffffff", ring: "#a3a3a3", slot_bg: "#f5f5f5",
+    };
+    function renderThemeTokens(tokens) {
+      const box = $("prac-theme-tokens");
+      box.innerHTML = "";
+      THEME_TOKEN_KEYS.forEach(([key, lab]) => {
+        const row = document.createElement("label");
+        row.className = "field";
+        row.style.flexDirection = "row";
+        row.style.alignItems = "center";
+        row.style.gap = "0.5rem";
+        const inp = document.createElement("input");
+        inp.type = "color";
+        inp.dataset.tok = key;
+        inp.value = (tokens && tokens[key]) || THEME_DEFAULTS[key];
+        const span = document.createElement("span");
+        span.textContent = lab;
+        row.appendChild(inp);
+        row.appendChild(span);
+        box.appendChild(row);
+      });
+    }
+    function syncThemeUi() {
+      const mode = $("prac-theme-mode").value;
+      const wrap = $("prac-theme-toggle-wrap");
+      const box = $("prac-theme-tokens");
+      box.hidden = mode !== "custom";
+      wrap.hidden = mode === "custom";
+      if (mode === "custom") $("prac-theme-toggle").checked = false;
+    }
+    function fillTheme(theme) {
+      const t = theme || {};
+      $("prac-theme-mode").value = t.mode === "dark" || t.mode === "custom" ? t.mode : "light";
+      $("prac-theme-toggle").checked = t.allow_toggle !== false && t.mode !== "custom";
+      renderThemeTokens(t.tokens || THEME_DEFAULTS);
+      syncThemeUi();
+    }
+    function readTheme() {
+      const tokens = {};
+      $("prac-theme-tokens").querySelectorAll("input[data-tok]").forEach((inp) => {
+        tokens[inp.dataset.tok] = inp.value;
+      });
+      const mode = $("prac-theme-mode").value;
+      return {
+        mode,
+        allow_toggle: mode !== "custom" && $("prac-theme-toggle").checked,
+        tokens,
+      };
+    }
+    $("prac-theme-mode").onchange = syncThemeUi;
+    const STATE_OPTS = [
+      ["IL","Illinois"],["KS","Kansas"],["MO","Missouri"],["NA","Not applicable"],
+      ["AL","Alabama"],["AK","Alaska"],["AZ","Arizona"],["AR","Arkansas"],["CA","California"],
+      ["CO","Colorado"],["CT","Connecticut"],["DE","Delaware"],["DC","District of Columbia"],
+      ["FL","Florida"],["GA","Georgia"],["HI","Hawaii"],["ID","Idaho"],["IN","Indiana"],
+      ["IA","Iowa"],["KY","Kentucky"],["LA","Louisiana"],["ME","Maine"],["MD","Maryland"],
+      ["MA","Massachusetts"],["MI","Michigan"],["MN","Minnesota"],["MS","Mississippi"],
+      ["MT","Montana"],["NE","Nebraska"],["NV","Nevada"],["NH","New Hampshire"],["NJ","New Jersey"],
+      ["NM","New Mexico"],["NY","New York"],["NC","North Carolina"],["ND","North Dakota"],
+      ["OH","Ohio"],["OK","Oklahoma"],["OR","Oregon"],["PA","Pennsylvania"],["RI","Rhode Island"],
+      ["SC","South Carolina"],["SD","South Dakota"],["TN","Tennessee"],["TX","Texas"],
+      ["UT","Utah"],["VT","Vermont"],["VA","Virginia"],["WA","Washington"],["WV","West Virginia"],
+      ["WI","Wisconsin"],["WY","Wyoming"]
+    ];
+    function addLicenseRow(lic) {
+      const row = document.createElement("div");
+      row.className = "lic-row";
+      const sel = document.createElement("select");
+      STATE_OPTS.forEach(([v,l]) => {
+        const o = document.createElement("option");
+        o.value = v; o.textContent = l; sel.appendChild(o);
+      });
+      const st = ((lic && lic.state) || "IL").toUpperCase();
+      sel.value = (st === "N/A" || st === "NA") ? "NA" : st;
+      if (!sel.value) sel.value = "NA";
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.placeholder = "License number";
+      inp.value = (lic && lic.number) || "";
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "x"; x.textContent = "×"; x.setAttribute("aria-label","Remove");
+      x.onclick = () => row.remove();
+      row.appendChild(sel); row.appendChild(inp); row.appendChild(x);
+      $("prac-lics").appendChild(row);
+    }
+    function renderLicenses(list) {
+      $("prac-lics").innerHTML = "";
+      const rows = (list && list.length) ? list : [{ state: "IL", number: "" }];
+      rows.forEach(addLicenseRow);
+    }
+    function readLicenses() {
+      const out = [];
+      $("prac-lics").querySelectorAll(".lic-row").forEach((row) => {
+        const state = row.querySelector("select").value;
+        const number = row.querySelector("input").value.trim();
+        if (number) out.push({ state, number });
+      });
+      return out;
+    }
+    $("prac-lic-add").onclick = () => addLicenseRow({ state: "IL", number: "" });
+
+    function addDxRow(dx) {
+      const row = document.createElement("div");
+      row.className = "sb-dx";
+      row.innerHTML = "<div class='sb-line-top'><input class='sb-code' placeholder='F41.1' /><button type='button' class='x' aria-label='Remove'>×</button></div><input class='sb-lab' placeholder='Generalized anxiety disorder' />";
+      row.querySelector(".sb-code").value = (dx && dx.code) || "";
+      row.querySelector(".sb-lab").value = (dx && dx.label) || "";
+      row.querySelector(".x").onclick = () => row.remove();
+      $("sb-dxs").appendChild(row);
+    }
+    function addSvcRow(line) {
+      const row = document.createElement("div");
+      row.className = "sb-line";
+      row.innerHTML = "<div class='sb-line-top'><input class='sb-svc' placeholder='Service' /><button type='button' class='x' aria-label='Remove'>×</button></div>"
+        + "<div class='sb-line-top'><input class='sb-cpt' placeholder='99213' /><input class='sb-mod' placeholder='95' /><input class='sb-dxp' placeholder='1,2' /><input class='sb-units' placeholder='1' /><input class='sb-cost' placeholder='220.00' /><input class='sb-paid' placeholder='220.00' /></div>";
+      row.querySelector(".sb-svc").value = (line && line.service) || "";
+      row.querySelector(".sb-cpt").value = (line && line.code) || "";
+      row.querySelector(".sb-mod").value = (line && line.modifier) || "95";
+      row.querySelector(".sb-dxp").value = (line && line.dx) || "1";
+      row.querySelector(".sb-units").value = (line && line.units) || "1";
+      row.querySelector(".sb-cost").value = (line && line.cost) || "";
+      row.querySelector(".sb-paid").value = (line && line.paid) || "";
+      row.querySelector(".x").onclick = () => row.remove();
+      $("sb-lines").appendChild(row);
+    }
+    function fallbackServices() {
+      const role = (practiceCache && practiceCache.billing_role) || "psychiatrist";
+      if (role === "therapist") {
+        return [
+          { id: "fu30", label: "30 min therapy", duration: 30, lines: [{ service: "Psychotherapy, 30 min", code: "90832", modifier: "95", units: "1" }] },
+          { id: "fu45", label: "45 min therapy", duration: 45, lines: [{ service: "Psychotherapy, 45 min", code: "90834", modifier: "95", units: "1" }] },
+          { id: "fu60", label: "60 min therapy", duration: 60, lines: [{ service: "Psychotherapy, 60 min", code: "90837", modifier: "95", units: "1" }] },
+          { id: "init90", label: "Initial consult", duration: 90, lines: [{ service: "Psychiatric diagnostic evaluation, 90 min", code: "90791", modifier: "95", units: "1" }] },
+        ];
+      }
+      return [
+        { id: "fu30", label: "30 min follow-up", duration: 30, lines: [
+          { service: "Level 3 office visit, 30 min", code: "99213", modifier: "95", units: "1", cost: "220.00", paid: "220.00" },
+          { service: "Psychotherapy add-on, 30 min", code: "90833", modifier: "95", units: "1", cost: "45.00", paid: "45.00" },
+        ]},
+        { id: "fu60", label: "60 min follow-up", duration: 60, lines: [
+          { service: "Level 3 office visit", code: "99213", modifier: "95", units: "1", cost: "220.00", paid: "220.00" },
+          { service: "Psychotherapy add-on, 53+ min", code: "90838", modifier: "95", units: "1", cost: "200.00", paid: "200.00" },
+        ]},
+        { id: "init90", label: "Initial consult 90 min", duration: 90, lines: [
+          { service: "Psychiatric diagnostic evaluation with medical services, 90 min", code: "90792", modifier: "95", units: "1", cost: "600.00", paid: "600.00" },
+        ]},
+      ];
+    }
+    function services() {
+      return (practiceServices && practiceServices.length) ? practiceServices : fallbackServices();
+    }
+    function pickService(dur) {
+      const d = Number(dur) || 30;
+      const set = services();
+      if (d >= 80) return set.find((s) => s.id === "init90") || set[set.length - 1];
+      if (d >= 50) return set.find((s) => s.id === "fu60") || set.find((s) => s.duration === 60) || set[0];
+      return set.find((s) => s.id === "fu30") || set[0];
+    }
+    function applyService(spec) {
+      $("sb-lines").innerHTML = "";
+      (spec.lines || []).forEach((ln) => addSvcRow(Object.assign({ modifier: "95", dx: "1", units: "1" }, ln)));
+      const box = $("sb-presets");
+      if (box) box.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.id === spec.id));
+    }
+    function renderPresets(activeId) {
+      const box = $("sb-presets");
+      if (!box) return;
+      box.innerHTML = "";
+      services().forEach((spec) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.dataset.id = spec.id;
+        b.textContent = spec.label;
+        if (spec.id === activeId) b.className = "active";
+        b.onclick = () => applyService(spec);
+        box.appendChild(b);
+      });
+    }
+    function openSuperbill() {
+      closeHomeDrawer();
+      const c = (homeCurrent && homeCurrent.client) || {};
+      if (!c.id && !c.email) { msg("Open a directory client first."); return; }
+      closePop(); closeSend(); closeNote(); closePractice();
+      $("files-pop").hidden = true;
+      const pop = $("superbill-pop");
+      pop.hidden = false;
+      syncSheetLock();
+      fitSheet(pop);
+      $("superbill-status").textContent = "";
+      const vis = ((homeCurrent.visits || {}).upcoming || []).concat((homeCurrent.visits || {}).past || []);
+      const hit = vis.find((v) => v.event_id && v.event_id === focusEventId) || vis.find((v) => !v.upcoming) || vis[0];
+      const dos = (hit && hit.start_iso) ? String(hit.start_iso).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      $("sb-dos").value = dos;
+      $("sb-pos").value = "10";
+      $("sb-address").value = "";
+      $("sb-dxs").innerHTML = "";
+      addDxRow({});
+      const spec = pickService(hit && hit.duration_minutes);
+      renderPresets(spec && spec.id);
+      applyService(spec || pickService(30));
+    }
+    $("superbill-close").onclick = closeSuperbill;
+    $("sb-dx-add").onclick = () => addDxRow({});
+    $("sb-line-add").onclick = () => addSvcRow({ modifier: "95", dx: "1", units: "1" });
+    $("sb-save").onclick = async () => {
+      const c = (homeCurrent && homeCurrent.client) || {};
+      const status = $("superbill-status");
+      if (!c.id && !c.email) { status.textContent = "Open a directory client first."; return; }
+      const diagnoses = [];
+      $("sb-dxs").querySelectorAll(".sb-dx").forEach((row) => {
+        const code = row.querySelector(".sb-code").value.trim();
+        const label = row.querySelector(".sb-lab").value.trim();
+        if (code || label) diagnoses.push({ code, label });
+      });
+      const lines = [];
+      $("sb-lines").querySelectorAll(".sb-line").forEach((row) => {
+        const service = row.querySelector(".sb-svc").value.trim();
+        const code = row.querySelector(".sb-cpt").value.trim();
+        if (!service && !code) return;
+        lines.push({
+          dos: $("sb-dos").value,
+          pos: $("sb-pos").value.trim() || "10",
+          service,
+          code,
+          modifier: row.querySelector(".sb-mod").value.trim() || "95",
+          dx: row.querySelector(".sb-dxp").value.trim(),
+          units: row.querySelector(".sb-units").value.trim() || "1",
+          cost: row.querySelector(".sb-cost").value.trim(),
+          paid: row.querySelector(".sb-paid").value.trim(),
+        });
+      });
+      if (!lines.length) { status.textContent = "Add at least one service line."; return; }
+      status.textContent = "Saving…";
+      const res = await deskFetch("/api/desk/superbill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: c.id || "",
+          email: c.email || "",
+          dos: $("sb-dos").value,
+          pos: $("sb-pos").value.trim() || "10",
+          address: $("sb-address").value.trim(),
+          diagnoses,
+          lines,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        status.textContent = "Failed: " + (data.detail || res.status);
+        return;
+      }
+      status.textContent = "Saved · " + (data.name || "superbill") + (data.statement ? " · #" + data.statement : "");
+      msg("Superbill saved to Billing.", true);
+    };
+    if ($("open-send")) $("open-send").onclick = () => {
+      closePop();
+      closeSend();
+      closePractice();
+      closeSuperbill();
+      $("files-pop").hidden = true;
+      openSendPop();
+    };
+    function placeFiles() {
+      fitSheet($("files-pop"));
+    }
+    function openDriveAt(path, title) {
+      closeHomeDrawer();
+      closePop();
+      closeSend();
+      closePractice();
+      closeSuperbill();
+      $("files-pop").hidden = false;
+      syncSheetLock();
+      placeFiles();
+      const label = $("files-pop-title");
+      if (label) label.textContent = title || "Practice files";
+      if (window.PsychartsDrive && typeof window.PsychartsDrive.go === "function") {
+        window.PsychartsDrive.go(path || "/");
+      } else if (document.getElementById("pdrive-root") && document.getElementById("pdrive-root")._pdriveReload) {
+        document.getElementById("pdrive-root")._pdriveReload();
+      }
+    }
+    if ($("open-files")) $("open-files").onclick = () => { closeMoreMenu(); openDriveAt("/", "Practice files"); };
+    $("files-close").onclick = () => { $("files-pop").hidden = true; syncSheetLock(); };
+
+    $("pop-dur").onclick = (e) => {
+      const b = e.target.closest("button[data-dur]");
+      if (!b) return;
+      $("pop-dur").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+      $("bk-dur").value = b.dataset.dur;
+      $("bk-type").value = b.dataset.type || "follow-up";
+    };
+
+    function parseLocalInput(s) {
+      const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+      if (!m) return null;
+      return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], 0, 0);
+    }
+    function snap30(dt) {
+      const x = new Date(dt.getTime());
+      let total = x.getHours() * 60 + x.getMinutes();
+      if (x.getSeconds() >= 30) total += 1;
+      let snapped = Math.round(total / 30) * 30;
+      const minT = CAL_START * 60;
+      const maxT = CAL_END * 60 - 30;
+      if (snapped < minT) snapped = minT;
+      if (snapped > maxT) snapped = maxT;
+      x.setHours(Math.floor(snapped / 60), snapped % 60, 0, 0);
+      return x;
+    }
+    function fillTimeChoices(when) {
+      const sel = $("pop-time-sel");
+      sel.innerHTML = "";
+      const chosen = toLocalInput(when);
+      for (let h = CAL_START; h < CAL_END; h++) {
+        for (const m of [0, 30]) {
+          const t = new Date(when);
+          t.setHours(h, m, 0, 0);
+          const o = document.createElement("option");
+          o.value = toLocalInput(t);
+          o.textContent = t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+          if (o.value === chosen) o.selected = true;
+          sel.appendChild(o);
+        }
+      }
+    }
+    function applyWhen(when) {
+      when = snap30(when);
+      $("bk-when").value = toLocalInput(when);
+      $("pop-time").textContent = when.toLocaleDateString("en-US", {
+        weekday: "short", month: "short", day: "numeric",
+      });
+      fillTimeChoices(when);
+      $("pop-time-in").value =
+        String(when.getHours()).padStart(2, "0") + ":" + String(when.getMinutes()).padStart(2, "0");
+    }
+    function setWhenFromRaw(raw) {
+      const parsed = parseLocalInput(raw);
+      if (!parsed) return;
+      applyWhen(parsed);
+    }
+    $("pop-time-sel").addEventListener("change", () => setWhenFromRaw($("pop-time-sel").value));
+    $("pop-time-in").addEventListener("change", () => {
+      const hhmm = $("pop-time-in").value;
+      const day = parseLocalInput($("bk-when").value);
+      if (!hhmm || !day) return;
+      const [h, m] = hhmm.split(":").map(Number);
+      day.setHours(h, m, 0, 0);
+      applyWhen(day);
+    });
+    $("pop-time-minus").onclick = () => {
+      const when = parseLocalInput($("bk-when").value);
+      if (!when) return;
+      when.setMinutes(when.getMinutes() - 30);
+      applyWhen(when);
+    };
+    $("pop-time-plus").onclick = () => {
+      const when = parseLocalInput($("bk-when").value);
+      if (!when) return;
+      when.setMinutes(when.getMinutes() + 30);
+      applyWhen(when);
+    };
+
+    function placePop(clientX) {
+      fitSheet($("book-pop"), clientX);
+    }
+    function openPop(when, clientX, clientY) {
+      closeHomeDrawer();
+      applyWhen(when);
+      fillBookFromHome();
+      const pop = $("book-pop");
+      pop.hidden = false;
+      syncSheetLock();
+      placePop(clientX);
+      requestAnimationFrame(() => placePop(clientX));
+      if ($("bk-name").value) $("bk-email").focus();
+      else $("bk-name").focus();
+    }
+    $("open-client").onclick = () => {
+      closeMoreMenu();
+      if (needUnlock()) return;
+      toggleClientTile();
+      if (clientWanted() && $("home-q")) $("home-q").focus();
+    };
+    if ($("client-close")) $("client-close").onclick = closeClientTile;
+    $("home-scrim").onclick = () => closeOverlays();
+    window.addEventListener("resize", () => {
+      applyTiles();
+      sizeWeekTile();
+      const ids = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"];
+      ids.forEach((id) => {
+        const el = $(id);
+        if (!el || el.hidden) return;
+        if (id === "book-pop") {
+          const left = parseFloat(el.style.left || "12");
+          fitSheet(el, left);
+        } else {
+          fitSheet(el);
+        }
+      });
+    });
+
+    function weekQuery() {
+      const key = ymd(weekStart);
+      return "start=" + encodeURIComponent(key) + "&days=7";
+    }
+    function clientsUrl(q) {
+      return "/api/desk/clients?q=" + encodeURIComponent(q) + "&" + weekQuery();
+    }
+    let weekReq = 0;
+    const weekCache = new Map();
+    function prefetchWeek(monday) {
+      const key = ymd(monday);
+      if (!key || weekCache.has(key)) return;
+      const q = "?start=" + key + "&days=7";
+      deskFetch("/api/desk/week" + q).then((r) => r.ok ? r.json() : null).then((data) => {
+        if (!data || !data.ok) return;
+        weekCache.set(data.start || key, data.visits || []);
+      }).catch(() => {});
+    }
+    async function loadWeek() {
+      const token = ++weekReq;
+      const end = new Date(weekStart);
+      end.setDate(end.getDate() + 6);
+      const key = ymd(weekStart);
+      if (calSpan === "day") {
+        $("week-label").textContent = new Date(dayFocus).toLocaleDateString("en-US", {
+          weekday: "long", month: "short", day: "numeric",
+        });
+      } else {
+        $("week-label").textContent = key + " – " + ymd(end);
+      }
+      monthView = new Date((calSpan === "day" ? dayFocus : weekStart).getFullYear(), (calSpan === "day" ? dayFocus : weekStart).getMonth(), 1);
+      renderMiniMonth();
+      const cached = weekCache.get(key);
+      renderWeekGrid(cached || []);
+      const weekBox = $("week");
+      weekBox.classList.toggle("is-pending", !cached);
+      const q = "?start=" + key + "&days=7";
+      const res = await deskFetch("/api/desk/week" + q);
+      if (token !== weekReq) return;
+      if (!res.ok) { weekBox.classList.remove("is-pending"); return; }
+      const data = await res.json();
+      if (token !== weekReq) return;
+      typeMeta = data.types || {};
+      if (calSpan !== "day" && data.start && data.end) $("week-label").textContent = data.start + " – " + data.end;
+      const visits = data.visits || [];
+      weekCache.set(data.start || key, visits);
+      weekBox.classList.remove("is-pending");
+      renderWeekGrid(visits);
+      const prev = new Date(weekStart); prev.setDate(prev.getDate() - 7);
+      const next = new Date(weekStart); next.setDate(next.getDate() + 7);
+      prefetchWeek(prev);
+      prefetchWeek(next);
+    }
+
+    function renderMiniMonth() {
+      const box = $("mini-cal");
+      if (!box) return;
+      const y = monthView.getFullYear();
+      const m = monthView.getMonth();
+      const first = new Date(y, m, 1);
+      const startPad = (first.getDay() + 6) % 7;
+      const daysIn = new Date(y, m + 1, 0).getDate();
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const today = ymd(new Date());
+      const w0 = ymd(weekStart);
+      const w1 = ymd(weekEnd);
+      const monthName = first.toLocaleString("en-US", { month: "long", year: "numeric" });
+      let html = "<div class='mini-cal-nav'><button type='button' id='mini-prev' aria-label='Previous month'>←</button><strong>"
+        + esc(monthName) + "</strong><button type='button' id='mini-next' aria-label='Next month'>→</button></div><div class='mini-cal-grid'>";
+      ["M","T","W","T","F","S","S"].forEach((d) => { html += "<span class='dow'>" + d + "</span>"; });
+      for (let i = 0; i < startPad; i++) html += "<span></span>";
+      for (let day = 1; day <= daysIn; day++) {
+        const dt = new Date(y, m, day);
+        const key = ymd(dt);
+        const cls = ["mini-day"];
+        if (key >= w0 && key <= w1) cls.push("in-week");
+        if (key === today) cls.push("is-today");
+        html += "<button type='button' class='" + cls.join(" ") + "' data-day='" + key + "'>" + day + "</button>";
+      }
+      html += "</div>";
+      box.innerHTML = html;
+      $("mini-prev").onclick = () => {
+        monthView = new Date(y, m - 1, 1);
+        renderMiniMonth();
+      };
+      $("mini-next").onclick = () => {
+        monthView = new Date(y, m + 1, 1);
+        renderMiniMonth();
+      };
+      box.querySelectorAll("button.mini-day").forEach((b) => {
+        b.onclick = () => jumpToDay(b.dataset.day);
+      });
+    }
+    function jumpToDay(key) {
+      const parts = String(key || "").split("-");
+      if (parts.length !== 3) return;
+      const dt = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+      if (Number.isNaN(dt.getTime())) return;
+      closePop();
+      closeSend();
+      dayFocus = dt;
+      weekStart = mondayOf(dt);
+      if (calSpan === "week") setCalSpan("day");
+      else loadWeek();
+    }
+
+    function minsFromOpen(dt) {
+      return (dt.getHours() * 60 + dt.getMinutes()) - CAL_START * 60;
+    }
+    function toLocalInput(dt) {
+      return ymd(dt) + "T" + String(dt.getHours()).padStart(2,"0") + ":" + String(dt.getMinutes()).padStart(2,"0");
+    }
+
+    function sizeWeekTile() {
+      const card = $("week-card");
+      const box = $("week");
+      const grid = box && box.querySelector(".grid-cal");
+      if (!card || card.hidden || !box) return;
+      const top = card.getBoundingClientRect().top;
+      if (top < 0) return;
+      const wrap = document.querySelector(".wrap-desk");
+      const floor = wrap ? (parseFloat(getComputedStyle(wrap).paddingBottom) || 8) : 8;
+      const avail = Math.floor(window.innerHeight - top - floor);
+      if (avail < 180) return;
+      const head = card.querySelector(".week-head");
+      const cs = getComputedStyle(card);
+      const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      const headH = head ? head.getBoundingClientRect().height : 0;
+      const forGrid = Math.max(180, avail - pad - headH);
+      card.style.height = avail + "px";
+      card.style.maxHeight = avail + "px";
+      box.style.height = forGrid + "px";
+      box.style.maxHeight = forGrid + "px";
+      box.style.overflowY = "auto";
+      if (grid) {
+        grid.style.maxHeight = "";
+        grid.style.overflowY = "visible";
+      }
+      const video = $("video-card");
+      if (video && !video.hidden && !video.classList.contains("is-pip")) {
+        const vTop = video.getBoundingClientRect().top;
+        const vAvail = Math.floor(window.innerHeight - vTop - floor);
+        if (vAvail >= 180) {
+          video.style.height = vAvail + "px";
+          video.style.maxHeight = vAvail + "px";
+        }
+      }
+    }
+    function renderWeekGrid(visits) {
+      const hours = CAL_END - CAL_START;
+      const height = hours * 60 * PX_PER_MIN + 14;
+      const box = $("week");
+      box.innerHTML = "";
+      const grid = document.createElement("div");
+      const dayMode = calSpan === "day";
+      grid.className = "grid-cal" + (dayMode ? " is-day" : "");
+      const todayKey = ymd(new Date());
+      const colDates = [];
+      if (dayMode) {
+        colDates.push(new Date(dayFocus));
+      } else {
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(weekStart);
+          d.setDate(d.getDate() + i);
+          colDates.push(d);
+        }
+      }
+
+      const gutterH = document.createElement("div");
+      gutterH.className = "grid-head";
+      grid.appendChild(gutterH);
+      colDates.forEach((d) => {
+        const h = document.createElement("div");
+        h.className = "grid-head" + (ymd(d) === todayKey ? " today" : "");
+        h.textContent = d.toLocaleDateString("en-US", dayMode
+          ? { weekday: "long", month: "short", day: "numeric" }
+          : { weekday: "short", month: "short", day: "numeric" });
+        grid.appendChild(h);
+      });
+
+      const gutter = document.createElement("div");
+      gutter.className = "grid-gutter";
+      gutter.style.height = height + "px";
+      for (let h = CAL_START; h <= CAL_END; h++) {
+        const lab = document.createElement("div");
+        lab.className = "grid-hour";
+        lab.style.top = ((h - CAL_START) * 60 * PX_PER_MIN + 6) + "px";
+        const hr = h % 12 || 12;
+        lab.textContent = hr + (h < 12 ? "a" : "p");
+        gutter.appendChild(lab);
+      }
+      grid.appendChild(gutter);
+
+      const cols = [];
+      colDates.forEach((d) => {
+        const col = document.createElement("div");
+        col.className = "grid-day" + (ymd(d) === todayKey ? " today" : "");
+        col.style.height = height + "px";
+        col.dataset.date = ymd(d);
+        for (let h = CAL_START; h <= CAL_END; h++) {
+          const line = document.createElement("div");
+          line.className = "grid-line";
+          line.style.top = ((h - CAL_START) * 60 * PX_PER_MIN) + "px";
+          col.appendChild(line);
+          if (h < CAL_END) {
+            const half = document.createElement("div");
+            half.className = "grid-line half";
+            half.style.top = ((h - CAL_START) * 60 * PX_PER_MIN + 30 * PX_PER_MIN) + "px";
+            col.appendChild(half);
+          }
+        }
+        col.onclick = (ev) => {
+          if (!$("send-pop").hidden) { closeSend(); return; }
+          if (!$("book-pop").hidden) { closePop(); return; }
+          if (ev.target.closest(".grid-ev")) return;
+          const rect = col.getBoundingClientRect();
+          const y = ev.clientY - rect.top;
+          let mins = CAL_START * 60 + Math.round(y / PX_PER_MIN / 30) * 30;
+          mins = Math.max(CAL_START * 60, Math.min(CAL_END * 60 - 30, mins));
+          const when = new Date(d);
+          when.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
+          openPop(when, ev.clientX, ev.clientY);
+        };
+        cols.push(col);
+        grid.appendChild(col);
+      });
+
+      visits.forEach((v) => {
+        if (!v.start_iso) return;
+        const start = new Date(v.start_iso);
+        const key = ymd(start);
+        const col = cols.find((c) => c.dataset.date === key);
+        if (!col) return;
+        let dur = Number(v.duration_minutes);
+        if (!dur && v.end_iso) dur = Math.max(15, (new Date(v.end_iso) - start) / 60000);
+        if (!dur) dur = 30;
+        const top = minsFromOpen(start) * PX_PER_MIN;
+        if (top + 4 < 0 || top > height) return;
+        const ev = document.createElement("div");
+        ev.className = "grid-ev" + (v.event_type || v.email ? " booker" : "");
+        ev.style.top = Math.max(0, top) + "px";
+        ev.style.height = Math.max(22, dur * PX_PER_MIN - 3) + "px";
+        const time = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        ev.innerHTML = "<strong>" + esc(v.name || v.title || "Busy") + "</strong>"
+          + "<span class='desk-meta'>" + esc(time) + (dur ? " · " + dur + "m" : "") + "</span>";
+        ev.title = (v.name || "") + " " + (v.email || "") + " " + (v.title || "");
+        if (v.event_id) ev.dataset.eid = v.event_id;
+        if (focusEventId && v.event_id === focusEventId) ev.classList.add("is-focus");
+        ev.onclick = (e) => {
+          e.stopPropagation();
+          selectVisit(v);
+        };
+        col.appendChild(ev);
+      });
+
+      const now = new Date();
+      if (ymd(now) >= ymd(weekStart) && ymd(now) <= ymd(new Date(weekStart.getTime() + 6*86400000))) {
+        const col = cols.find((c) => c.dataset.date === ymd(now));
+        if (col) {
+          const nowY = minsFromOpen(now) * PX_PER_MIN;
+          if (nowY >= 0 && nowY <= height) {
+            const bar = document.createElement("div");
+            bar.className = "grid-now";
+            bar.style.top = nowY + "px";
+            col.appendChild(bar);
+          }
+        }
+      }
+      box.appendChild(grid);
+      requestAnimationFrame(sizeWeekTile);
+    }
+
+    let searchTimer = 0;
+    $("bk-name").addEventListener("input", () => {
+      $("client_id").value = "";
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(searchClients, 180);
+    });
+    async function searchClients() {
+      const q = $("bk-name").value.trim();
+      const box = $("client-hits");
+      if (q.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
+      const res = await deskFetch(clientsUrl(q));
+      const data = await res.json().catch(() => ({}));
+      const rows = data.clients || [];
+      box.hidden = !rows.length;
+      box.innerHTML = "";
+      rows.forEach((c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        const card = c.card_on_file && c.card_last4
+          ? " · " + (c.card_brand || "card") + " •••• " + c.card_last4
+          : (c.card_on_file ? " · payment on file" : "");
+        b.textContent = (c.name || "—") + " · " + (c.email || "no email") + card;
+        b.onclick = () => {
+          $("client_id").value = c.id;
+          $("bk-name").value = c.name || "";
+          $("bk-email").value = c.email || "";
+          $("bk-phone").value = c.phone || "";
+          $("client-extra").textContent = (c.dob ? "DOB " + c.dob + " · " : "") + (c.status || "") + card;
+          box.hidden = true;
+        };
+        box.appendChild(b);
+      });
+    }
+
+    $("book-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const local = fd.get("start_local");
+      if (!local) { msg("Pick a time."); return; }
+      const start = snap30(parseLocalInput(local) || new Date(local));
+      const type = String(fd.get("event_type") || "follow-up");
+      const dur = Number(fd.get("duration_minutes") || 30);
+      const body = {
+        client_id: fd.get("client_id") || "",
+        name: fd.get("name"),
+        email: fd.get("email"),
+        phone: fd.get("phone") || "",
+        event_type: type,
+        duration_minutes: dur,
+        notes: fd.get("notes") || "",
+        start: start.toISOString(),
+        send_email: $("bk-confirm").checked,
+      };
+      const res = await deskFetch("/api/desk/book", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      msg(res.ok && data.ok ? "Booked " + (data.summary || body.name) : ("Book failed: " + (data.detail || JSON.stringify(data).slice(0,160))), res.ok && data.ok);
+      if (res.ok && data.ok) {
+        e.target.reset();
+        $("bk-confirm").checked = true;
+        const firstDur = $("pop-dur").querySelector("button[data-dur]");
+        $("bk-dur").value = firstDur ? firstDur.dataset.dur : "30";
+        $("bk-type").value = firstDur ? (firstDur.dataset.type || "follow-up") : "follow-up";
+        $("pop-dur").querySelectorAll("button").forEach((x, i) => x.classList.toggle("active", i === 0));
+        $("client-extra").textContent = "";
+        closePop();
+        setHomeHint("");
+        weekCache.clear();
+        loadWeek();
+        if (homeCurrent && homeCurrent.client) {
+          const c = homeCurrent.client;
+          openHome({ id: c.id || "", email: c.email || "", name: c.name || "" });
+        }
+      }
+    };
+
+    const SEND_ITEMS = [
+      { id: "intake", label: "Intake packet (personal + consents + card)" },
+      { id: "personal", label: "Personal information" },
+      { id: "consents", label: "Consents & policies" },
+      { id: "card", label: "Payment authorization" },
+      { id: "roi", label: "Release of information" },
+      { id: "pay", label: "Payment on file" },
+    ];
+    function fillSendList() {
+      const box = $("send-list");
+      box.innerHTML = "";
+      SEND_ITEMS.forEach((it) => {
+        const lab = document.createElement("label");
+        lab.innerHTML = "<input type='checkbox' name='sd-item' value='" + it.id + "'"
+          + (it.id === "intake" ? " checked" : "") + " /> " + esc(it.label);
+        box.appendChild(lab);
+      });
+    }
+    function selectedSendItems() {
+      return Array.from(document.querySelectorAll("#send-list input[name='sd-item']:checked"))
+        .map((el) => el.value);
+    }
+    function openSendPop() {
+      closeHomeDrawer();
+      if (!$("send-list").children.length) fillSendList();
+      const pop = $("send-pop");
+      pop.hidden = false;
+      syncSheetLock();
+      fitSheet(pop);
+      $("sd-name").focus();
+    }
+    let sdTimer = 0;
+    $("sd-name").addEventListener("input", () => {
+      $("sd-client").value = "";
+      clearTimeout(sdTimer);
+      sdTimer = setTimeout(searchSendClients, 180);
+    });
+    async function searchSendClients() {
+      const q = $("sd-name").value.trim();
+      const box = $("sd-hits");
+      if (q.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
+      const res = await deskFetch(clientsUrl(q));
+      const data = await res.json().catch(() => ({}));
+      const rows = data.clients || [];
+      box.hidden = !rows.length;
+      box.innerHTML = "";
+      rows.forEach((c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = (c.name || "—") + " · " + (c.email || "no email");
+        b.onclick = () => {
+          $("sd-client").value = c.id || "";
+          $("sd-name").value = c.name || "";
+          $("sd-email").value = c.email || "";
+          $("sd-phone").value = c.phone || "";
+          $("sd-extra").textContent = (c.dob ? "DOB " + c.dob + " · " : "") + (c.status || "");
+          box.hidden = true;
+        };
+        box.appendChild(b);
+      });
+    }
+    async function deskSend(doEmail) {
+      const status = $("send-status");
+      const email = $("sd-email").value.trim();
+      if (!email) { status.textContent = "Need an email."; return; }
+      const items = selectedSendItems();
+      if (!items.length) { status.textContent = "Check at least one form."; return; }
+      status.textContent = doEmail ? "Sending…" : "Making link…";
+      const res = await deskFetch("/api/desk/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items,
+          client_id: $("sd-client").value,
+          name: $("sd-name").value.trim(),
+          email,
+          notes: $("sd-notes").value.trim(),
+          send_email: doEmail,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        status.textContent = "Failed: " + (data.detail || JSON.stringify(data).slice(0, 160));
+        return;
+      }
+      const urls = (data.links || []).map((x) => x.url).filter(Boolean);
+      if (!urls.length && data.url) urls.push(data.url);
+      const blob = urls.join("\n");
+      if (!doEmail && blob) {
+        try { await navigator.clipboard.writeText(blob); } catch (e) {}
+      }
+      const label = data.label || (items.length + " form" + (items.length === 1 ? "" : "s"));
+      const sent = data.emailed ? "Emailed. " : (doEmail ? "Link ready (email failed). " : "Copied. ");
+      status.textContent = sent + (blob || "");
+      msg(data.emailed ? "Sent " + label + " to " + email : (doEmail ? "Link ready — copy below" : "Copied " + label), data.emailed || !doEmail);
+    }
+    $("sd-email-btn").onclick = () => deskSend(true);
+    $("sd-copy-btn").onclick = () => deskSend(false);
+    let noteSpecs = {};
+    let noteDosPrefill = "";
+    async function fillNoteTemplates() {
+      const sel = $("nt-template");
+      if (!sel) return;
+      const keep = sel.value || "avs";
+      try {
+        const res = await deskFetch("/api/desk/note/templates");
+        const data = await res.json().catch(() => ({}));
+        sel.innerHTML = "";
+        noteSpecs = {};
+        (data.templates || []).forEach((t) => {
+          noteSpecs[t.id] = t;
+          const o = document.createElement("option");
+          o.value = t.id;
+          o.textContent = t.title || t.id;
+          sel.appendChild(o);
+        });
+        if (!sel.options.length) {
+          sel.innerHTML = "<option value='avs'>After-Visit Summary</option>";
+        }
+        if (keep && noteSpecs[keep]) sel.value = keep;
+        else sel.value = noteSpecs.avs ? "avs" : sel.options[0].value;
+      } catch (e) {
+        sel.innerHTML = "<option value='avs'>After-Visit Summary</option>";
+      }
+    }
+    function noteFieldInput(sec, val) {
+      const typ = sec.type || "paragraph";
+      if (typ === "date") {
+        const i = document.createElement("input");
+        i.type = "date";
+        i.value = val || "";
+        return i;
+      }
+      if (typ === "line") {
+        const i = document.createElement("input");
+        i.type = "text";
+        i.value = val || "";
+        return i;
+      }
+      const t = document.createElement("textarea");
+      t.rows = 3;
+      t.value = val || "";
+      return t;
+    }
+    function renderNoteFields() {
+      const box = $("nt-fields");
+      if (!box) return;
+      const tid = ($("nt-template") && $("nt-template").value) || "avs";
+      const spec = noteSpecs[tid] || {};
+      const sections = spec.sections || [];
+      const prev = {};
+      box.querySelectorAll("[data-fid]").forEach((el) => { prev[el.dataset.fid] = el.value; });
+      box.innerHTML = "";
+      if (!sections.length) {
+        box.innerHTML = "<p class='desk-meta'>No sections on this template.</p>";
+        return;
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      sections.forEach((sec) => {
+        const lab = document.createElement("label");
+        lab.className = "field";
+        lab.textContent = sec.label || sec.id;
+        let start = prev[sec.id] || "";
+        if (sec.id === "dos" && !start) start = noteDosPrefill || today;
+        if (sec.type === "date" && !start) start = today;
+        const inp = noteFieldInput(sec, start);
+        inp.dataset.fid = sec.id;
+        lab.appendChild(inp);
+        box.appendChild(lab);
+      });
+    }
+    function collectNoteValues() {
+      const values = {};
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        values[el.dataset.fid] = el.value.trim();
+      });
+      return values;
+    }
+    function addBuilderRow(sec) {
+      const row = document.createElement("div");
+      row.className = "nt-box";
+      row.innerHTML = "<div class='nt-box-top'><button type='button' class='mv' data-d='-1' aria-label='Move up'>↑</button><button type='button' class='mv' data-d='1' aria-label='Move down'>↓</button><input class='nt-lab' placeholder='Label' /><select class='nt-typ'><option value='paragraph'>Paragraph</option><option value='line'>One line</option><option value='date'>Date</option></select><button type='button' class='x' aria-label='Remove'>×</button></div>";
+      row.querySelector(".nt-lab").value = (sec && sec.label) || "";
+      row.querySelector(".nt-typ").value = (sec && sec.type) || "paragraph";
+      if (sec && sec.id) row.dataset.sid = sec.id;
+      row.querySelector(".x").onclick = () => row.remove();
+      row.querySelectorAll(".mv").forEach((b) => {
+        b.onclick = () => {
+          const dir = Number(b.dataset.d);
+          const sib = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+          if (!sib) return;
+          if (dir < 0) $("nt-boxes").insertBefore(row, sib);
+          else $("nt-boxes").insertBefore(sib, row);
+        };
+      });
+      $("nt-boxes").appendChild(row);
+    }
+    function readBuilder() {
+      const sections = [];
+      $("nt-boxes").querySelectorAll(".nt-box").forEach((row) => {
+        const label = row.querySelector(".nt-lab").value.trim();
+        if (!label) return;
+        sections.push({
+          id: row.dataset.sid || "",
+          label,
+          type: row.querySelector(".nt-typ").value,
+        });
+      });
+      return sections;
+    }
+    $("note-close").onclick = closeNote;
+    if ($("nt-template")) $("nt-template").onchange = () => {
+      $("nt-builder").hidden = true;
+      renderNoteFields();
+    };
+    $("nt-new").onclick = () => {
+      $("nt-manage-box").hidden = true;
+      $("nt-builder").hidden = false;
+      $("nt-title").value = "";
+      $("nt-source").value = "";
+      $("nt-boxes").innerHTML = "";
+    };
+    $("nt-edit-btn").onclick = () => {
+      const tid = $("nt-template").value || "avs";
+      const spec = noteSpecs[tid] || {};
+      $("nt-manage-box").hidden = true;
+      $("nt-builder").hidden = false;
+      $("nt-title").value = spec.title || tid;
+      $("nt-source").value = tid;
+      $("nt-boxes").innerHTML = "";
+      (spec.sections || []).forEach(addBuilderRow);
+    };
+    $("nt-add-sec").onclick = () => addBuilderRow({ label: "", type: "paragraph" });
+    function slugTitle(title) {
+      return (title || "note").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "note";
+    }
+    $("nt-save-tpl").onclick = async () => {
+      const status = $("note-status");
+      const title = $("nt-title").value.trim();
+      const source = $("nt-source").value.trim();
+      const srcSpec = source ? noteSpecs[source] : null;
+      const sameName = source && title && srcSpec && title === (srcSpec.title || source);
+      const tid = sameName ? source : slugTitle(title);
+      const sections = readBuilder();
+      if (!title) { status.textContent = "Name the template."; return; }
+      if (!sections.length) { status.textContent = "Add at least one section."; return; }
+      const res = await deskFetch("/api/desk/note/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: tid, title, sections }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        status.textContent = "Save failed: " + (data.detail || res.status);
+        return;
+      }
+      status.textContent = sameName ? "Template saved." : "Saved as a new template.";
+      $("nt-builder").hidden = true;
+      await fillNoteTemplates();
+      $("nt-template").value = tid;
+      renderNoteFields();
+    };
+    function renderManage() {
+      const box = $("nt-manage-list");
+      box.innerHTML = "";
+      const ids = Object.keys(noteSpecs);
+      ids.forEach((tid, i) => {
+        const t = noteSpecs[tid];
+        const row = document.createElement("div");
+        row.className = "nt-mgr";
+        row.dataset.tid = tid;
+        row.innerHTML = "<button type='button' class='mv' data-d='-1'>↑</button><button type='button' class='mv' data-d='1'>↓</button><span></span>";
+        row.querySelector("span").textContent = (t.title || tid) + (t.custom ? "" : " · built-in");
+        if (t.custom) {
+          const x = document.createElement("button");
+          x.type = "button";
+          x.className = "x";
+          x.textContent = "×";
+          x.setAttribute("aria-label", "Delete");
+          x.onclick = async () => {
+            const res = await deskFetch("/api/desk/note/templates?id=" + encodeURIComponent(tid), { method: "DELETE" });
+            if (!res.ok) { $("note-status").textContent = "Could not delete."; return; }
+            await fillNoteTemplates();
+            renderManage();
+            renderNoteFields();
+          };
+          row.appendChild(x);
+        }
+        row.querySelectorAll(".mv").forEach((b) => {
+          b.onclick = async () => {
+            const list = Array.from($("nt-manage-list").children).map((el) => el.dataset.tid);
+            const at = list.indexOf(tid);
+            const to = at + Number(b.dataset.d);
+            if (to < 0 || to >= list.length) return;
+            const swap = list[to];
+            list[to] = list[at];
+            list[at] = swap;
+            await deskFetch("/api/desk/note/templates/order", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ids: list }),
+            });
+            await fillNoteTemplates();
+            renderManage();
+          };
+        });
+        box.appendChild(row);
+      });
+    }
+    $("nt-manage").onclick = () => {
+      $("nt-builder").hidden = true;
+      const box = $("nt-manage-box");
+      box.hidden = !box.hidden;
+      if (!box.hidden) renderManage();
+    };
+    $("nt-sign").onclick = async () => {
+      const c = (homeCurrent && homeCurrent.client) || {};
+      const status = $("note-status");
+      if (!c.id && !c.email) { status.textContent = "Open a directory client first."; return; }
+      const values = collectNoteValues();
+      status.textContent = "Signing…";
+      const res = await deskFetch("/api/desk/note/sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: c.id || "",
+          email: c.email || "",
+          event_id: $("nt-event").value,
+          dos: values.dos || "",
+          name: c.name || "",
+          dob: c.dob || "",
+          physician: (practiceCache && practiceCache.clinician_name) || "",
+          return_visit: values.return_visit || "",
+          medications: values.medications || "",
+          supplements: values.supplements || "",
+          recommendations: values.recommendations || "",
+          template: ($("nt-template") && $("nt-template").value) || "avs",
+          subjective: values.subjective || "",
+          objective: values.objective || "",
+          assessment: values.assessment || "",
+          plan: values.plan || "",
+          addendum: values.addendum || "",
+          values,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        status.textContent = "Failed: " + (data.detail || res.status);
+        return;
+      }
+      status.textContent = "Signed · " + (data.name || "saved");
+      msg("Note signed to Visit notes.", true);
+      if (window.PsychartsVault && PsychartsVault.ready()) {
+        PsychartsVault.putNote(
+          { id: c.id || "", email: c.email || "" },
+          values,
+          { template: ($("nt-template") && $("nt-template").value) || "avs", name: c.name || "", dos: values.dos || "" }
+        ).catch(() => {});
+      }
+      openHome({ id: c.id || "", email: c.email || "", name: c.name || "" });
+    };
+    $("nt-draft").onclick = async () => {
+      const status = $("note-status");
+      const tr = $("nt-transcript") ? $("nt-transcript").value.trim() : "";
+      if (tr.length < 20) { status.textContent = "Paste a bit of transcript first."; return; }
+      status.textContent = "Drafting…";
+      const values = collectNoteValues();
+      const res = await deskFetch("/api/desk/note/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: tr, dos: values.dos || "" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        status.textContent = "Draft failed: " + (data.detail || res.status);
+        return;
+      }
+      const f = data.fields || {};
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        const k = el.dataset.fid;
+        if (f[k]) el.value = f[k];
+        else if (k === "recommendations" && f.plan) el.value = f.plan;
+      });
+      status.textContent = "Draft filled. Edit, then Sign.";
+    };
+
+    let homeTimer = 0;
+    let homeCurrent = null;
+    window.PROTON_DRIVE = window.PROTON_DRIVE || {};
+    window.PROTON_DRIVE.client = function () {
+      return (homeCurrent && homeCurrent.client) || null;
+    };
+    let focusEventId = "";
+    function setHomeHint(t) {
+      const el = $("home-hint");
+      if (!el) return;
+      el.textContent = t || "";
+      el.hidden = !t;
+    }
+    function fillBookFromHome() {
+      if (!homeCurrent || !homeCurrent.client) return;
+      const c = homeCurrent.client;
+      $("client_id").value = c.id || "";
+      $("bk-name").value = c.name || "";
+      $("bk-email").value = c.email || "";
+      $("bk-phone").value = c.phone || "";
+      $("client-extra").textContent = (c.dob ? "DOB " + c.dob + " · " : "") + (c.status || "");
+    }
+    function isNarrowDesk() {
+      return window.innerWidth < 980;
+    }
+    function showRail(which) {
+      if (which === "practice") openSettings();
+      else openClientTile();
+    }
+    function openHomeDrawer() { openClientTile(); }
+    function closeHomeDrawer() { closeOverlays(); }
+    function syncGear() { applyTiles(); }
+    function closeHome() {
+      homeCurrent = null;
+      focusEventId = "";
+      $("home-body").hidden = true;
+      $("home-body").innerHTML = "";
+      $("home-empty").hidden = false;
+      $("home-empty").textContent = "Search, or click a visit on the week.";
+      $("home-q").value = "";
+      setHomeHint("");
+      highlightFocus();
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+    function highlightFocus() {
+      document.querySelectorAll(".grid-ev.is-focus").forEach((el) => el.classList.remove("is-focus"));
+      if (!focusEventId) return;
+      const ev = document.querySelector('.grid-ev[data-eid="' + CSS.escape(focusEventId) + '"]');
+      if (ev) ev.classList.add("is-focus");
+    }
+    function visitPerson(v) {
+      const email = (v.email || "").trim();
+      const name = (v.name || "").trim();
+      const title = (v.title || "").trim();
+      const skip = /^(busy|blocked|hold|ooo|out of office|lunch|break)$/i;
+      let who = name;
+      if (!who && title && !skip.test(title)) who = title;
+      return { email, name: who, isPatient: !!(email || (who && !skip.test(who))) };
+    }
+    function selectVisit(v) {
+      focusEventId = v.event_id || "";
+      highlightFocus();
+      const who = visitPerson(v);
+      if (who.isPatient) openHome({ email: who.email, name: who.name, id: v.client_id || "" });
+    }
+    async function focusVisit(v) {
+      focusEventId = v.event_id || "";
+      if (v.start_iso) {
+        const d = new Date(v.start_iso);
+        if (!Number.isNaN(d.getTime())) {
+          const mon = mondayOf(d);
+          if (ymd(mon) !== ymd(weekStart)) {
+            weekStart = mon;
+            await loadWeek();
+            return;
+          }
+        }
+      }
+      highlightFocus();
+    }
+    $("home-q").addEventListener("input", () => {
+      clearTimeout(homeTimer);
+      homeTimer = setTimeout(searchHome, 180);
+    });
+    async function searchHome() {
+      const q = $("home-q").value.trim();
+      const box = $("home-hits");
+      if (q.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
+      const res = await deskFetch(clientsUrl(q));
+      const data = await res.json().catch(() => ({}));
+      const rows = data.clients || [];
+      box.hidden = !rows.length;
+      box.innerHTML = "";
+      rows.forEach((c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        const card = c.card_on_file && c.card_last4
+          ? " · " + (c.card_brand || "card") + " •••• " + c.card_last4
+          : "";
+        b.textContent = (c.name || "—") + " · " + (c.email || "no email") + card;
+        b.onclick = () => {
+          $("home-q").value = c.name || c.email || "";
+          box.hidden = true;
+          openHome({ id: c.id, email: c.email || "", name: c.name || "" });
+        };
+        box.appendChild(b);
+      });
+    }
+    async function openHome(ref) {
+      $("home-empty").textContent = "Loading…";
+      $("home-empty").hidden = false;
+      $("home-body").hidden = true;
+      setHomeHint("");
+      const q = new URLSearchParams();
+      if (ref.id) q.set("id", ref.id);
+      if (ref.email) q.set("email", ref.email);
+      if (ref.name) q.set("name", ref.name);
+      const res = await deskFetch("/api/desk/client?" + q.toString());
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        $("home-empty").textContent = data.detail || "Client not found.";
+        return;
+      }
+      homeCurrent = data;
+      const bits = [];
+      if (data.client && data.client.id) bits.push("c=" + data.client.id);
+      else if (data.client && data.client.email) bits.push("e=" + encodeURIComponent(data.client.email));
+      else if (data.client && data.client.name) bits.push("n=" + encodeURIComponent(data.client.name));
+      if (bits.length) history.replaceState(null, "", location.pathname + location.search + "#" + bits.join("&"));
+      if (deskBus && data.client && !echoingClient) {
+        deskBus.postMessage({
+          type: "client",
+          id: data.client.id || "",
+          email: data.client.email || "",
+          name: data.client.name || "",
+        });
+      }
+      renderHome(data);
+      highlightFocus();
+      openClientTile();
+    }
+    window.PsychartsClient = {
+      open: function (ref) { return openHome(ref || {}); },
+      current: function () { return homeCurrent; },
+      openFiles: function (kind, _client, path) {
+        var title = kind === "billing" ? "Billing" : kind === "chart" ? "Chart" : "Practice files";
+        openDriveAt(path || "/", title);
+      },
+    };
+    function visitLine(v, opts) {
+      opts = opts || {};
+      const marked = !!(v.event_id && (opts.noShowIds || []).indexOf(v.event_id) >= 0);
+      let extra = "";
+      if (opts.allowNoShow && v.event_id) {
+        extra = marked
+          ? "<span class='home-noshow is-on'>No-show</span>"
+          : "<button type='button' class='home-noshow' data-eid='" + esc(v.event_id || "")
+            + "' data-start='" + esc(v.start_iso || "")
+            + "' data-dur='" + esc(String(v.duration_minutes || ""))
+            + "'>No-show</button>";
+      }
+      return "<li class='home-visit-row'><button type='button' class='home-visit' data-eid='" + esc(v.event_id || "")
+        + "' data-start='" + esc(v.start_iso || "") + "'><span>"
+        + esc(v.when_label || v.start_iso || "") + " · "
+        + esc(v.title || "Visit")
+        + (v.duration_minutes ? " · " + v.duration_minutes + "m" : "")
+        + "</span><span class='desk-meta'>" + esc(v.price_label || "") + "</span></button>"
+        + extra + "</li>";
+    }
+    function visitBlock(items, emptyText, opts) {
+      if (!items.length) {
+        return "<p class='home-empty' style='margin:0.35rem 0 0'>" + emptyText + "</p>";
+      }
+      const cap = 4;
+      const head = items.slice(0, cap);
+      const tail = items.slice(cap);
+      let html = "<ul class='home-list'>" + head.map((v) => visitLine(v, opts)).join("") + "</ul>";
+      if (tail.length) {
+        html += "<button type='button' class='home-more-dot' aria-expanded='false' aria-label='Show "
+          + tail.length + " more visits'>···</button>";
+        html += "<ul class='home-list home-rest' hidden>" + tail.map((v) => visitLine(v, opts)).join("") + "</ul>";
+      }
+      return html;
+    }
+    function telHref(phone) {
+      const digits = String(phone || "").replace(/[^\d+]/g, "");
+      return digits ? "tel:" + digits : "";
+    }
+    function vaultNoteLine(label, text) {
+      if (!text) return "";
+      return "<p><strong>" + esc(label) + "</strong>" + esc(text) + "</p>";
+    }
+    function paintVaultNote(c) {
+      const box = $("hm-last-note");
+      if (!box || !window.PsychartsVault || !PsychartsVault.ready()) return;
+      PsychartsVault.getNote({ id: c.id || "", email: c.email || "" }).then((n) => {
+        if (!n || !box.isConnected) return;
+        const bits = [];
+        bits.push(vaultNoteLine("Last note", (n.dos ? n.dos + " · " : "") + (n.template || "Signed")));
+        bits.push(vaultNoteLine("Diagnosis", n.diagnosis));
+        bits.push(vaultNoteLine("Medications", n.medications));
+        bits.push(vaultNoteLine("Supplements", n.supplements));
+        bits.push(vaultNoteLine("Recommendations", n.recommendations));
+        bits.push(vaultNoteLine("Return visit", n.return_visit));
+        const html = bits.filter(Boolean).join("");
+        if (html) box.innerHTML = "<div class='home-note-fields'>" + html + "</div>";
+      }).catch(() => {});
+    }
+    function applyVaultToNoteFields(c) {
+      if (!window.PsychartsVault || !PsychartsVault.ready()) return;
+      PsychartsVault.getNote({ id: c.id || "", email: c.email || "" }).then((n) => {
+        if (!n) return;
+        const vals = Object.assign({}, n.values || {}, {
+          dos: n.dos,
+          diagnosis: n.diagnosis,
+          assessment: n.diagnosis || (n.values && n.values.assessment) || "",
+          medications: n.medications,
+          supplements: n.supplements,
+          recommendations: n.recommendations,
+          return_visit: n.return_visit,
+        });
+        document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+          const k = el.dataset.fid;
+          if (!el.value && vals[k]) el.value = vals[k];
+        });
+      }).catch(() => {});
+    }
+    function renderHome(data) {
+      const c = data.client || {};
+      const card = data.card || {};
+      const links = data.links || {};
+      const up = (data.visits && data.visits.upcoming) || [];
+      const past = (data.visits && data.visits.past) || [];
+      const last = past[0] || null;
+      const older = past.slice(1);
+      const noShowIds = ((data.books && data.books.no_show_event_ids) || []);
+      const pastOpts = { allowNoShow: !!c.id, noShowIds };
+      const note = data.last_note || {};
+      const plan = data.plan || {};
+      const files = data.files || {};
+      let cardLabel = "No card on file";
+      let cardOk = false;
+      if (card.on_file && card.last4) {
+        cardLabel = (card.brand || "Card") + " •••• " + card.last4
+          + (card.exp_month && card.exp_year ? " · " + card.exp_month + "/" + String(card.exp_year).slice(-2) : "");
+        cardOk = true;
+      } else if (card.on_file) {
+        cardLabel = "Payment on file";
+        cardOk = true;
+      }
+      const bits = [];
+      if (c.preferred_name && c.preferred_name !== c.name) bits.push("goes by " + c.preferred_name);
+      if (c.dob) bits.push("DOB " + c.dob);
+      if (c.status) bits.push(c.status);
+      if (!c.directory) bits.push("calendar only");
+      const mail = links.mailto || (c.email ? "mailto:" + c.email : "");
+      const who = c.email
+        ? (mail ? "<a href='" + esc(mail) + "'>" + esc(c.email) + "</a>" : esc(c.email))
+        : "no email";
+      const phoneBit = c.phone
+        ? " · <button type='button' class='desk-num' id='hm-phone' title='Call from the office line'>" + esc(c.phone) + "</button>"
+        : "";
+      $("home-body").innerHTML = `
+        <div class="home-id">
+          <div class="home-id-top">
+            <h3>${esc(c.name || c.email || "Client")}</h3>
+            <button class="home-close" type="button" id="hm-close" aria-label="Close client">×</button>
+          </div>
+          <p class="home-kv">${who}${phoneBit}</p>
+          <p class="home-kv">${esc(bits.join(" · "))}</p>
+          <div class="home-chips">
+            <span class="home-chip${cardOk ? " ok" : ""}">${esc(cardLabel)}</span>
+            ${window.DeskBooks ? DeskBooks.chip(data.books) : ""}
+          </div>
+        </div>
+        <div class="home-actions">
+          <button class="btn" type="button" id="hm-send">Send forms</button>
+          ${c.id ? '<button class="btn secondary" type="button" id="hm-charge">Charge</button>' : ""}
+          ${c.phone ? '<button class="btn secondary" type="button" id="hm-call">Call</button>' : ""}
+          <button class="btn secondary" type="button" id="hm-book">Book next</button>
+          <a class="btn secondary" id="hm-mail" ${mail ? "href='" + esc(mail) + "'" : "hidden"}>Email</a>
+          <button class="btn secondary" type="button" id="hm-pay">Copy pay link</button>
+          <button class="btn secondary" type="button" id="hm-files">Files</button>
+          <button class="btn secondary" type="button" id="hm-note">Note</button>
+          <button class="btn secondary" type="button" id="hm-superbill">Superbill</button>
+        </div>
+        <div class="home-files" id="hm-files-row" hidden></div>
+        ${window.DeskBooks ? DeskBooks.form(data.books, cardOk) : ""}
+        ${last ? "<div class='home-sec'><h4>Last visit</h4><ul class='home-list'>" + visitLine(last, pastOpts) + "</ul></div>" : ""}
+        <div class="home-sec">
+          <h4>Upcoming</h4>
+          ${visitBlock(up, "Nothing on the calendar.")}
+        </div>
+        <div class="home-sec">
+          <h4>Recent</h4>
+          ${older.length ? "<ul class='home-list'>" + older.map((v) => visitLine(v, pastOpts)).join("") + "</ul>" : "<p class='home-empty' style='margin:0.35rem 0 0'>" + (last ? "No older visits." : "No past visits in the last 6 months.") + "</p>"}
+        </div>
+        <div class="home-ghosts" id="hm-last-note">
+          <p class="home-ghost"><strong>Last note</strong>${esc(note.hint || "None yet.")}${note.count > 1 ? " · " + note.count + " in Visit notes" : ""}</p>
+          <p class="home-ghost"><strong>Plan</strong>${esc(plan.hint || "None yet.")}</p>
+        </div>`;
+      $("home-empty").hidden = true;
+      $("home-body").hidden = false;
+      paintVaultNote(c);
+      $("hm-close").onclick = closeHome;
+      function startOfficeCall() {
+        if (window.DeskCall) {
+          DeskCall.fromNumber({ name: c.name || "", to: c.phone || "", client_id: c.id || "" });
+          return;
+        }
+        const href = telHref(c.phone);
+        if (href) location.href = href;
+      }
+      if ($("hm-phone")) $("hm-phone").onclick = startOfficeCall;
+      if ($("hm-call")) $("hm-call").onclick = startOfficeCall;
+      if (window.DeskBooks) {
+        const hit = last || up[0] || {};
+        DeskBooks.bind($("home-body"), {
+          apiBase: "",
+          secret: secret(),
+          clientId: c.id || "",
+          books: data.books || {},
+          eventId: hit.event_id || "",
+          dos: hit.start_iso ? String(hit.start_iso).slice(0, 10) : "",
+          onDone: function (d) {
+            msg(
+              d.pay_url
+                ? "Invoice ready · pay link copied."
+                : d.charged
+                  ? "Card charged."
+                  : (d.detail || "On the books."),
+              true
+            );
+            openHome({ id: c.id, email: c.email || "" });
+          },
+        });
+      }
+      $("home-body").querySelectorAll(".home-visit").forEach((b) => {
+        b.onclick = () => focusVisit({ event_id: b.dataset.eid || "", start_iso: b.dataset.start || "" });
+      });
+      $("home-body").querySelectorAll("button.home-noshow").forEach((b) => {
+        b.onclick = async (ev) => {
+          ev.stopPropagation();
+          if (!c.id) return;
+          b.disabled = true;
+          const res = await deskFetch("/api/desk/fees/no-show", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              client_id: c.id,
+              event_id: b.dataset.eid || "",
+              dos: (b.dataset.start || "").slice(0, 10),
+              duration_minutes: b.dataset.dur ? Number(b.dataset.dur) : 30,
+              notify: true,
+              charge: false,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) {
+            msg(data.detail || "Could not mark no-show.");
+            b.disabled = false;
+            return;
+          }
+          msg("No-show on the books.", true);
+          openHome({ id: c.id, email: c.email || "" });
+        };
+      });
+      $("home-body").querySelectorAll(".home-more-dot").forEach((b) => {
+        b.onclick = () => {
+          const rest = b.nextElementSibling;
+          const open = rest && !rest.hidden;
+          if (rest) rest.hidden = !!open;
+          b.setAttribute("aria-expanded", open ? "false" : "true");
+          b.textContent = open ? "···" : "–";
+        };
+      });
+      $("hm-send").onclick = () => {
+        closePop();
+        $("sd-client").value = c.id || "";
+        $("sd-name").value = c.name || "";
+        $("sd-email").value = c.email || "";
+        $("sd-phone").value = c.phone || "";
+        $("sd-extra").textContent = (c.dob ? "DOB " + c.dob + " · " : "") + (c.status || "");
+        openSendPop();
+      };
+      $("hm-book").onclick = () => {
+        fillBookFromHome();
+        closeSend();
+        closePop();
+        setHomeHint("Click a time on the week to book " + (c.name || "them") + ".");
+      };
+      $("hm-pay").onclick = async () => {
+        if (!links.pay) return;
+        try { await navigator.clipboard.writeText(links.pay); } catch (e) {}
+        msg("Pay link copied.", true);
+      };
+      $("hm-note").onclick = () => openNotePop("");
+      $("hm-superbill").onclick = () => openSuperbill();
+      $("hm-files").onclick = async () => {
+        const row = $("hm-files-row");
+        if (!row.hidden) { row.hidden = true; return; }
+        row.hidden = false;
+        row.innerHTML = "<p class='home-empty' style='margin:0'>Finding folder…</p>";
+        function showFileBtns(chartPath, billPath, folderPath) {
+          if (!chartPath && !billPath && !folderPath) return false;
+          row.innerHTML =
+            "<button class='btn' type='button' id='hm-chart'>Chart</button>"
+            + "<button class='btn secondary' type='button' id='hm-billing'>Billing</button>";
+          $("hm-chart").onclick = () => openDriveAt(chartPath || folderPath, "Chart");
+          $("hm-billing").onclick = () => openDriveAt(billPath || folderPath, "Billing");
+          return true;
+        }
+        if (window.PsychartsVault && PsychartsVault.ready() && PsychartsVault.getClientPaths) {
+          try {
+            const cached = await PsychartsVault.getClientPaths(c);
+            if (cached) showFileBtns(cached.chart_path, cached.billing_path, cached.folder_path);
+          } catch (e) {}
+        }
+        let chartPath = "";
+        let billPath = "";
+        let folderPath = "";
+        try {
+          const q = new URLSearchParams();
+          if (c.id) q.set("id", c.id);
+          if (c.email) q.set("email", c.email);
+          const res = await deskFetch("/api/desk/client/drive?" + q.toString());
+          const data = await res.json().catch(() => ({}));
+          chartPath = data.chart_path || "";
+          billPath = data.billing_path || "";
+          folderPath = data.folder_path || "";
+        } catch (e) {}
+        if (!showFileBtns(chartPath, billPath, folderPath)) {
+          if (!row.querySelector("#hm-chart")) {
+            row.innerHTML = "<p class='home-empty' style='margin:0'>No matching Drive folder yet. Week Files still opens the whole Drive.</p>";
+          }
+          return;
+        }
+        if (window.PsychartsVault && PsychartsVault.ready() && PsychartsVault.putClientPaths) {
+          PsychartsVault.putClientPaths(c, { chart_path: chartPath, billing_path: billPath, folder_path: folderPath });
+        }
+      };
+    }
+
+    async function load() {
+      const s = secret();
+      if (!s) { msg("Enter the staff secret."); return; }
+      localStorage.setItem("dmb-desk", s);
+      msg("Loading…", true);
+      let meta;
+      try {
+        const res = await deskFetch("/api/desk/meta");
+        if (!res.ok) { msg("Unlock failed."); return; }
+        meta = await res.json();
+      } catch (e) {
+        msg("Unlock failed: network.");
+        return;
+      }
+      $("desk-shell").hidden = false;
+      document.documentElement.classList.add("desk-unlocked");
+      officeUrl = meta.office_url || officeUrl;
+      if (window.PsychartsVault) {
+        PsychartsVault.unlock(s).catch(() => {});
+      }
+      try { await loadWeek(); }
+      catch (e) { msg("Week grid failed: " + e.message); return; }
+      try { await loadPractice(); } catch (e) {}
+      if (window.DeskServices) {
+        try { await DeskServices.load(); } catch (e) {}
+      }
+      if (window.DeskPhrases) {
+        try { await DeskPhrases.load(); } catch (e) {}
+      }
+      if ($("unlock")) $("unlock").textContent = "Unlocked";
+      msg("Unlocked.", true);
+      closeUnlock();
+      settingsClosed = true;
+      settingsForced = false;
+      applyTiles();
+      const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+      if (hash.get("c") || hash.get("e") || hash.get("n")) {
+        openHome({ id: hash.get("c") || "", email: hash.get("e") || "", name: hash.get("n") || "" });
+      }
+      if (deskView === "video" || deskView === "visit") {
+        startOffice().catch(() => {});
+      }
+    }
+
+    function esc(s) {
+      return String(s || "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+    }
+    if ((deskView === "video" || deskView === "visit") && secret()) {
+      load();
+    }
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/desk-sw.js", { scope: "/" }).catch(function () {});
+    }
+  </script>
+  <script src="/static/js/theme.js"></script>
+  <script src="/static/js/desk-call.js?v=2"></script>
+  <script src="/static/js/pa-router.js?v=1"></script>
+  <script src="/static/js/staff-agent.js?v=5"></script>
+  <script src="/static/js/proton-drive.js?v=9"></script>
+</body>
+</html>

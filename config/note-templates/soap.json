@@ -1,0 +1,10 @@
+{
+  "title": "SOAP note",
+  "sections": [
+    {"id": "dos", "label": "Date of service", "type": "date"},
+    {"id": "subjective", "label": "Subjective", "type": "paragraph"},
+    {"id": "objective", "label": "Objective", "type": "paragraph"},
+    {"id": "assessment", "label": "Assessment", "type": "paragraph"},
+    {"id": "plan", "label": "Plan", "type": "paragraph"}
+  ]
+}

@@ -1,0 +1,20 @@
+[server]
+hosts = 127.0.0.1:5232
+
+[auth]
+type = htpasswd
+htpasswd_filename = /config/users
+# users file must be bcrypt ($2y$ / $2b$), not plaintext
+htpasswd_encryption = bcrypt
+
+[rights]
+type = owner_only
+
+[storage]
+type = multifilesystem
+filesystem_folder = /data/collections
+
+[logging]
+level = warning
+[web]
+type = none

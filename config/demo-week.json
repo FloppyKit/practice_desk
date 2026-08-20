@@ -1,0 +1,48 @@
+{
+  "_comment": "Demo fixture only. Fake people, pointers only, no PHI. weekday: 0=Monday. Times are local wall time in `timezone`; the demo backend re-materializes them onto the current week at read time.",
+  "timezone": "America/Chicago",
+  "events": [
+    {
+      "id": "demo-jane-intake",
+      "weekday": 1,
+      "start": "09:00",
+      "end": "10:30",
+      "summary": "New client visit",
+      "event_type": "new-client",
+      "price_label": "$200",
+      "patient": {
+        "name": "Jane Demo",
+        "email": "jane@example.invalid",
+        "phone": "+1 555 0100"
+      }
+    },
+    {
+      "id": "demo-jane-followup",
+      "weekday": 3,
+      "start": "13:00",
+      "end": "13:30",
+      "summary": "Follow-up",
+      "event_type": "follow-up",
+      "price_label": "$100",
+      "patient": {
+        "name": "Jane Demo",
+        "email": "jane@example.invalid",
+        "phone": "+1 555 0100"
+      }
+    },
+    {
+      "id": "demo-lunch",
+      "weekday": 2,
+      "start": "12:00",
+      "end": "13:00",
+      "summary": "Lunch"
+    },
+    {
+      "id": "demo-hold",
+      "weekday": 4,
+      "start": "15:00",
+      "end": "16:00",
+      "summary": "Hold"
+    }
+  ]
+}

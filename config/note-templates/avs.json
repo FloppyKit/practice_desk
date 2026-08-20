@@ -1,0 +1,13 @@
+{
+  "title": "After-Visit Summary",
+  "sections": [
+    {"id": "dos", "label": "Date of service", "type": "date"},
+    {"id": "return_visit", "label": "Return visit", "type": "line"},
+    {"id": "subjective", "label": "Subjective", "type": "paragraph"},
+    {"id": "objective", "label": "Objective", "type": "paragraph"},
+    {"id": "assessment", "label": "Assessment", "type": "paragraph"},
+    {"id": "medications", "label": "Medications", "type": "paragraph"},
+    {"id": "supplements", "label": "Supplements", "type": "paragraph"},
+    {"id": "recommendations", "label": "Other recommendations", "type": "paragraph"}
+  ]
+}

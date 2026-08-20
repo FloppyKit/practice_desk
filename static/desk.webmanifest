@@ -1,0 +1,24 @@
+{
+  "name": "Practice desk",
+  "short_name": "Desk",
+  "description": "Practice desk for Brown Psychiatric Services",
+  "start_url": "/desk",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f6f7",
+  "theme_color": "#111111",
+  "icons": [
+    {
+      "src": "/static/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

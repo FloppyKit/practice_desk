@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Secrets and local clinic overlay
+.env
+.env.*
+!.env.example
+!.env.demo
+*.sqlite
+*.sqlite-journal
+/data/
+secrets/
+*.pem
+*.key
+id_rsa*
+
+# Live clinic config (bind-mounted on the edge). Ship examples only.
+config/event-types.yaml
+
+# Host-only / import leftovers — never the public tree
+_host/
+scripts/private/
+scripts/import_clients_from_supabase.py
+CarePatron*
+*phi*
+*PHI*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+node_modules/
+
+# Build
+dist/
+*.log
