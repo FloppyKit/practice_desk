@@ -41,13 +41,19 @@ def mint_cancel_token(
     event_type: str = "",
     start_iso: str = "",
     duration_minutes: int | None = None,
+    purpose: str = "",
 ) -> str:
     payload = {
         "e": event_id,
         "c": calendar_id,
-        "m": email,
         "x": int(time.time()) + int(ttl_seconds),
     }
+    # Residual (P1): email stays in the token so the cancel/reschedule email
+    # path keeps working. Token is a capability link, not calendar detail.
+    if email:
+        payload["m"] = email
+    if purpose:
+        payload["p"] = str(purpose)[:16]
     # Optional display fields for cancel / reschedule / one-event ICS
     if title:
         payload["t"] = title[:120]

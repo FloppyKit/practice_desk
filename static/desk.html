@@ -40,7 +40,7 @@
       overflow: hidden; box-sizing: border-box;
       display: flex; flex-direction: column;
     }
-    html.desk-hero-fill .wrap-desk { max-width: none; }
+    html.desk-board-fill .wrap-desk { max-width: none; }
     .week-nav { display:flex; gap:0.5rem; align-items:center; margin-bottom:0.45rem; flex-wrap:wrap; }
     .week-nav-range, .week-nav-tools, .week-nav-more { display:flex; gap:0.4rem; align-items:center; }
     .week-arrow {
@@ -76,19 +76,43 @@
       background:var(--foreground); color:var(--background); border-color:var(--foreground);
     }
     .desk-banner #btn-leave-banner[hidden] { display:none !important; }
-    #video-card.is-pip {
+    #video-card.is-float {
       position:fixed; z-index:45;
-      width:min(22rem, 46vw); height:min(13.5rem, 28vh);
-      right:0.75rem; bottom:0.75rem;
       border-radius:0.85rem; box-shadow:0 16px 40px rgba(0,0,0,.28);
       flex:none !important; min-height:0 !important; max-height:none !important;
+      margin:0;
     }
-    #video-card.is-pip .video-bar { padding:0.35rem 0.5rem; }
-    #video-card.is-pip .video-bar-right .host-bar-btn { font-size:0.72rem; padding:0.2rem 0.4rem; }
+    #video-card.is-float .video-bar { padding:0.35rem 0.5rem; cursor:grab; user-select:none; touch-action:none; }
+    #video-card.is-float .video-bar:active { cursor:grabbing; }
+    #video-card.is-float .video-bar-right .host-bar-btn { font-size:0.72rem; padding:0.2rem 0.4rem; }
+    #video-card .float-resize { display:none; }
+    #video-card.is-float .float-resize {
+      display:block; position:absolute; right:2px; bottom:2px; width:16px; height:16px;
+      cursor:nwse-resize; z-index:7; touch-action:none;
+      background:linear-gradient(135deg, transparent 50%, rgba(255,255,255,.35) 50%);
+      border-bottom-right-radius:0.6rem;
+    }
     .desk-more { position:relative; }
-    .desk-more-btn {
+    .desk-icon-btn, .desk-more-btn {
       width:2.25rem; height:2.25rem; padding:0;
       display:inline-flex; align-items:center; justify-content:center;
+    }
+    .desk-icon-btn svg { width:1.05rem; height:1.05rem; display:block; }
+    html[data-theme="paper"] {
+      --background:#f7f3eb; --foreground:#1c1917; --muted:#78716c; --border:#e7e0d4;
+      --accent:#292524; --surface:#fffaf3; --ring:#a8a29e; --slot-bg:#efe8dc;
+    }
+    html[data-theme="mist"] {
+      --background:#f3f6f8; --foreground:#1e293b; --muted:#64748b; --border:#e2e8f0;
+      --accent:#334155; --surface:#ffffff; --ring:#94a3b8; --slot-bg:#eef2f6;
+    }
+    html[data-theme="ink"] {
+      --background:#14110f; --foreground:#f5f0e8; --muted:#a8a29e; --border:#2a2420;
+      --accent:#ece4d8; --surface:#1c1814; --ring:#78716c; --slot-bg:#221c18;
+    }
+    html[data-theme="slate"] {
+      --background:#0f1419; --foreground:#e8eef4; --muted:#94a3b8; --border:#243040;
+      --accent:#e2e8f0; --surface:#161d26; --ring:#64748b; --slot-bg:#1a222c;
     }
     .desk-more-icon { display:flex; flex-direction:column; justify-content:center; gap:3px; width:14px; }
     .desk-more-icon i { display:block; height:1.5px; background:currentColor; border-radius:1px; }
@@ -239,13 +263,13 @@
       position:relative; top:auto;
     }
     .desk-tile-wide {
-      flex:2 1 0; min-width:0; width:auto; max-width:none;
+      flex:2 1 0; min-width:16rem; width:auto; max-width:none;
       margin:0; overflow:hidden; max-height:100%;
       position:relative; top:auto;
       display:flex; flex-direction:column;
     }
     .desk-tile[hidden], .desk-tile-wide[hidden] { display:none !important; }
-    #mail-card { padding:0; overflow:hidden; }
+    #mail-card { padding:0; overflow:hidden; flex:1 1 0; }
     .mail-split { display:flex; min-height:0; height:100%; }
     .mail-list {
       flex:0 0 15.5rem; width:15.5rem; border-right:1px solid var(--border);
@@ -351,7 +375,7 @@
       .wrap-desk { overflow:auto; }
       .desk-stage { height:auto; max-height:none; }
       .desk-stage, .desk-board { flex-direction:column; }
-      .desk-tile-wide { min-height:min(70dvh, 42rem); max-height:none; position:static; overflow:auto; }
+      .desk-tile-wide { min-width:0; min-height:min(70dvh, 42rem); max-height:none; position:static; overflow:auto; }
       #week-card, #video-card { flex:1 1 auto; }
     }
     #video-card .host-tile { position:relative; background:#18181b; min-height:0; overflow:hidden; }
@@ -591,9 +615,15 @@
   <header class="desk-banner" id="desk-banner">
     <div class="desk-banner-left">
       <h1 class="desk-banner-title">Practice desk</h1>
-      <button class="btn secondary" type="button" id="open-calendar" aria-pressed="false">Calendar</button>
-      <button class="btn secondary" type="button" id="open-office" aria-pressed="false">Live office</button>
-      <button class="btn secondary" type="button" id="open-mail" aria-pressed="false">Messages</button>
+      <button class="btn secondary desk-icon-btn" type="button" id="open-calendar" aria-pressed="false" aria-label="Calendar" title="Calendar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M8 3.5v3M16 3.5v3M3.5 10h17"/></svg>
+      </button>
+      <button class="btn secondary desk-icon-btn" type="button" id="open-office" aria-pressed="false" aria-label="Live office" title="Live office">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="6.5" width="13" height="11" rx="1.6"/><path d="M15.5 10.5l6-3v9l-6-3z"/></svg>
+      </button>
+      <button class="btn secondary desk-icon-btn" type="button" id="open-mail" aria-pressed="false" aria-label="Messages" title="Messages">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4.5 6.5h15v11h-15z"/><path d="M4.5 6.5l7.5 6 7.5-6"/></svg>
+      </button>
       <button class="btn secondary" type="button" id="btn-leave-banner" hidden>Leave</button>
     </div>
     <div class="desk-banner-right">
@@ -640,6 +670,7 @@
           <div id="stage-err" class="err host-stage-err hidden"></div>
         </div>
       </div>
+      <div class="float-resize" id="float-resize" aria-hidden="true"></div>
     </div>
     <div class="card desk-tile-wide" id="week-card">
       <div class="week-head">
@@ -729,7 +760,6 @@
     <div class="book-pop-top">
       <div>
         <div class="book-pop-kicker">Settings</div>
-        <p class="book-pop-time">Practice desk</p>
       </div>
       <button type="button" class="home-close" id="practice-close" aria-label="Close">×</button>
     </div>
@@ -825,11 +855,15 @@
     <details class="prac-acc">
       <summary>Look</summary>
       <div class="prac-acc-body">
-        <p class="desk-meta">Light / dark / custom. Or ask the desk agent.</p>
+        <p class="desk-meta">Light / dark, four extra palettes, or custom. Save practice to keep it.</p>
         <label class="field">Theme
           <select id="prac-theme-mode">
             <option value="light">Light</option>
             <option value="dark">Dark</option>
+            <option value="paper">Paper — warm light</option>
+            <option value="mist">Mist — cool light</option>
+            <option value="ink">Ink — warm dark</option>
+            <option value="slate">Slate — cool dark</option>
             <option value="custom">Custom</option>
           </select>
         </label>
@@ -843,6 +877,24 @@
         <label class="field">Second focus page <input id="prac-title-anxiety" placeholder="Anxiety" /></label>
         <p class="desk-meta" style="margin-top:0.85rem">Backgrounds — one file per page. Empty is fine.</p>
         <div id="prac-bgs"></div>
+      </div>
+    </details>
+    <details class="prac-acc" id="prac-cipher-acc">
+      <summary>Sealed intake</summary>
+      <div class="prac-acc-body">
+        <p class="desk-meta">Cipher P1 — sealed booking envelopes waiting on the server. Drain opens them and keeps the detail in this device's encrypted vault.</p>
+        <p class="desk-meta" id="cipher-status">Unlock to check sealed intake.</p>
+        <div class="desk-actions" style="margin:0.35rem 0 0.15rem">
+          <button class="btn secondary" type="button" id="cipher-refresh">Refresh</button>
+          <button class="btn secondary" type="button" id="cipher-drain">Drain sealed intake</button>
+        </div>
+        <div id="cipher-list"></div>
+        <p class="desk-meta" style="margin-top:0.85rem">Vault snapshot — an encrypted backup of everything in this device's vault. Stays sealed with the vault key.</p>
+        <div class="desk-actions" style="margin:0.35rem 0 0.15rem">
+          <button class="btn secondary" type="button" id="vault-export">Download snapshot</button>
+          <button class="btn secondary" type="button" id="vault-import-btn">Import snapshot</button>
+          <input id="vault-import-file" type="file" accept="application/json" hidden />
+        </div>
       </div>
     </details>
     <p class="desk-meta">Install this desk from the browser for a local encrypted last-note store. Unlock decrypts it on this device.</p>
@@ -1041,7 +1093,7 @@
   <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.9/dist/livekit-client.umd.min.js"></script>
   <script src="https://live.psycharts.org/static/js/host-office.js?v=12"></script>
   <script src="/static/js/desk-auth.js?v=1"></script>
-  <script src="/static/js/desk-vault.js?v=2"></script>
+  <script src="/static/js/desk-vault.js?v=3"></script>
   <script src="/static/js/desk-books.js?v=2"></script>
   <script src="/static/js/desk-services.js?v=1"></script>
   <script src="/static/js/desk-phrases.js?v=1"></script>
@@ -1217,9 +1269,10 @@
     let deskView = (new URLSearchParams(location.search).get("view") || "desk").toLowerCase();
     if (!["desk", "visit", "week", "video"].includes(deskView)) deskView = "desk";
     let calendarOn = deskView !== "visit" && deskView !== "video";
-    let officeOn = deskView === "visit" || deskView === "week" || deskView === "video";
-    let hero = deskView === "video" || deskView === "visit" ? "office" : "calendar";
+    let officeOn = deskView === "visit" || deskView === "video";
     let mailOn = false;
+    let videoFloat = false;
+    const FLOAT_KEY = "desk-video-float-v1";
     let booksOn = false;
     let mailCurrent = "";
     let mailLoading = false;
@@ -1258,36 +1311,32 @@
     function videoWanted() {
       if (!isUnlocked()) return false;
       if (deskView === "video") return true;
-      if (hero === "office") return true;
-      return !!(officeLive && officeOn && hero !== "office");
-    }
-    function videoPip() {
-      return !!(officeLive && officeOn && hero !== "office" && deskView !== "video");
+      return !!officeOn;
     }
     function calendarWanted() {
       if (!isUnlocked() || deskView === "video") return false;
-      return hero === "calendar";
+      return !!calendarOn;
     }
     function mailWanted() {
       if (!isUnlocked() || deskView === "video") return false;
-      return hero === "mail";
+      return !!mailOn;
     }
-    function showHero(next) {
-      if (needUnlock()) return;
-      if (deskView === "video") return;
-      hero = next;
-      calendarOn = next === "calendar";
-      mailOn = next === "mail";
-      if (next === "office") officeOn = true;
-      applyTiles();
-      if (next === "mail") loadMailList();
+    function ensureMainVisible() {
+      if (!calendarOn && !mailOn && !officeOn) calendarOn = true;
     }
     function toggleCalendar() {
-      showHero("calendar");
+      if (needUnlock()) return;
+      if (deskView === "video") return;
+      calendarOn = !calendarOn;
+      ensureMainVisible();
+      applyTiles();
     }
     function toggleMail() {
-      if (hero === "mail") showHero("calendar");
-      else showHero("mail");
+      if (deskView === "video") return;
+      mailOn = !mailOn;
+      ensureMainVisible();
+      applyTiles();
+      if (mailOn) loadMailList();
     }
     function setDeskView(next, { push } = {}) {
       deskView = next;
@@ -1334,7 +1383,12 @@
       });
     }
     function drawerOverlay() {
-      return window.innerWidth < 1200;
+      if (window.innerWidth < 1200) return true;
+      let mains = 0;
+      if (calendarWanted()) mains += 1;
+      if (mailWanted()) mains += 1;
+      if (videoWanted() && !videoFloat) mains += 1;
+      return mains >= 2;
     }
     function applyTiles() {
       const home = $("home-card");
@@ -1349,7 +1403,6 @@
       let showC = clientWanted();
       let showS = settingsWanted();
       let showB = booksWanted();
-      const pip = videoPip();
       const books = $("books-pop");
       const overlay = drawerOverlay() && !!(showC || showS || showB);
       if (home) {
@@ -1367,10 +1420,13 @@
       if (week) week.hidden = !showCal;
       if (video) {
         video.hidden = !showV;
-        video.classList.toggle("is-pip", !!(showV && pip));
-        if (!showV || !pip) {
-          video.style.height = "";
-          video.style.maxHeight = "";
+        const floating = !!(showV && videoFloat);
+        video.classList.toggle("is-float", floating);
+        if (floating) {
+          if (!video.style.width) applyFloatRect(readFloatRect() || floatDefaultRect());
+          bindFloatControls();
+        } else {
+          clearFloatStyles(video);
         }
       }
       if (mail) mail.hidden = !showM;
@@ -1403,9 +1459,15 @@
       const gear = $("open-practice");
       if (gear) gear.setAttribute("aria-pressed", showS ? "true" : "false");
       const officeBtn = $("open-office");
-      if (officeBtn) officeBtn.setAttribute("aria-pressed", hero === "office" || pip ? "true" : "false");
+      if (officeBtn) officeBtn.setAttribute("aria-pressed", officeOn ? "true" : "false");
+      const popBtn = $("btn-pop-video");
+      if (popBtn) {
+        popBtn.textContent = videoFloat ? "Dock" : "Pop out";
+        popBtn.title = videoFloat ? "Dock video" : "Pop out video";
+        popBtn.hidden = deskView === "video";
+      }
       setLeaveVisible(hasLiveVideoFeed());
-      document.documentElement.classList.toggle("desk-hero-fill", !!(showCal || (showV && !pip) || showM));
+      document.documentElement.classList.toggle("desk-board-fill", !!(showCal || (showV && !videoFloat) || showM));
       const moreBtn = $("open-more");
       if (moreBtn) moreBtn.classList.toggle("is-on", !!(showC || showS || showB));
       const unlockBtn = $("open-unlock");
@@ -1456,7 +1518,147 @@
       window.__deskVideoLive = false;
       liveElsewhere = false;
     }
+    function floatDefaultRect() {
+      const banner = $("desk-banner");
+      const top0 = banner ? banner.getBoundingClientRect().bottom : 0;
+      const w = Math.min(28 * 16, window.innerWidth * 0.9);
+      const h = Math.min(18 * 16, window.innerHeight * 0.5);
+      return {
+        left: Math.max(8, window.innerWidth - w - 12),
+        top: top0 + 8,
+        width: w,
+        height: h,
+      };
+    }
+    function readFloatRect() {
+      try {
+        const raw = localStorage.getItem(FLOAT_KEY);
+        if (!raw) return null;
+        const r = JSON.parse(raw);
+        if (!r) return null;
+        const nums = [r.left, r.top, r.width, r.height];
+        for (let i = 0; i < nums.length; i++) {
+          if (typeof nums[i] !== "number" || !isFinite(nums[i])) return null;
+        }
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      } catch (e) {
+        return null;
+      }
+    }
+    function saveFloatRect() {
+      const video = $("video-card");
+      if (!video || !video.classList.contains("is-float")) return;
+      const r = video.getBoundingClientRect();
+      try {
+        localStorage.setItem(FLOAT_KEY, JSON.stringify({
+          left: Math.round(r.left), top: Math.round(r.top),
+          width: Math.round(r.width), height: Math.round(r.height),
+        }));
+      } catch (e) {}
+    }
+    function clampFloatRect(r) {
+      const banner = $("desk-banner");
+      const top0 = banner ? banner.getBoundingClientRect().bottom : 0;
+      const width = Math.min(Math.max(r.width, 220), Math.max(220, window.innerWidth - 8));
+      const height = Math.min(Math.max(r.height, 140), Math.max(140, window.innerHeight - top0 - 8));
+      let left = Math.min(Math.max(r.left, 4), window.innerWidth - width - 4);
+      let top = Math.min(Math.max(r.top, top0 + 4), window.innerHeight - height - 4);
+      if (left < 4) left = 4;
+      if (top < top0 + 4) top = top0 + 4;
+      return { left, top, width, height };
+    }
+    function applyFloatRect(r) {
+      const video = $("video-card");
+      if (!video) return;
+      const c = clampFloatRect(r);
+      video.style.left = Math.round(c.left) + "px";
+      video.style.top = Math.round(c.top) + "px";
+      video.style.width = Math.round(c.width) + "px";
+      video.style.height = Math.round(c.height) + "px";
+      video.style.right = "auto";
+      video.style.bottom = "auto";
+      video.style.maxHeight = "none";
+    }
+    function clearFloatStyles(video) {
+      video.style.left = "";
+      video.style.top = "";
+      video.style.width = "";
+      video.style.height = "";
+      video.style.right = "";
+      video.style.bottom = "";
+      video.style.maxHeight = "";
+    }
+    function bindFloatControls() {
+      const video = $("video-card");
+      if (!video || video._floatBound) return;
+      video._floatBound = true;
+      const bar = video.querySelector(".video-bar");
+      if (bar) {
+        bar.addEventListener("pointerdown", (e) => {
+          if (!video.classList.contains("is-float")) return;
+          if (e.target.closest("button")) return;
+          e.preventDefault();
+          const start = video.getBoundingClientRect();
+          const dx = e.clientX - start.left;
+          const dy = e.clientY - start.top;
+          function move(ev) {
+            applyFloatRect({ left: ev.clientX - dx, top: ev.clientY - dy, width: start.width, height: start.height });
+          }
+          function up() {
+            document.removeEventListener("pointermove", move);
+            document.removeEventListener("pointerup", up);
+            document.removeEventListener("pointercancel", up);
+            saveFloatRect();
+          }
+          document.addEventListener("pointermove", move);
+          document.addEventListener("pointerup", up);
+          document.addEventListener("pointercancel", up);
+        });
+      }
+      const grip = video.querySelector(".float-resize");
+      if (grip) {
+        grip.addEventListener("pointerdown", (e) => {
+          if (!video.classList.contains("is-float")) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const start = video.getBoundingClientRect();
+          const sx = e.clientX;
+          const sy = e.clientY;
+          function move(ev) {
+            applyFloatRect({
+              left: start.left, top: start.top,
+              width: start.width + (ev.clientX - sx),
+              height: start.height + (ev.clientY - sy),
+            });
+          }
+          function up() {
+            document.removeEventListener("pointermove", move);
+            document.removeEventListener("pointerup", up);
+            document.removeEventListener("pointercancel", up);
+            saveFloatRect();
+          }
+          document.addEventListener("pointermove", move);
+          document.addEventListener("pointerup", up);
+          document.addEventListener("pointercancel", up);
+        });
+      }
+    }
+    function clearVideoFloat(save) {
+      const video = $("video-card");
+      if (save) saveFloatRect();
+      videoFloat = false;
+      if (video) {
+        video.classList.remove("is-float");
+        clearFloatStyles(video);
+      }
+    }
+    function dockVideo() {
+      if (!videoFloat) return;
+      clearVideoFloat(true);
+      applyTiles();
+    }
     function endOffice() {
+      clearVideoFloat(true);
       resetOfficeHost();
       officeOn = false;
       announceCall(false);
@@ -1573,6 +1775,7 @@
           window.__deskVideoLive = false;
           liveElsewhere = false;
           officeStarting = false;
+          clearVideoFloat(true);
           announceCall(false);
           applyTiles();
         },
@@ -1606,22 +1809,28 @@
     function toggleOffice() {
       if (needUnlock()) return;
       if (deskView === "video") return;
-      if (hero === "office") {
-        showHero("calendar");
+      if (!officeOn) {
+        officeOn = true;
+        applyTiles();
+        if (!officeLive) startOffice();
         return;
       }
-      showHero("office");
-      if (!officeLive) startOffice();
+      if (officeLive) {
+        if (videoFloat) dockVideo();
+        const v = $("video-card");
+        if (v && !v.hidden && v.scrollIntoView) {
+          v.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+        return;
+      }
+      officeOn = false;
+      ensureMainVisible();
+      applyTiles();
     }
     function popOutVideo() {
-      const u = new URL(location.href);
-      u.searchParams.set("view", "video");
-      u.hash = "";
-      const child = window.open(u.toString(), "psycharts-video", "popup=yes,width=1120,height=760");
-      if (!child) { msg("Pop-out blocked. Allow pop-ups for this site."); return; }
-      resetOfficeHost();
-      officeOn = false;
-      setDeskView("desk");
+      if (videoFloat) { dockVideo(); return; }
+      if (!videoWanted()) return;
+      videoFloat = true;
       applyTiles();
     }
     if ($("open-office")) $("open-office").onclick = () => { closeMoreMenu(); toggleOffice(); };
@@ -1636,6 +1845,9 @@
       if (e.key === "Escape") closeMoreMenu();
     });
     if ($("btn-pop-video")) $("btn-pop-video").onclick = popOutVideo;
+    if ($("btn-leave-call")) {
+      $("btn-leave-call").addEventListener("click", () => { endOffice(); });
+    }
     if ($("open-calendar")) $("open-calendar").onclick = toggleCalendar;
     if ($("open-mail")) $("open-mail").onclick = () => { closeMoreMenu(); if (needUnlock()) return; toggleMail(); };
     if ($("mail-refresh")) $("mail-refresh").onclick = () => loadMailList();
@@ -2160,12 +2372,24 @@
       wrap.hidden = mode === "custom";
       if (mode === "custom") $("prac-theme-toggle").checked = false;
     }
+    function applyDeskLook(mode) {
+      const root = document.documentElement;
+      const named = ["paper", "mist", "ink", "slate"];
+      const m = named.indexOf(mode) >= 0 ? mode : (mode === "dark" ? "dark" : (mode === "custom" ? "custom" : "light"));
+      root.setAttribute("data-theme", m === "custom" ? "custom" : m);
+      const darkish = m === "dark" || m === "ink" || m === "slate";
+      root.classList.toggle("dark", darkish);
+      root.style.colorScheme = darkish ? "dark" : "light";
+    }
     function fillTheme(theme) {
       const t = theme || {};
-      $("prac-theme-mode").value = t.mode === "dark" || t.mode === "custom" ? t.mode : "light";
-      $("prac-theme-toggle").checked = t.allow_toggle !== false && t.mode !== "custom";
+      const allowed = ["light", "dark", "paper", "mist", "ink", "slate", "custom"];
+      const mode = allowed.indexOf(t.mode) >= 0 ? t.mode : "light";
+      $("prac-theme-mode").value = mode;
+      $("prac-theme-toggle").checked = t.allow_toggle !== false && mode !== "custom";
       renderThemeTokens(t.tokens || THEME_DEFAULTS);
       syncThemeUi();
+      applyDeskLook(mode);
     }
     function readTheme() {
       const tokens = {};
@@ -2179,7 +2403,10 @@
         tokens,
       };
     }
-    $("prac-theme-mode").onchange = syncThemeUi;
+    $("prac-theme-mode").onchange = () => {
+      syncThemeUi();
+      applyDeskLook($("prac-theme-mode").value);
+    };
     const STATE_OPTS = [
       ["IL","Illinois"],["KS","Kansas"],["MO","Missouri"],["NA","Not applicable"],
       ["AL","Alabama"],["AK","Alaska"],["AZ","Arizona"],["AR","Arkansas"],["CA","California"],
@@ -2519,6 +2746,11 @@
     $("home-scrim").onclick = () => closeOverlays();
     window.addEventListener("resize", () => {
       applyTiles();
+      const vc = $("video-card");
+      if (vc && vc.classList.contains("is-float")) {
+        const fr = vc.getBoundingClientRect();
+        applyFloatRect({ left: fr.left, top: fr.top, width: fr.width, height: fr.height });
+      }
       sizeWeekTile();
       const ids = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"];
       ids.forEach((id) => {
@@ -2648,39 +2880,44 @@
     }
 
     function sizeWeekTile() {
+      const wrap = document.querySelector(".wrap-desk");
+      const floor = wrap ? (parseFloat(getComputedStyle(wrap).paddingBottom) || 8) : 8;
       const card = $("week-card");
       const box = $("week");
       const grid = box && box.querySelector(".grid-cal");
-      if (!card || card.hidden || !box) return;
-      const top = card.getBoundingClientRect().top;
-      if (top < 0) return;
-      const wrap = document.querySelector(".wrap-desk");
-      const floor = wrap ? (parseFloat(getComputedStyle(wrap).paddingBottom) || 8) : 8;
-      const avail = Math.floor(window.innerHeight - top - floor);
-      if (avail < 180) return;
-      const head = card.querySelector(".week-head");
-      const cs = getComputedStyle(card);
-      const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-      const headH = head ? head.getBoundingClientRect().height : 0;
-      const forGrid = Math.max(180, avail - pad - headH);
-      card.style.height = avail + "px";
-      card.style.maxHeight = avail + "px";
-      box.style.height = forGrid + "px";
-      box.style.maxHeight = forGrid + "px";
-      box.style.overflowY = "auto";
-      if (grid) {
-        grid.style.maxHeight = "";
-        grid.style.overflowY = "visible";
-      }
-      const video = $("video-card");
-      if (video && !video.hidden && !video.classList.contains("is-pip")) {
-        const vTop = video.getBoundingClientRect().top;
-        const vAvail = Math.floor(window.innerHeight - vTop - floor);
-        if (vAvail >= 180) {
-          video.style.height = vAvail + "px";
-          video.style.maxHeight = vAvail + "px";
+      if (card && !card.hidden && box) {
+        const top = card.getBoundingClientRect().top;
+        if (top >= 0) {
+          const avail = Math.floor(window.innerHeight - top - floor);
+          if (avail >= 180) {
+            const head = card.querySelector(".week-head");
+            const cs = getComputedStyle(card);
+            const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+            const headH = head ? head.getBoundingClientRect().height : 0;
+            const forGrid = Math.max(180, avail - pad - headH);
+            card.style.height = avail + "px";
+            card.style.maxHeight = avail + "px";
+            box.style.height = forGrid + "px";
+            box.style.maxHeight = forGrid + "px";
+            box.style.overflowY = "auto";
+            if (grid) {
+              grid.style.maxHeight = "";
+              grid.style.overflowY = "visible";
+            }
+          }
         }
       }
+      ["video-card", "mail-card"].forEach((id) => {
+        const el = $(id);
+        if (!el || el.hidden) return;
+        if (el.classList.contains("is-float")) return;
+        const top = el.getBoundingClientRect().top;
+        if (top < 0) return;
+        const avail = Math.floor(window.innerHeight - top - floor);
+        if (avail < 180) return;
+        el.style.height = avail + "px";
+        el.style.maxHeight = avail + "px";
+      });
     }
     function renderWeekGrid(visits) {
       const hours = CAL_END - CAL_START;
@@ -3734,6 +3971,8 @@
       if (window.PsychartsVault) {
         PsychartsVault.unlock(s).catch(() => {});
       }
+      cipherStatusRefresh();
+      if (!window.__cipherPoll) window.__cipherPoll = setInterval(cipherStatusRefresh, 60000);
       try { await loadWeek(); }
       catch (e) { msg("Week grid failed: " + e.message); return; }
       try { await loadPractice(); } catch (e) {}
@@ -3761,6 +4000,140 @@
     function esc(s) {
       return String(s || "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
     }
+
+    // ---- CIPHER_P1 sealed intake + vault snapshot (Settings → Sealed intake)
+    async function cipherStatusRefresh() {
+      const st = $("cipher-status");
+      if (!st) return;
+      if (!window.PsychartsVault || !PsychartsVault.ready()) {
+        st.textContent = "Unlock to check sealed intake.";
+        return;
+      }
+      try {
+        const res = await deskFetch("/api/desk/cipher/status");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { st.textContent = "Cipher status unavailable."; return; }
+        const f = data.flags || {};
+        if (!f.enabled) {
+          st.textContent = "Cipher mode is off on the server (CIPHER_P1=0).";
+          return;
+        }
+        const n = data.pending || 0;
+        st.textContent = "Cipher on · " + n + " sealed envelope" + (n === 1 ? "" : "s") + " waiting.";
+      } catch (e) {
+        st.textContent = "Cipher status unavailable.";
+      }
+    }
+
+    async function cipherDrainAll() {
+      const st = $("cipher-status");
+      const list = $("cipher-list");
+      if (!window.PsychartsVault || !PsychartsVault.ready()) {
+        if (st) st.textContent = "Unlock first — drain writes into the encrypted vault.";
+        return;
+      }
+      if (st) st.textContent = "Draining…";
+      let items = [];
+      try {
+        const res = await deskFetch("/api/desk/cipher/pending");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "pending list failed");
+        items = data.pending || [];
+      } catch (e) {
+        if (st) st.textContent = "Drain failed: " + (e.message || e);
+        return;
+      }
+      if (!items.length) {
+        if (st) st.textContent = "Nothing sealed waiting.";
+        if (list) list.innerHTML = "";
+        return;
+      }
+      const lines = [];
+      for (const row of items) {
+        try {
+          const r = await deskFetch("/api/desk/cipher/drain", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: row.id }),
+          });
+          const out = await r.json().catch(() => ({}));
+          if (!r.ok || !out.ok) throw new Error(out.detail || "unseal failed");
+          const p = out.plaintext || {};
+          await PsychartsVault.putClient({
+            id: p.client_id || "",
+            name: p.name || "",
+            email: p.email || "",
+            phone: p.phone || "",
+            notes: p.notes || "",
+            source: "cipher-intake",
+          });
+          await PsychartsVault.putVisit({
+            id: p.event_id || row.id,
+            email: p.email || "",
+            name: p.name || "",
+            event_type: p.event_type || "",
+            start: p.start || "",
+            duration_minutes: p.duration_minutes || null,
+            sms_consent: !!p.sms_consent,
+            notes: p.notes || "",
+            envelope_id: row.id,
+          });
+          lines.push("Drained " + (p.name || "(no name)") + (p.email ? " · " + p.email : ""));
+        } catch (e) {
+          lines.push("Failed " + String(row.id || "").slice(0, 8) + ": " + (e.message || e));
+        }
+      }
+      if (list) {
+        list.innerHTML = lines.map((l) => '<p class="desk-meta">' + esc(l) + "</p>").join("");
+      }
+      cipherStatusRefresh();
+    }
+
+    async function vaultExportSnapshot() {
+      const st = $("cipher-status");
+      if (!window.PsychartsVault || !PsychartsVault.ready() || !PsychartsVault.exportSnapshot) {
+        if (st) st.textContent = "Unlock first — the snapshot uses the vault key.";
+        return;
+      }
+      try {
+        const snap = await PsychartsVault.exportSnapshot();
+        const blob = new Blob([JSON.stringify(snap)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "psycharts-vault-" + new Date().toISOString().slice(0, 10) + ".json";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        if (st) st.textContent = "Snapshot downloaded. It stays encrypted with the vault key.";
+      } catch (e) {
+        if (st) st.textContent = "Export failed: " + (e.message || e);
+      }
+    }
+
+    async function vaultImportSnapshotFile(ev) {
+      const st = $("cipher-status");
+      const file = ev.target && ev.target.files && ev.target.files[0];
+      if (ev.target) ev.target.value = "";
+      if (!file) return;
+      if (!window.PsychartsVault || !PsychartsVault.ready() || !PsychartsVault.importSnapshot) {
+        if (st) st.textContent = "Unlock first — the snapshot opens with the vault key.";
+        return;
+      }
+      try {
+        const text = await file.text();
+        const out = await PsychartsVault.importSnapshot(JSON.parse(text));
+        if (st) st.textContent = "Imported " + (out.rows || 0) + " vault rows.";
+      } catch (e) {
+        if (st) st.textContent = "Import failed: " + (e.message || e);
+      }
+    }
+
+    if ($("cipher-refresh")) $("cipher-refresh").onclick = cipherStatusRefresh;
+    if ($("cipher-drain")) $("cipher-drain").onclick = cipherDrainAll;
+    if ($("vault-export")) $("vault-export").onclick = vaultExportSnapshot;
+    if ($("vault-import-btn")) $("vault-import-btn").onclick = () => { const f = $("vault-import-file"); if (f) f.click(); };
+    if ($("vault-import-file")) $("vault-import-file").addEventListener("change", vaultImportSnapshotFile);
     if ((deskView === "video" || deskView === "visit") && secret()) {
       load();
     }

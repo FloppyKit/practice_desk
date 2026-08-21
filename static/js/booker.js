@@ -636,6 +636,24 @@ export async function initBooker(opts) {
         "info"
       );
       try {
+        // CIPHER_P1: when the server has sealed booking on, seal the intake
+        // first. A seal failure aborts here — no silent cleartext-only book.
+        let cipherEnvelopeId = "";
+        if (window.PsychartsCipherBooker) {
+          const sealed = await window.PsychartsCipherBooker.sealAndQueue({
+            kind: "intake",
+            name: fd.get("name"),
+            email: fd.get("email"),
+            phone: fd.get("phone") || "",
+            notes: fd.get("notes") || "",
+            event_type: type,
+            start: selected.start,
+            duration_minutes: duration,
+            sms_consent: fd.get("sms_consent") === "on" || fd.get("sms_consent") === "true",
+            notify_emails: collectNotifyEmails(formEl || document),
+          });
+          if (sealed && sealed.enabled) cipherEnvelopeId = sealed.id || "";
+        }
         const data = await fetchJSON("/api/book", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -649,6 +667,7 @@ export async function initBooker(opts) {
             notes: fd.get("notes") || "",
             sms_consent: fd.get("sms_consent") === "on" || fd.get("sms_consent") === "true",
             notify_emails: collectNotifyEmails(formEl || document),
+            cipher_envelope_id: cipherEnvelopeId,
           }),
         });
         const params = new URLSearchParams({

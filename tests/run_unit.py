@@ -9,13 +9,25 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tests import test_demo_store, test_oss_hygiene, test_staff_auth, test_week_people  # noqa: E402
+from tests import (  # noqa: E402
+    test_cipher_p1,
+    test_demo_store,
+    test_oss_hygiene,
+    test_staff_auth,
+    test_week_people,
+)
 
 
 def main() -> int:
     failed = 0
     ran = 0
-    for mod in (test_week_people, test_staff_auth, test_oss_hygiene, test_demo_store):
+    for mod in (
+        test_week_people,
+        test_staff_auth,
+        test_oss_hygiene,
+        test_demo_store,
+        test_cipher_p1,
+    ):
         for name in sorted(dir(mod)):
             if not name.startswith("test_"):
                 continue

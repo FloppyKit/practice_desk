@@ -35,10 +35,18 @@ from .notify import (
 )
 from .reminders import process_reminders
 from .slots import generate_slots
-from .patients import client_by_email, client_by_id, search_clients, supabase_ready, verify_patient
+from .patients import (
+    client_by_email,
+    client_by_id,
+    create_client as patient_create_client,
+    search_clients,
+    supabase_ready,
+    verify_patient,
+)
 from .week_people import merge_client_hits, people_from_visits
 from .staff_auth import COOKIE as STAFF_COOKIE, secret_from_request
 from .tokens import mint_cancel_token, mint_verify_token, verify_cancel_token, verify_patient_token
+from . import cipher_mode, cipher_queue, cipher_seal
 
 def _seed_caldav_bg() -> None:
     try:
@@ -199,6 +207,8 @@ class BookRequest(BaseModel):
     # Required for follow-up bookings from voice/chat
     verify_token: str = Field(default="", max_length=800)
     send_email: bool = True
+    # CIPHER_P1: id of the sealed envelope posted to /api/cipher/intake first
+    cipher_envelope_id: str = Field(default="", max_length=80)
 
 
 class VerifyRequest(BaseModel):
@@ -606,31 +616,55 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
 
     cal_id = et.get("google_calendar_id") or DEFAULT_CALENDAR
     title = et.get("title", req.event_type)
+    event_id = uuid.uuid4().hex
+
+    cipher_on = cipher_mode.enabled()
+    occ = cipher_mode.occupancy()
+    dual = cipher_mode.dual_write()
+    envelope_id = (req.cipher_envelope_id or "").strip()
+    if cipher_on and envelope_id and not cipher_queue.get_envelope(envelope_id):
+        raise HTTPException(400, "cipher mode: unknown cipher_envelope_id")
+    if occ and not dual and not envelope_id:
+        # Occupancy with no cleartext shadow: detail must exist as a sealed blob.
+        raise HTTPException(400, "cipher mode: sealed intake required (cipher_envelope_id)")
+
     # Summary shows client visit length; calendar event span may be cal_dur (e.g. 120)
-    if cal_dur != dur:
+    if occ:
+        summary = f"Visit · {event_id[:8]}"
+    elif cal_dur != dur:
         summary = f"{req.name} – {title} ({dur} min visit · {cal_dur} min block)"
     else:
         summary = f"{req.name} – {title} ({dur} min)"
     when_label = start.strftime("%a %b %d · %I:%M %p").replace(" 0", " ")
-    desc_lines = [
-        "Booked via Psych Arts sovereign booker",
-        f"Name: {req.name}",
-        f"Email: {req.email}",
-        f"Phone: {req.phone or '(none)'}",
-        f"SMS consent: {'yes' if sms_consent else 'no'}",
-        f"Type: {req.event_type}",
-        f"Client duration: {dur} minutes",
-        f"Calendar block: {cal_dur} minutes",
-        f"Fee: {price_label or '(see practice site)'}",
-        f"Location: {location_line}",
-        f"When: {when_label} America/Chicago",
-    ]
-    if req.notes:
-        desc_lines.append(f"Notes: {req.notes}")
-    if extra_notify:
-        desc_lines.append("Also notify: " + ", ".join(extra_notify))
+    if occ:
+        # Occupancy-only: no Name/Email/Phone/Notes lines on the calendar event.
+        desc_lines = [
+            "Booked via Psych Arts sovereign booker",
+            "Occupancy hold — visit detail is sealed (cipher P1).",
+            f"Type: {req.event_type}",
+            f"Client duration: {dur} minutes",
+            f"Calendar block: {cal_dur} minutes",
+            f"When: {when_label} America/Chicago",
+        ]
+    else:
+        desc_lines = [
+            "Booked via Psych Arts sovereign booker",
+            f"Name: {req.name}",
+            f"Email: {req.email}",
+            f"Phone: {req.phone or '(none)'}",
+            f"SMS consent: {'yes' if sms_consent else 'no'}",
+            f"Type: {req.event_type}",
+            f"Client duration: {dur} minutes",
+            f"Calendar block: {cal_dur} minutes",
+            f"Fee: {price_label or '(see practice site)'}",
+            f"Location: {location_line}",
+            f"When: {when_label} America/Chicago",
+        ]
+        if req.notes:
+            desc_lines.append(f"Notes: {req.notes}")
+        if extra_notify:
+            desc_lines.append("Also notify: " + ", ".join(extra_notify))
 
-    event_id = uuid.uuid4().hex
     rebook_url = f"{PUBLIC_BASE}/{req.event_type}"
     token = mint_cancel_token(
         event_id=event_id,
@@ -638,10 +672,11 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
         email=str(req.email),
         title=f"{title} ({dur} min)",
         when_label=when_label,
-        name=req.name,
+        name="" if occ else req.name,
         event_type=req.event_type,
         start_iso=start.isoformat(),
         duration_minutes=dur,
+        purpose="cancel",
     )
     cancel_url = f"{PUBLIC_BASE}/cancel?token={token}"
     ics_url = f"{PUBLIC_BASE}/cal/visit.ics?token={token}"
@@ -651,20 +686,36 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
     desc_lines.append(f"Rebook: {rebook_url}")
     description = "\n".join(desc_lines)
 
-    private_props = {
-        "booker": "1",
-        "patient_email": str(req.email),
-        "patient_name": req.name,
-        "patient_phone": req.phone or "",
-        "sms_consent": "1" if sms_consent else "0",
-        "event_type": req.event_type,
-        "title": title,
-        "when_label": when_label,
-        "duration_minutes": str(dur),
-        "price_label": price_label,
-        "rem24": "0",
-        "rem2": "0",
-    }
+    if occ:
+        # Opaque occupancy props. No patient_email/name/phone — no silent put-back.
+        # Reminder flags pre-set: the cron has no cleartext address on the event.
+        private_props = {
+            "booker": "1",
+            "cipher": "1",
+            "event_type": req.event_type,
+            "duration_minutes": str(dur),
+            "rem24": "1",
+            "rem1": "1",
+            "rem2": "1",
+            "remsms": "1",
+        }
+        if envelope_id:
+            private_props["cipher_envelope_id"] = envelope_id
+    else:
+        private_props = {
+            "booker": "1",
+            "patient_email": str(req.email),
+            "patient_name": req.name,
+            "patient_phone": req.phone or "",
+            "sms_consent": "1" if sms_consent else "0",
+            "event_type": req.event_type,
+            "title": title,
+            "when_label": when_label,
+            "duration_minutes": str(dur),
+            "price_label": price_label,
+            "rem24": "0",
+            "rem2": "0",
+        }
 
     try:
         created = create_event(
@@ -680,6 +731,13 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
         )
     except Exception as e:
         raise HTTPException(502, f"Calendar write failed: {e}") from e
+
+    if cipher_on and dual:
+        # Dual-write: cleartext client record in the on-box sqlite, as today.
+        try:
+            patient_create_client(name=req.name, email=str(req.email), phone=req.phone or "")
+        except Exception:
+            pass
 
     if req.send_email:
         background_tasks.add_task(
@@ -2108,6 +2166,67 @@ def api_desk_book(req: DeskBookRequest, background_tasks: BackgroundTasks, secre
         send_email=req.send_email,
     )
     return api_book(book, background_tasks)
+
+
+# CIPHER_P1 sealed intake. Public routes carry ciphertext only; desk routes
+# unseal behind staff auth. Default off (CIPHER_P1=0) — legacy path unchanged.
+
+
+@app.get("/api/cipher/seal-params")
+def api_cipher_seal_params():
+    """Public seal parameters. Public JWK only — the private half never leaves cipher_seal."""
+    return cipher_seal.seal_params(cipher_mode.enabled())
+
+
+@app.post("/api/cipher/intake")
+async def api_cipher_intake(request: Request):
+    """Accept a browser-sealed envelope. Server stores ciphertext only."""
+    if not cipher_mode.enabled():
+        raise HTTPException(404, "cipher mode off")
+    try:
+        env = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid json")
+    try:
+        cipher_seal.validate_envelope(env)
+    except ValueError as e:
+        raise HTTPException(400, f"bad envelope: {e}")
+    row = cipher_queue.put(env, source="booker")
+    return {"ok": True, "id": row["id"], "content_hash": row["content_hash"]}
+
+
+@app.get("/api/desk/cipher/status")
+def api_desk_cipher_status(secret: str = Query(default="")):
+    _require_staff(secret)
+    return {"flags": cipher_mode.flags(), "pending": cipher_queue.pending_count()}
+
+
+@app.get("/api/desk/cipher/pending")
+def api_desk_cipher_pending(secret: str = Query(default="")):
+    _require_staff(secret)
+    return {"pending": cipher_queue.list_pending()}
+
+
+class CipherDrainRequest(BaseModel):
+    id: str = ""
+
+
+@app.post("/api/desk/cipher/drain")
+def api_desk_cipher_drain(req: CipherDrainRequest, secret: str = Query(default="")):
+    """Staff unseal: server opens the envelope; plaintext goes to the desk vault."""
+    _require_staff(secret)
+    env_id = (req.id or "").strip()
+    if not env_id:
+        raise HTTPException(400, "id required")
+    env = cipher_queue.get_envelope(env_id)
+    if not env:
+        raise HTTPException(404, "envelope not found")
+    try:
+        plaintext = cipher_seal.open_envelope(env)
+    except ValueError as e:
+        raise HTTPException(400, f"unseal failed: {e}")
+    cipher_queue.mark_drained(env_id)
+    return {"ok": True, "id": env_id, "plaintext": plaintext}
 
 
 class DeskAgentRequest(BaseModel):
