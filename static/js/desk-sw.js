@@ -1,5 +1,5 @@
 /* Practice desk shell cache. Never caches API or note bodies. */
-var CACHE = "psycharts-desk-v14";
+var CACHE = "psycharts-desk-v17";
 var SHELL = [
   "/desk",
   "/static/desk.webmanifest",
@@ -8,6 +8,8 @@ var SHELL = [
   "/static/js/theme.js",
   "/static/js/desk-auth.js?v=1",
   "/static/js/desk-vault.js",
+  "/static/js/cipher-envelope.js",
+  "/static/js/cipher-booker.js",
   "/static/js/desk-books.js",
   "/static/js/desk-services.js",
   "/static/js/desk-phrases.js",

@@ -83,7 +83,7 @@ _TEXT = (
 )
 
 ROLES = ("psychiatrist", "therapist")
-THEME_MODES = ("light", "dark", "custom")
+THEME_MODES = ("light", "dark", "paper", "mist", "ink", "slate", "custom")
 THEME_TOKENS = (
     "background",
     "foreground",
