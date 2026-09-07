@@ -34,6 +34,8 @@ Open `/desk`, unlock with **`demo`**. You should see a fake week (Jane Demo, lun
 
 Live clinic deploys bind-mount their own `config/event-types.yaml` and secrets. Do not copy those into git.
 
+`GET /health` is local process JSON, not “this is live clinic.” Demo vs live is `DESK_MODE` / `scripts/modejson.py` (`{"mode":"demo"}` by default). Leftover `calendar_sot` / `public_base` strings in that blob are field names, not permission to hit production.
+
 ## Tests (no pytest required)
 
 ```bash
