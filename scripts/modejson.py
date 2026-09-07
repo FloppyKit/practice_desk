@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 
 
 def mode_from_env(raw: str | None = None) -> str:
