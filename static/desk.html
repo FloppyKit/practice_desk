@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex,nofollow" />
   <meta name="color-scheme" content="light dark" />
   <meta name="theme-color" content="#111111" />
@@ -26,7 +26,7 @@
     label.field { display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted); margin:0 0 0.75rem; }
     label.field input, label.field select, label.field textarea { font:inherit; color:var(--foreground); background:var(--background); border:1px solid var(--border); border-radius:0.6rem; padding:0.55rem 0.7rem; }
     .secret-bar { display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem; }
-    .secret-bar input { flex:1; }
+    .secret-bar input { flex:1; font-size:16px; min-height:2.75rem; }
     #msg { margin:0.75rem 0; font-size:0.9rem; }
     html, body { height: 100%; }
     body {
@@ -53,6 +53,9 @@
       display:flex; align-items:center; justify-content:space-between;
       gap:0.5rem 0.85rem; flex-wrap:wrap;
       padding:0.45rem 0.85rem;
+      padding-top:max(0.45rem, env(safe-area-inset-top));
+      padding-left:max(0.85rem, env(safe-area-inset-left));
+      padding-right:max(0.85rem, env(safe-area-inset-right));
       background:color-mix(in srgb, var(--surface, #fff) 92%, transparent);
       border-bottom:1px solid var(--border);
       backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
@@ -129,7 +132,25 @@
       padding:0.42rem 0.6rem; margin:0; border:0; background:none; color:inherit;
       border-radius:0.45rem; cursor:pointer;
     }
-    .desk-more-menu button:hover { background:color-mix(in srgb, var(--foreground) 8%, transparent); }
+    .desk-more-menu button:hover,
+    .desk-more-menu button:focus-visible,
+    .desk-more-menu button:active { background:color-mix(in srgb, var(--foreground) 8%, transparent); }
+    .desk-icon-label { display:none; font-size:0.78rem; font-weight:500; }
+    .desk-layout-switch {
+      display:none; align-items:stretch; gap:0;
+      border:1px solid var(--border); border-radius:999px; overflow:hidden;
+    }
+    .desk-layout-switch button {
+      appearance:none; border:0; background:transparent; color:inherit;
+      font:inherit; font-size:0.8rem; padding:0.45rem 0.8rem; cursor:pointer;
+    }
+    .desk-layout-switch button[aria-pressed="true"] {
+      background:var(--foreground); color:var(--background);
+    }
+    html.desk-touch .desk-layout-switch,
+    html.desk-layout-notes .desk-layout-switch,
+    html.desk-layout-office .desk-layout-switch { display:inline-flex; }
+    html.desk-unlocked #banner-unlock { display:none !important; }
     .desk-more-menu button.is-on { font-weight:600; }
     .skip-link {
       position:absolute; left:0.6rem; top:-3rem; z-index:200;
@@ -604,6 +625,56 @@
     .lic-row select { width:8.2rem; flex:0 0 8.2rem; font:inherit; font-size:0.82rem; }
     .lic-row input { flex:1; min-width:0; font:inherit; font-size:0.82rem; }
     .lic-row .x { width:1.8rem; flex:0 0 1.8rem; border:1px solid var(--border); background:none; border-radius:0.4rem; cursor:pointer; font:inherit; }
+    html.desk-layout-notes #video-card { display:none !important; }
+    html.desk-layout-office #note-pop,
+    html.desk-layout-office #hm-note,
+    html.desk-layout-office #hm-last-note,
+    html.desk-layout-office #btn-scribe { display:none !important; }
+    html.desk-layout-office #btn-toggle-share { display:none !important; }
+    .office-placeholder {
+      display:none; position:absolute; inset:0; z-index:4;
+      align-items:center; justify-content:center; flex-direction:column;
+      gap:0.7rem; padding:1.2rem; text-align:center; color:#e4e4e7;
+      background:rgba(10,10,11,.72);
+    }
+    html.desk-layout-office .office-placeholder { display:flex; }
+    html.desk-layout-office #video-card.is-live .office-placeholder,
+    .office-placeholder[hidden] { display:none !important; }
+    .office-placeholder p { margin:0; font-size:0.95rem; max-width:22rem; }
+    .home-join {
+      border:1px solid var(--border); border-radius:0.7rem;
+      padding:0.7rem 0.8rem; margin:0 0 0.75rem;
+    }
+    .home-join p { margin:0 0 0.55rem; }
+    @media (pointer: coarse) {
+      .desk-icon-btn, .desk-more-btn, .week-arrow, .time-nudge,
+      .book-pop-close, .home-close, .mini-cal-nav button, .desk-more-menu button,
+      .desk-layout-switch button, #banner-unlock, #unlock, #this-week, #cal-span-toggle {
+        min-width:44px; min-height:44px;
+      }
+      .desk-icon-btn {
+        width:auto; height:auto; padding:0.35rem 0.7rem; gap:0.35rem;
+      }
+      .desk-icon-label { display:inline; }
+      .desk-banner .btn { font-size:0.88rem; padding:0.5rem 0.8rem; }
+      .desk-more-menu button { padding:0.7rem 0.85rem; font-size:0.95rem; }
+      .grid-ev { min-height:44px; font-size:0.82rem; padding:0.35rem 0.45rem; }
+      .mini-cal-grid button { min-height:44px; font-size:0.85rem; }
+      .hits button { min-height:44px; padding:0.65rem 0.7rem; }
+      .host-bar-btn { min-height:44px; }
+      #unlock-pop {
+        width:100% !important; max-width:none !important;
+        left:0 !important; right:0 !important; bottom:0 !important;
+        top:auto !important; transform:none !important;
+        border-radius:1.1rem 1.1rem 0 0;
+        padding-bottom:max(1rem, env(safe-area-inset-bottom));
+      }
+      html.desk-touch .wrap-desk { padding-bottom:max(0.65rem, env(safe-area-inset-bottom)); }
+    }
+    html.desk-touch .desk-icon-label { display:inline; }
+    html.desk-touch .desk-icon-btn {
+      width:auto; height:auto; padding:0.35rem 0.7rem; gap:0.35rem;
+    }
     .sb-dx input, .sb-line input { width:100%; font:inherit; font-size:0.82rem; margin:0 0 0.25rem; }
     .sb-line-top { display:flex; gap:0.3rem; }
     .sb-line-top input { flex:1; min-width:0; }
@@ -615,18 +686,26 @@
   <header class="desk-banner" id="desk-banner">
     <div class="desk-banner-left">
       <h1 class="desk-banner-title">Practice desk</h1>
-      <button class="btn secondary desk-icon-btn" type="button" id="open-calendar" aria-pressed="false" aria-label="Calendar" title="Calendar">
+      <button class="btn secondary desk-icon-btn" type="button" id="open-calendar" aria-pressed="false" aria-label="Calendar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M8 3.5v3M16 3.5v3M3.5 10h17"/></svg>
+        <span class="desk-icon-label">Calendar</span>
       </button>
-      <button class="btn secondary desk-icon-btn" type="button" id="open-office" aria-pressed="false" aria-label="Live office" title="Live office">
+      <button class="btn secondary desk-icon-btn" type="button" id="open-office" aria-pressed="false" aria-label="Live office">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="6.5" width="13" height="11" rx="1.6"/><path d="M15.5 10.5l6-3v9l-6-3z"/></svg>
+        <span class="desk-icon-label">Office</span>
       </button>
-      <button class="btn secondary desk-icon-btn" type="button" id="open-mail" aria-pressed="false" aria-label="Messages" title="Messages">
+      <button class="btn secondary desk-icon-btn" type="button" id="open-mail" aria-pressed="false" aria-label="Messages">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4.5 6.5h15v11h-15z"/><path d="M4.5 6.5l7.5 6 7.5-6"/></svg>
+        <span class="desk-icon-label">Messages</span>
       </button>
       <button class="btn secondary" type="button" id="btn-leave-banner" hidden>Leave</button>
     </div>
     <div class="desk-banner-right">
+      <div class="desk-layout-switch" id="desk-layout-switch" role="group" aria-label="This tablet">
+        <button type="button" id="layout-notes" aria-pressed="false">Notes</button>
+        <button type="button" id="layout-office" aria-pressed="false">Office</button>
+      </div>
+      <button class="btn" type="button" id="banner-unlock">Unlock</button>
       <div class="desk-more">
         <button class="btn secondary desk-more-btn" type="button" id="open-more" aria-haspopup="true" aria-expanded="false" aria-controls="more-menu" aria-label="More">
           <span class="desk-more-icon" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -666,6 +745,10 @@
           <div class="letterbox">
             <div id="video-grid" class="host-video-grid solo"></div>
             <div id="stage-empty" class="stage-empty">Starting camera…</div>
+            <div id="office-placeholder" class="office-placeholder" hidden>
+              <p>Join from this tablet. Camera stays a later GO.</p>
+              <button type="button" class="btn" id="office-join-placeholder">Join office</button>
+            </div>
           </div>
           <div id="stage-err" class="err host-stage-err hidden"></div>
         </div>
@@ -929,7 +1012,7 @@
       <button type="button" class="book-pop-close" id="unlock-close" aria-label="Close">×</button>
     </div>
     <div class="secret-bar">
-      <input id="secret" type="password" placeholder="Staff secret" autocomplete="off" />
+      <input id="secret" type="password" placeholder="Staff secret" autocomplete="off" enterkeyhint="go" autocapitalize="off" spellcheck="false" />
       <button class="btn" type="button" id="unlock">Unlock</button>
     </div>
     <div id="msg" hidden role="status" aria-live="polite"></div>
@@ -1091,8 +1174,30 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.9/dist/livekit-client.umd.min.js"></script>
-  <script src="https://live.psycharts.org/static/js/host-office.js?v=12"></script>
+  <script>
+    (function () {
+      var demo = false;
+      try {
+        demo = !!(window.__DESK_DEMO || localStorage.getItem("dmb-desk-demo") === "1");
+      } catch (e) {}
+      try {
+        if (document.documentElement.getAttribute("data-demo") === "1") demo = true;
+      } catch (e2) {}
+      if (demo) {
+        window.PsychartsHostOffice = window.PsychartsHostOffice || {
+          start: function () { return Promise.reject(new Error("Office is off in demo")); },
+          leave: function () {},
+        };
+        return;
+      }
+      var s = document.createElement("script");
+      s.src = "https://live.psycharts.org/static/js/host-office.js?v=12";
+      s.async = true;
+      document.head.appendChild(s);
+    })();
+  </script>
   <script src="/static/js/desk-auth.js?v=1"></script>
+  <script src="/static/js/desk-layout.js?v=1"></script>
   <script src="/static/js/desk-vault.js?v=3"></script>
   <script src="/static/js/desk-books.js?v=2"></script>
   <script src="/static/js/desk-services.js?v=1"></script>
@@ -1165,6 +1270,14 @@
       loadWeek();
     }
     if ($("cal-span-toggle")) $("cal-span-toggle").onclick = () => setCalSpan(calSpan === "day" ? "week" : "day");
+    if (calSpan === "day") {
+      const t = $("cal-span-toggle");
+      if (t) {
+        t.textContent = "Week";
+        t.setAttribute("aria-pressed", "true");
+        t.setAttribute("aria-label", "Show week");
+      }
+    }
 
     function sheetOpen() {
       return ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"]
@@ -1211,6 +1324,17 @@
       }
     });
     function fitSheet(el, clientX) {
+      if (el && el.id === "unlock-pop" && document.documentElement.classList.contains("desk-touch")) {
+        el.style.left = "0";
+        el.style.right = "0";
+        el.style.top = "auto";
+        el.style.bottom = "0";
+        el.style.transform = "none";
+        el.style.width = "100%";
+        el.style.maxHeight = "min(90dvh, 36rem)";
+        el.style.overflowY = "auto";
+        return;
+      }
       const banner = $("desk-banner");
       const topPad = banner ? Math.round(banner.getBoundingClientRect().bottom + 8) : 12;
       const pad = 12;
@@ -1268,8 +1392,11 @@
     let settingsForced = false;
     let deskView = (new URLSearchParams(location.search).get("view") || "desk").toLowerCase();
     if (!["desk", "visit", "week", "video"].includes(deskView)) deskView = "desk";
+    let layoutMode = (window.deskLayout && deskLayout.boot({ search: location.search })) || "desk";
     let calendarOn = deskView !== "visit" && deskView !== "video";
-    let officeOn = deskView === "visit" || deskView === "video";
+    let officeOn = deskView === "visit" || deskView === "video" || layoutMode === "office";
+    if (layoutMode === "notes") officeOn = false;
+    if (window.deskLayout && deskLayout.isTouch() && window.innerWidth < 1100) calSpan = "day";
     let mailOn = false;
     let videoFloat = false;
     const FLOAT_KEY = "desk-video-float-v1";
@@ -1311,7 +1438,56 @@
     function videoWanted() {
       if (!isUnlocked()) return false;
       if (deskView === "video") return true;
+      if (layoutMode === "notes") return false;
+      if (layoutMode === "office") return true;
       return !!officeOn;
+    }
+    function officeUsesPlaceholder() {
+      if (layoutMode === "office") return true;
+      try {
+        if (document.documentElement.getAttribute("data-demo") === "1") return true;
+      } catch (_) {}
+      return false;
+    }
+    function syncLayoutButtons() {
+      const notesBtn = $("layout-notes");
+      const officeBtn = $("layout-office");
+      if (notesBtn) notesBtn.setAttribute("aria-pressed", layoutMode === "notes" ? "true" : "false");
+      if (officeBtn) officeBtn.setAttribute("aria-pressed", layoutMode === "office" ? "true" : "false");
+    }
+    function paintOfficePlaceholder() {
+      const box = $("office-placeholder");
+      const empty = $("stage-empty");
+      const show = layoutMode === "office" && isUnlocked() && !officeLive;
+      if (box) box.hidden = !show;
+      if (empty) empty.classList.toggle("hidden", !!(show || officeLive));
+      const card = $("video-card");
+      if (card) card.classList.toggle("is-live", !!officeLive);
+    }
+    function joinOfficePlaceholder() {
+      const box = $("office-placeholder");
+      if (box) {
+        const p = box.querySelector("p");
+        if (p) p.textContent = "Office is on this tablet. Notes stay on the other device.";
+        const b = $("office-join-placeholder");
+        if (b) { b.disabled = true; b.textContent = "Joined"; }
+      }
+      officeOn = true;
+      applyTiles();
+    }
+    function setLayout(next) {
+      if (!window.deskLayout) return;
+      layoutMode = deskLayout.set(next, { search: location.search });
+      if (layoutMode === "office") {
+        officeOn = true;
+        calendarOn = true;
+      } else if (layoutMode === "notes") {
+        officeOn = false;
+        calendarOn = true;
+      }
+      syncLayoutButtons();
+      applyTiles();
+      paintOfficePlaceholder();
     }
     function calendarWanted() {
       if (!isUnlocked() || deskView === "video") return false;
@@ -1472,6 +1648,10 @@
       if (moreBtn) moreBtn.classList.toggle("is-on", !!(showC || showS || showB));
       const unlockBtn = $("open-unlock");
       if (unlockBtn) unlockBtn.hidden = !!isUnlocked();
+      const bannerUnlock = $("banner-unlock");
+      if (bannerUnlock) bannerUnlock.hidden = !!isUnlocked();
+      syncLayoutButtons();
+      paintOfficePlaceholder();
       requestAnimationFrame(sizeWeekTile);
     }
     function setLeaveVisible(on) {
@@ -1809,10 +1989,14 @@
     function toggleOffice() {
       if (needUnlock()) return;
       if (deskView === "video") return;
+      if (layoutMode === "notes") {
+        setLayout("office");
+        return;
+      }
       if (!officeOn) {
         officeOn = true;
         applyTiles();
-        if (!officeLive) startOffice();
+        if (!officeLive && !officeUsesPlaceholder()) startOffice();
         return;
       }
       if (officeLive) {
@@ -1835,6 +2019,10 @@
     }
     if ($("open-office")) $("open-office").onclick = () => { closeMoreMenu(); toggleOffice(); };
     if ($("open-unlock")) $("open-unlock").onclick = () => openUnlock();
+    if ($("banner-unlock")) $("banner-unlock").onclick = () => openUnlock();
+    if ($("layout-notes")) $("layout-notes").onclick = () => { closeMoreMenu(); setLayout("notes"); };
+    if ($("layout-office")) $("layout-office").onclick = () => { closeMoreMenu(); if (needUnlock()) return; setLayout("office"); };
+    if ($("office-join-placeholder")) $("office-join-placeholder").onclick = () => joinOfficePlaceholder();
     if ($("unlock-close")) $("unlock-close").onclick = closeUnlock;
     if ($("open-more")) $("open-more").onclick = (e) => { e.stopPropagation(); toggleMoreMenu(); };
     document.addEventListener("click", (e) => {
@@ -2178,6 +2366,7 @@
       openSettings();
     }
     function openNotePop(dos) {
+      if (layoutMode === "office") return;
       closeHomeDrawer();
       closePop();
       closeSend();
@@ -2744,7 +2933,7 @@
     };
     if ($("client-close")) $("client-close").onclick = closeClientTile;
     $("home-scrim").onclick = () => closeOverlays();
-    window.addEventListener("resize", () => {
+    function onViewportChange() {
       applyTiles();
       const vc = $("video-card");
       if (vc && vc.classList.contains("is-float")) {
@@ -2763,7 +2952,11 @@
           fitSheet(el);
         }
       });
-    });
+    }
+    window.addEventListener("resize", onViewportChange);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", onViewportChange);
+    }
 
     function weekQuery() {
       const key = ymd(weekStart);
@@ -2879,16 +3072,23 @@
       return ymd(dt) + "T" + String(dt.getHours()).padStart(2,"0") + ":" + String(dt.getMinutes()).padStart(2,"0");
     }
 
+    function viewportHeight() {
+      try {
+        if (window.visualViewport && window.visualViewport.height) return window.visualViewport.height;
+      } catch (_) {}
+      return window.innerHeight;
+    }
     function sizeWeekTile() {
       const wrap = document.querySelector(".wrap-desk");
       const floor = wrap ? (parseFloat(getComputedStyle(wrap).paddingBottom) || 8) : 8;
       const card = $("week-card");
       const box = $("week");
       const grid = box && box.querySelector(".grid-cal");
+      const viewH = viewportHeight();
       if (card && !card.hidden && box) {
         const top = card.getBoundingClientRect().top;
         if (top >= 0) {
-          const avail = Math.floor(window.innerHeight - top - floor);
+          const avail = Math.floor(viewH - top - floor);
           if (avail >= 180) {
             const head = card.querySelector(".week-head");
             const cs = getComputedStyle(card);
@@ -2913,7 +3113,7 @@
         if (el.classList.contains("is-float")) return;
         const top = el.getBoundingClientRect().top;
         if (top < 0) return;
-        const avail = Math.floor(window.innerHeight - top - floor);
+        const avail = Math.floor(viewH - top - floor);
         if (avail < 180) return;
         el.style.height = avail + "px";
         el.style.maxHeight = avail + "px";
@@ -3783,6 +3983,7 @@
             ${window.DeskBooks ? DeskBooks.chip(data.books) : ""}
           </div>
         </div>
+        ${layoutMode === "office" ? `<div class="home-join" id="hm-join-box"><p class="desk-meta">Office is on this tablet. Notes stay on the other device.</p><button class="btn" type="button" id="hm-join">Join office</button></div>` : ""}
         <div class="home-actions">
           <button class="btn" type="button" id="hm-send">Send forms</button>
           ${c.id ? '<button class="btn secondary" type="button" id="hm-charge">Charge</button>' : ""}
@@ -3791,7 +3992,7 @@
           <a class="btn secondary" id="hm-mail" ${mail ? "href='" + esc(mail) + "'" : "hidden"}>Email</a>
           <button class="btn secondary" type="button" id="hm-pay">Copy pay link</button>
           <button class="btn secondary" type="button" id="hm-files">Files</button>
-          <button class="btn secondary" type="button" id="hm-note">Note</button>
+          ${layoutMode === "office" ? "" : '<button class="btn secondary" type="button" id="hm-note">Note</button>'}
           <button class="btn secondary" type="button" id="hm-superbill">Superbill</button>
         </div>
         <div class="home-files" id="hm-files-row" hidden></div>
@@ -3805,10 +4006,10 @@
           <h4>Recent</h4>
           ${older.length ? "<ul class='home-list'>" + older.map((v) => visitLine(v, pastOpts)).join("") + "</ul>" : "<p class='home-empty' style='margin:0.35rem 0 0'>" + (last ? "No older visits." : "No past visits in the last 6 months.") + "</p>"}
         </div>
-        <div class="home-ghosts" id="hm-last-note">
+        ${layoutMode === "office" ? "" : `<div class="home-ghosts" id="hm-last-note">
           <p class="home-ghost"><strong>Last note</strong>${esc(note.hint || "None yet.")}${note.count > 1 ? " · " + note.count + " in Visit notes" : ""}</p>
           <p class="home-ghost"><strong>Plan</strong>${esc(plan.hint || "None yet.")}</p>
-        </div>`;
+        </div>`}`;
       $("home-empty").hidden = true;
       $("home-body").hidden = false;
       paintVaultNote(c);
@@ -3904,7 +4105,8 @@
         try { await navigator.clipboard.writeText(links.pay); } catch (e) {}
         msg("Pay link copied.", true);
       };
-      $("hm-note").onclick = () => openNotePop("");
+      if ($("hm-join")) $("hm-join").onclick = () => joinOfficePlaceholder();
+      if ($("hm-note")) $("hm-note").onclick = () => openNotePop("");
       $("hm-superbill").onclick = () => openSuperbill();
       $("hm-files").onclick = async () => {
         const row = $("hm-files-row");
@@ -3953,16 +4155,17 @@
 
     async function load() {
       const s = secret();
-      if (!s) { msg("Enter the staff secret."); return; }
+      if (!s) { msg("Enter the staff secret."); openUnlock(); return; }
       localStorage.setItem("dmb-desk", s);
       msg("Loading…", true);
       let meta;
       try {
         const res = await deskFetch("/api/desk/meta");
-        if (!res.ok) { msg("Unlock failed."); return; }
+        if (!res.ok) { msg("Unlock failed."); openUnlock(); return; }
         meta = await res.json();
       } catch (e) {
         msg("Unlock failed: network.");
+        openUnlock();
         return;
       }
       $("desk-shell").hidden = false;
@@ -3993,8 +4196,9 @@
         openHome({ id: hash.get("c") || "", email: hash.get("e") || "", name: hash.get("n") || "" });
       }
       if (deskView === "video" || deskView === "visit") {
-        startOffice().catch(() => {});
+        if (!officeUsesPlaceholder()) startOffice().catch(() => {});
       }
+      paintOfficePlaceholder();
     }
 
     function esc(s) {
@@ -4134,15 +4338,17 @@
     if ($("vault-export")) $("vault-export").onclick = vaultExportSnapshot;
     if ($("vault-import-btn")) $("vault-import-btn").onclick = () => { const f = $("vault-import-file"); if (f) f.click(); };
     if ($("vault-import-file")) $("vault-import-file").addEventListener("change", vaultImportSnapshotFile);
-    if ((deskView === "video" || deskView === "visit") && secret()) {
+    if (secret()) {
       load();
+    } else {
+      openUnlock();
     }
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/desk-sw.js", { scope: "/" }).catch(function () {});
     }
   </script>
   <script src="/static/js/theme.js"></script>
-  <script src="/static/js/desk-call.js?v=2"></script>
+  <script src="/static/js/desk-call.js?v=3"></script>
   <script src="/static/js/pa-router.js?v=1"></script>
   <script src="/static/js/staff-agent.js?v=5"></script>
   <script src="/static/js/proton-drive.js?v=9"></script>

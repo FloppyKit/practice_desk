@@ -67,8 +67,26 @@
   var muted = false;
 
   function q(path, opts) {
-    var url = apiBase() + path + (path.indexOf("?") >= 0 ? "&" : "?") + "secret=" + encodeURIComponent(secret());
-    return fetch(url, opts || {}).then(function (r) {
+    opts = opts || {};
+    var url = apiBase() + path;
+    var go = typeof window.deskFetch === "function" ? window.deskFetch : fetch;
+    var next = {};
+    Object.keys(opts).forEach(function (k) {
+      next[k] = opts[k];
+    });
+    if (next.credentials == null) next.credentials = "same-origin";
+    if (typeof window.deskFetch !== "function") {
+      var headers = {};
+      if (opts.headers) {
+        Object.keys(opts.headers).forEach(function (k) {
+          headers[k] = opts.headers[k];
+        });
+      }
+      var s = secret();
+      if (s) headers["X-Staff-Secret"] = s;
+      next.headers = headers;
+    }
+    return go(url, next).then(function (r) {
       return r.json().then(function (d) {
         return { ok: r.ok, status: r.status, d: d };
       });

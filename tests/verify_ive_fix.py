@@ -66,6 +66,11 @@ def main() -> int:
         for i, line in enumerate(text.splitlines(), 1):
             if "?secret=" in line and "never" not in line:
                 js_hits.append(f"{path.relative_to(ROOT)}:{i}")
+            if ' + "secret="' in line or " + 'secret='" in line:
+                js_hits.append(f"{path.relative_to(ROOT)}:{i}")
+    call = (ROOT / "static/js/desk-call.js").read_text()
+    if "?secret=" in call or "&secret=" in call or ' + "secret="' in call:
+        js_hits.append("static/js/desk-call.js:query-secret")
     if leftover or js_hits:
         fail("?secret= leftover " + " ".join(leftover + js_hits))
     if 'id="secret"' not in desk or 'id="unlock"' not in desk:
