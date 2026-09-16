@@ -83,6 +83,7 @@ def test_desk_html_tablet_shell() -> None:
         "desk-layout-notes",
         "desk-layout-office",
         "min-width:44px",
+        "html.desk-touch #this-week",
         "desk-icon-label",
         "Join from this tablet",
         "Notes stay on the other device",
@@ -117,6 +118,7 @@ def test_no_demo_live_host_in_placeholder_path() -> None:
     assert "function joinOfficePlaceholder" in html
     assert "if (!officeUsesPlaceholder()) startOffice()" in html
     assert "Office is off in demo" in html
+    assert 'getAttribute("data-demo") === "1"' in html
     assert "<script src=\"https://live.psycharts.org/static/js/host-office.js" not in html
 
 
