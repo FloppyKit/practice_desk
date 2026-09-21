@@ -151,6 +151,7 @@
     html.desk-layout-notes .desk-layout-switch,
     html.desk-layout-office .desk-layout-switch { display:inline-flex; }
     html.desk-unlocked #banner-unlock { display:none !important; }
+    #scribe-draft-banner[hidden] { display:none !important; }
     .desk-more-menu button.is-on { font-weight:600; }
     .skip-link {
       position:absolute; left:0.6rem; top:-3rem; z-index:200;
@@ -208,11 +209,11 @@
     html.desk-sheet-open body { overflow: hidden; }
     .book-pop {
       position: fixed;
-      z-index: 40;
-      width: min(22rem, calc(100vw - 1.5rem));
-      max-height: calc(100dvh - 24px);
+      z-index: 60;
+      width: min(24rem, calc(100vw - 1.5rem));
+      max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       overflow-x: hidden;
-      overflow-y: hidden;
+      overflow-y: auto;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
       background: var(--surface, #fff);
@@ -221,8 +222,17 @@
       border-radius: 0.9rem;
       box-shadow: 0 16px 40px color-mix(in srgb, #000 18%, transparent);
       padding: 0.85rem 0.95rem 1rem;
+      /* Keep sheet fully on-screen; never tuck under the banner */
+      top: max(0.75rem, env(safe-area-inset-top, 0px));
+      left: 50%;
+      transform: translateX(-50%);
     }
-    .book-pop-top { display:flex; align-items:flex-start; justify-content:space-between; gap:0.5rem; margin-bottom:0.55rem; }
+    .book-pop-top {
+      display:flex; align-items:flex-start; justify-content:space-between; gap:0.5rem;
+      margin: -0.15rem -0.15rem 0.55rem; padding: 0.15rem 0.15rem 0.45rem;
+      position: sticky; top: -0.15rem; z-index: 2;
+      background: var(--surface, #fff);
+    }
     .book-pop-kicker { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); }
     .book-pop-time { font-size:0.95rem; font-weight:600; margin:0.1rem 0 0; }
     .book-pop-close { border:0; background:none; font-size:1.2rem; line-height:1; cursor:pointer; color:var(--muted); padding:0 0.15rem; }
@@ -470,11 +480,27 @@
       background:color-mix(in srgb, #000 28%, transparent);
     }
     .desk-tile.is-overlay {
-      position:fixed; top:3.4rem; right:0; bottom:0; z-index:36;
-      width:min(22.5rem, 92vw); max-height:calc(100dvh - 3.4rem); margin:0;
+      position:fixed;
+      top: var(--desk-banner-bottom, 3.4rem);
+      right:0; bottom:0; z-index:36;
+      width:min(24rem, 94vw);
+      max-height: calc(100dvh - var(--desk-banner-bottom, 3.4rem));
+      margin:0;
       border-radius:0.9rem 0 0 0.9rem;
       box-shadow:-16px 0 40px color-mix(in srgb, #000 18%, transparent);
+      overflow:auto;
     }
+    /* Practice / books as in-flow tiles: don't collapse into a squat strip */
+    .desk-practice.desk-tile:not(.is-overlay),
+    .desk-books.desk-tile:not(.is-overlay) {
+      flex: 1 1 22rem;
+      width: min(28rem, 100%);
+      min-width: min(20rem, 100%);
+      min-height: min(70dvh, 36rem);
+      max-height: 100%;
+      align-self: stretch;
+    }
+
     #practice-pop.is-overlay { z-index:37; }
     .desk-practice .secret-bar { margin-bottom:0.65rem; }
     html:not(.desk-unlocked) .desk-practice .prac-acc,
@@ -1037,6 +1063,13 @@
       <button class="btn" type="button" id="unlock">Unlock</button>
     </div>
     <div id="msg" hidden role="status" aria-live="polite"></div>
+    <div id="scribe-draft-banner" class="desk-banner" hidden role="status" style="margin:0.5rem 0;padding:0.55rem 0.75rem;border:1px solid var(--border);border-radius:0.55rem;display:flex;gap:0.75rem;align-items:center;justify-content:space-between;flex-wrap:wrap">
+      <span id="scribe-draft-label">Visit draft ready</span>
+      <span style="display:flex;gap:0.4rem">
+        <button type="button" class="btn" id="scribe-draft-open">Open</button>
+        <button type="button" class="btn secondary" id="scribe-draft-dismiss">Dismiss</button>
+      </span>
+    </div>
   </div>
 
   <div id="book-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="New visit">
@@ -1357,23 +1390,30 @@
         return;
       }
       const banner = $("desk-banner");
-      const topPad = banner ? Math.round(banner.getBoundingClientRect().bottom + 8) : 12;
+      const bannerBottom = banner ? Math.round(banner.getBoundingClientRect().bottom) : 0;
+      document.documentElement.style.setProperty("--desk-banner-bottom", bannerBottom + "px");
+      const topPad = Math.max(12, bannerBottom + 8);
       const pad = 12;
-      const max = Math.max(240, window.innerHeight - topPad - pad);
+      const bottomPad = Math.max(pad, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("env(safe-area-inset-bottom)")) || 0) + pad);
+      const max = Math.max(240, window.innerHeight - topPad - bottomPad);
       el.style.maxHeight = max + "px";
       el.style.height = "auto";
-      el.style.overflowY = "hidden";
+      el.style.overflowY = "auto";
+      el.style.bottom = "auto";
       if (clientX != null) {
         const w = el.offsetWidth || 352;
         let left = clientX + 12;
         if (left + w > window.innerWidth - pad) left = clientX - w - 12;
         if (left < pad) left = pad;
         el.style.left = left + "px";
-        el.style.transform = "";
+        el.style.right = "auto";
+        el.style.transform = "none";
       } else {
         el.style.left = "50%";
+        el.style.right = "auto";
         el.style.transform = "translateX(-50%)";
       }
+      // Always below banner so Close stays reachable (dogfood: was top:12 under banner).
       el.style.top = topPad + "px";
       requestAnimationFrame(() => {
         if (el.hidden) return;
@@ -1382,11 +1422,12 @@
           el.style.height = max + "px";
           el.style.maxHeight = max + "px";
           el.style.overflowY = "auto";
-          el.style.top = pad + "px";
+          el.style.top = topPad + "px";
         } else {
           el.style.height = "auto";
-          el.style.overflowY = "hidden";
-          el.style.top = Math.max(topPad, Math.round((window.innerHeight - el.offsetHeight) / 2)) + "px";
+          el.style.overflowY = "auto";
+          const centered = Math.round((window.innerHeight - el.offsetHeight) / 2);
+          el.style.top = Math.max(topPad, centered) + "px";
         }
       });
     }
@@ -2955,6 +2996,8 @@
     if ($("client-close")) $("client-close").onclick = closeClientTile;
     $("home-scrim").onclick = () => closeOverlays();
     function onViewportChange() {
+      const b = $("desk-banner");
+      if (b) document.documentElement.style.setProperty("--desk-banner-bottom", Math.round(b.getBoundingClientRect().bottom) + "px");
       applyTiles();
       const vc = $("video-card");
       if (vc && vc.classList.contains("is-float")) {
@@ -3729,6 +3772,104 @@
       status.textContent = "Draft filled. Edit, then Sign.";
     };
 
+
+    let scribeDraftTimer = 0;
+    let scribeDraftCurrent = null;
+    async function pollScribeDrafts() {
+      if (!isUnlocked()) return;
+      try {
+        const res = await deskFetch("/api/desk/note/scribe-pending");
+        const data = await res.json().catch(() => ({}));
+        const drafts = (data && data.drafts) || [];
+        const ban = $("scribe-draft-banner");
+        if (!ban) return;
+        if (!drafts.length) {
+          ban.hidden = true;
+          scribeDraftCurrent = null;
+          return;
+        }
+        scribeDraftCurrent = drafts[0];
+        const label = $("scribe-draft-label");
+        const who = scribeDraftCurrent.name || scribeDraftCurrent.email || "visit";
+        if (label) label.textContent = "Visit draft ready · " + who + (drafts.length > 1 ? " (+" + (drafts.length - 1) + ")" : "");
+        ban.hidden = false;
+      } catch (e) {}
+    }
+    function startScribeDraftPoll() {
+      clearInterval(scribeDraftTimer);
+      pollScribeDrafts();
+      scribeDraftTimer = setInterval(pollScribeDrafts, 20000);
+    }
+    async function openScribeDraft(id) {
+      const res = await deskFetch("/api/desk/note/scribe-pending/" + encodeURIComponent(id));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok || !data.draft) {
+        msg("Could not load visit draft", false);
+        return;
+      }
+      const d = data.draft;
+      if (d.client_id || d.email) {
+        try {
+          await openHome({ id: d.client_id || "", email: d.email || "", name: d.name || "" });
+        } catch (e) {}
+      }
+      openNotePop("");
+      await fillNoteTemplates();
+      const sel = $("nt-template");
+      // Prefer AVS so style-pack sections show; fall back to draft template / blank.
+      if (sel) {
+        const want = (d.template === "avs" || !d.template || d.template === "blank") ? "avs" : d.template;
+        if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+        else if ([...sel.options].some((o) => o.value === "avs")) sel.value = "avs";
+        else if (d.template && [...sel.options].some((o) => o.value === d.template)) sel.value = d.template;
+      }
+      renderNoteFields();
+      const raw = (d.note || d.transcript || "").trim();
+      if ($("nt-transcript") && d.transcript) $("nt-transcript").value = d.transcript;
+      let fields = null;
+      if (raw.length >= 20) {
+        msg("Shaping visit draft with style pack…", true);
+        try {
+          const dr = await deskFetch("/api/desk/note/draft", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ transcript: raw }),
+          });
+          const dj = await dr.json().catch(() => ({}));
+          if (dr.ok && dj.ok && dj.fields) fields = dj.fields;
+        } catch (e) {}
+      }
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        const fid = el.dataset.fid;
+        if (fid === "dos" && !el.value) el.value = new Date().toISOString().slice(0, 10);
+        if (fields && fields[fid]) el.value = fields[fid];
+        else if (fid === "body" && raw) el.value = raw;
+        else if (fid === "plan" && fields && fields.plan) el.value = fields.plan;
+      });
+      // If AVS fields empty but we have raw text, put raw in recommendations as last resort
+      const rec = document.querySelector('#nt-fields [data-fid="recommendations"]');
+      const anyFilled = fields && (fields.medications || fields.recommendations || fields.subjective);
+      if (rec && !rec.value && raw && !anyFilled) rec.value = raw;
+      await deskFetch("/api/desk/note/scribe-pending/" + encodeURIComponent(id) + "/ack", { method: "POST" });
+      if ($("scribe-draft-banner")) $("scribe-draft-banner").hidden = true;
+      msg(fields ? "Visit draft shaped with style pack — edit, then Sign." : "Visit draft loaded — edit, then Sign.", true);
+      pollScribeDrafts();
+    }
+    if ($("scribe-draft-open")) {
+      $("scribe-draft-open").onclick = () => {
+        if (scribeDraftCurrent && scribeDraftCurrent.id) openScribeDraft(scribeDraftCurrent.id);
+      };
+    }
+    if ($("scribe-draft-dismiss")) {
+      $("scribe-draft-dismiss").onclick = async () => {
+        if (scribeDraftCurrent && scribeDraftCurrent.id) {
+          await deskFetch("/api/desk/note/scribe-pending/" + encodeURIComponent(scribeDraftCurrent.id) + "/ack", { method: "POST" });
+        }
+        if ($("scribe-draft-banner")) $("scribe-draft-banner").hidden = true;
+        pollScribeDrafts();
+      };
+    }
+
     let homeTimer = 0;
     let homeCurrent = null;
     window.PROTON_DRIVE = window.PROTON_DRIVE || {};
@@ -4191,6 +4332,7 @@
       }
       $("desk-shell").hidden = false;
       document.documentElement.classList.add("desk-unlocked");
+      startScribeDraftPoll();
       officeUrl = meta.office_url || officeUrl;
       if (window.PsychartsVault) {
         PsychartsVault.unlock(s).catch(() => {});

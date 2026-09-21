@@ -135,3 +135,14 @@ def test_demo_desk_page_paints_data_demo_and_skips_live_script() -> None:
     assert 'data-demo="1"' in painted
     assert '<script src="https://live.psycharts.org/static/js/host-office.js?v=12">' not in painted
     assert "Office is off in demo" in html
+
+
+
+def test_note_sheet_stays_below_banner():
+    """Dogfood: tall note/superbill must stay below banner so Close stays reachable."""
+    html = Path("static/desk.html").read_text(encoding="utf-8")
+    assert "Keep sheet fully on-screen" in html
+    assert "Always below banner so Close stays reachable" in html
+    assert 'el.style.top = pad + "px"' not in html
+    assert "position: sticky" in html
+    assert "function fitSheet" in html
