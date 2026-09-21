@@ -2296,7 +2296,7 @@ def api_desk_practice_get(secret: str = Query(default="")):
     from .practice import load as load_practice, pages_labeled, public as public_practice, service_set
 
     p = load_practice()
-    pub = public_practice(PUBLIC_BASE)
+    pub = public_practice("" if _demo_on() else PUBLIC_BASE)
     return {
         "ok": True,
         **p,
@@ -2336,7 +2336,7 @@ def api_desk_practice_save(req: DeskPracticeSave, secret: str = Query(default=""
     saved = save_practice(req.model_dump())
     from .practice import service_set
 
-    pub = public_practice(PUBLIC_BASE)
+    pub = public_practice("" if _demo_on() else PUBLIC_BASE)
     return {
         "ok": True,
         **saved,
@@ -2408,7 +2408,7 @@ async def api_desk_practice_asset(
         saved = save_asset(kind, raw, file.content_type or "")
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    pub = public_practice(PUBLIC_BASE)
+    pub = public_practice("" if _demo_on() else PUBLIC_BASE)
     return {
         "ok": True,
         **saved,
@@ -3194,9 +3194,28 @@ def api_mail_kinds(secret: str = Query(default="")):
     return {"kinds": SUITE}
 
 
+def _demo_on() -> bool:
+    return (os.environ.get("DEMO") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 @app.get("/desk")
 def desk_page():
-    return _page("desk.html", cache=False)
+    path = STATIC / "desk.html"
+    if not path.exists():
+        raise HTTPException(404)
+    html = path.read_text(encoding="utf-8")
+    if _demo_on():
+        if 'data-demo="' not in html:
+            html = html.replace("<html", '<html data-demo="1"', 1)
+        html = html.replace(
+            'src="https://live.psycharts.org/static/js/host-office.js?v=12"',
+            'src="" data-stripped-demo-host-office="1"',
+        )
+    return Response(
+        content=html,
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/desk-sw.js")

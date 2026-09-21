@@ -108,6 +108,9 @@ def _scan_file(path: Path, errors: list[str]) -> None:
         if "?secret=" in line and "never" not in line.lower():
             if re.search(r"(fetch\s*\(|deskFetch\s*\(|fetch\s*[`'\"]|deskFetch\s*[`'\"])", line, re.I):
                 errors.append(f"{where}: ?secret= on fetch/deskFetch URL")
+        if path.parts[-2:][0] != "tests" and path.parent.name != "tests":
+            if ' + "secret="' in line or " + 'secret='" in line:
+                errors.append(f"{where}: staff secret concatenated onto a URL")
         if SK_KEY_RE.search(line):
             errors.append(f"{where}: sk- API key pattern")
 

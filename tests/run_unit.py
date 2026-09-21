@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from tests import (  # noqa: E402
     test_cipher_p1,
     test_demo_store,
+    test_desk_mobile,
     test_modejson,
     test_oss_hygiene,
     test_staff_auth,
@@ -29,6 +30,7 @@ def main() -> int:
         test_demo_store,
         test_cipher_p1,
         test_modejson,
+        test_desk_mobile,
     ):
         for name in sorted(dir(mod)):
             if not name.startswith("test_"):
