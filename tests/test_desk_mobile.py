@@ -146,3 +146,11 @@ def test_note_sheet_stays_below_banner():
     assert 'el.style.top = pad + "px"' not in html
     assert "position: sticky" in html
     assert "function fitSheet" in html
+
+
+def test_books_always_overlays_calendar():
+    """Dogfood: Books must be is-overlay whenever open — never an in-flow tile vs week grid."""
+    html = Path("static/desk.html").read_text(encoding="utf-8")
+    assert 'books.classList.toggle("is-overlay", !!showB)' in html
+    assert "Drawers always overlay the calendar" in html
+    assert "#books-pop.is-overlay { z-index:73; }" in html or "z-index:73" in html

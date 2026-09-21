@@ -476,13 +476,15 @@
     html.desk-overlay-open,
     html.desk-overlay-open body { overflow:hidden; }
     html.desk-overlay-open .desk-client-scrim {
-      display:block; position:fixed; inset:0; z-index:35;
+      display:block; position:fixed; inset:0; z-index:70;
       background:color-mix(in srgb, #000 28%, transparent);
     }
     .desk-tile.is-overlay {
       position:fixed;
       top: var(--desk-banner-bottom, 3.4rem);
-      right:0; bottom:0; z-index:36;
+      right:0; bottom:0;
+      /* Above calendar column; scrim sits under drawers */
+      z-index:72;
       width:min(24rem, 94vw);
       max-height: calc(100dvh - var(--desk-banner-bottom, 3.4rem));
       margin:0;
@@ -490,6 +492,8 @@
       box-shadow:-16px 0 40px color-mix(in srgb, #000 18%, transparent);
       overflow:auto;
     }
+    #books-pop.is-overlay { z-index:73; }
+    #practice-pop.is-overlay { z-index:73; }
     /* Practice / books as in-flow tiles: don't collapse into a squat strip */
     .desk-practice.desk-tile:not(.is-overlay),
     .desk-books.desk-tile:not(.is-overlay) {
@@ -501,7 +505,6 @@
       align-self: stretch;
     }
 
-    #practice-pop.is-overlay { z-index:37; }
     .desk-practice .secret-bar { margin-bottom:0.65rem; }
     html:not(.desk-unlocked) .desk-practice .prac-acc,
     html:not(.desk-unlocked) .desk-practice .desk-actions { display:none; }
@@ -642,7 +645,6 @@
     .svc-day input[type=checkbox] { margin:0; }
     .svc-day.is-off input[type=time] { opacity:0.4; }
     #superbill-pop { width: min(28rem, calc(100vw - 1.5rem)); }
-    #books-pop.is-overlay { z-index:36; }
     .books-stat { display:flex; justify-content:space-between; gap:0.75rem; padding:0.35rem 0; border-bottom:1px solid var(--border); font-size:0.9rem; }
     .books-stat:last-child { border-bottom:0; }
     .books-block { margin:0 0 0.85rem; }
@@ -1642,18 +1644,19 @@
       let showS = settingsWanted();
       let showB = booksWanted();
       const books = $("books-pop");
-      const overlay = drawerOverlay() && !!(showC || showS || showB);
+      // Drawers always overlay the calendar (dogfood: Books as in-flow tile fought the week grid).
+      const overlay = !!(showC || showS || showB);
       if (home) {
         home.hidden = !showC;
-        home.classList.toggle("is-overlay", !!(showC && overlay));
+        home.classList.toggle("is-overlay", !!showC);
       }
       if (prac) {
         prac.hidden = !showS;
-        prac.classList.toggle("is-overlay", !!(showS && overlay));
+        prac.classList.toggle("is-overlay", !!showS);
       }
       if (books) {
         books.hidden = !showB;
-        books.classList.toggle("is-overlay", !!(showB && overlay));
+        books.classList.toggle("is-overlay", !!showB);
       }
       if (week) week.hidden = !showCal;
       if (video) {
