@@ -5,6 +5,7 @@ __pycache__
 venv
 .env
 .env.*
+secrets/
 !.env.example
 !.env.demo
 config/event-types.yaml

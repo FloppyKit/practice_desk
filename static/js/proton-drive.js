@@ -166,7 +166,8 @@
       .then(function (x) {
         var bits = [];
         if (x.d && x.d.email && x.d.email.ok) bits.push("email sent");
-        if (x.d && x.d.sms && x.d.sms.ok) bits.push("SMS sent");
+        if (x.d && x.d.sms && x.d.sms.queued) bits.push("SMS queued — sends when the desk Mac is awake");
+        else if (x.d && x.d.sms && x.d.sms.ok) bits.push("SMS sent");
         if (x.d && x.d.email && x.d.email.detail && !x.d.email.ok && !x.d.email.skipped)
           bits.push("email: " + x.d.email.detail);
         if (x.d && x.d.sms && x.d.sms.detail && !x.d.sms.ok && !x.d.sms.skipped)

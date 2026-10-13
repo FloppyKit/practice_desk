@@ -155,13 +155,53 @@ def normalize_e164(phone: str) -> str | None:
     return None
 
 
-def send_sms(to_phone: str, body: str) -> dict[str, Any]:
-    """Send SMS via Twilio REST. No-op unless ENABLE_SMS and credentials set."""
-    if not ENABLE_SMS:
-        return {"ok": False, "channel": "sms", "skipped": True, "detail": "ENABLE_SMS=false"}
+def send_sms(
+    to_phone: str,
+    body: str,
+    *,
+    kind: str = "",
+    source: str = "booker",
+    idempotency_key: str = "",
+    not_after: str = "",
+    template: str = "",
+) -> dict[str, Any]:
+    """Send SMS. Spruce API, else Mac queue, else Twilio if enabled."""
     e164 = normalize_e164(to_phone)
     if not e164:
         return {"ok": False, "channel": "sms", "detail": "invalid phone"}
+    from .spruce_api import send_spruce_sms, spruce_api_enabled
+
+    if spruce_api_enabled():
+        result = send_spruce_sms(
+            e164,
+            body,
+            idempotency_key=idempotency_key,
+        )
+        if not result.get("ok"):
+            append_log(
+                "notify-failures.jsonl",
+                {
+                    "ok": False,
+                    "channel": "spruce",
+                    "kind": kind,
+                    "detail": result.get("detail") or "",
+                },
+            )
+        return result
+    from .sms_bridge import bridge_enabled, enqueue
+
+    if bridge_enabled():
+        return enqueue(
+            to=e164,
+            body=body,
+            kind=kind or "file",
+            source=source,
+            idempotency_key=idempotency_key,
+            not_after=not_after,
+            template=template,
+        )
+    if not ENABLE_SMS:
+        return {"ok": False, "channel": "sms", "skipped": True, "detail": "ENABLE_SMS=false"}
     if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM):
         result = {
             "ok": False,
@@ -262,6 +302,7 @@ def patient_confirm_sms(
     when_label: str,
     sms_consent: bool,
     duration_minutes: int | None = None,
+    event_id: str = "",
 ) -> dict[str, Any]:
     if not sms_consent:
         return {"ok": False, "channel": "sms", "skipped": True, "detail": "no consent"}
@@ -272,7 +313,15 @@ def patient_confirm_sms(
         when_label=when_label,
         duration_minutes=duration_minutes,
     )
-    return send_sms(phone, body)
+    key = f"{event_id}:confirm" if event_id else ""
+    return send_sms(
+        phone,
+        body,
+        kind="confirm",
+        source="booker",
+        idempotency_key=key,
+        template="confirm",
+    )
 
 
 def staff_notify_email(
@@ -374,6 +423,8 @@ def patient_reminder_sms(
     kind: str,
     sms_consent: bool,
     duration_minutes: int | None = None,
+    event_id: str = "",
+    not_after: str = "",
 ) -> dict[str, Any]:
     if not sms_consent:
         return {"ok": False, "channel": "sms", "skipped": True, "detail": "no consent"}
@@ -386,7 +437,16 @@ def patient_reminder_sms(
         kind=sms_kind,
         duration_minutes=duration_minutes,
     )
-    return send_sms(phone, body)
+    key = f"{event_id}:sms:{sms_kind}" if event_id else ""
+    return send_sms(
+        phone,
+        body,
+        kind=f"remind_{sms_kind}",
+        source="reminder",
+        idempotency_key=key,
+        not_after=not_after,
+        template=f"remind_{sms_kind}",
+    )
 
 
 def send_named_email(*, kind: str, to: str, fields: dict[str, Any]) -> dict[str, Any]:
@@ -429,7 +489,7 @@ def send_late(
     # Staff-fired late notes: send SMS when we have a number (care coordination).
     sms_result: dict[str, Any] = {"ok": False, "skipped": True, "detail": "no phone"}
     if phone:
-        sms_result = send_sms(phone, sms)
+        sms_result = send_sms(phone, sms, kind="late", source="desk", template="late")
     return {
         "ok": bool(mail.get("ok") or sms_result.get("ok")),
         "email": mail,

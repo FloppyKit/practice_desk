@@ -43,25 +43,37 @@
     return h + ":" + m;
   }
 
+  function windowsOf(block) {
+    if (!block) return [];
+    if (Array.isArray(block)) return block.filter(function (w) { return w && w.start && w.end; });
+    if (block.windows) return windowsOf(block.windows);
+    if (block.start && block.end) return [block];
+    return [];
+  }
+
+  function dayKey(block) {
+    return windowsOf(block).map(function (w) {
+      return (w.start || "") + "-" + (w.end || "");
+    }).join("|");
+  }
+
   function hoursSummary(hours) {
     hours = hours || {};
     var parts = [];
     var i = 0;
     while (i < DAYS.length) {
       var day = DAYS[i];
-      var block = hours[day];
-      if (!block) {
+      var wins = windowsOf(hours[day]);
+      if (!wins.length) {
         i += 1;
         continue;
       }
       var j = i;
-      var key = (block.start || "") + "-" + (block.end || "");
-      while (j + 1 < DAYS.length) {
-        var nxt = hours[DAYS[j + 1]];
-        if (!nxt || (nxt.start || "") + "-" + (nxt.end || "") !== key) break;
-        j += 1;
-      }
-      var range = prettyHour(block.start) + "–" + prettyHour(block.end);
+      var key = dayKey(hours[day]);
+      while (j + 1 < DAYS.length && dayKey(hours[DAYS[j + 1]]) === key) j += 1;
+      var range = wins.map(function (w) {
+        return prettyHour(w.start) + "–" + prettyHour(w.end);
+      }).join(", ");
       if (j === i) parts.push(DAY_LAB[day] + " " + range);
       else parts.push(DAY_LAB[day] + "–" + DAY_LAB[DAYS[j]] + " " + range);
       i = j + 1;
@@ -137,11 +149,12 @@
   function hoursEditor(hours) {
     hours = hours || {};
     return (
-      '<p class="desk-meta">Hours this visit can be booked</p><div class="svc-hours">' +
+      '<p class="desk-meta">Hours this visit can be booked. A second window is a gap.</p><div class="svc-hours">' +
       DAYS.map(function (day) {
-        var on = !!(hours[day] && hours[day].start && hours[day].end);
-        var start = on ? hours[day].start : "09:00";
-        var end = on ? hours[day].end : "17:00";
+        var wins = windowsOf(hours[day]);
+        var on = wins.length > 0;
+        var first = wins[0] || { start: "09:00", end: "17:00" };
+        var second = wins[1] || { start: "", end: "" };
         return (
           '<label class="svc-day' +
           (on ? "" : " is-off") +
@@ -153,12 +166,20 @@
           DAY_LAB[day] +
           '</span><input type="time" data-start="' +
           day +
-          '" value="' +
-          esc(start) +
+          '" data-win="0" value="' +
+          esc(first.start) +
           '" /><span>–</span><input type="time" data-end="' +
           day +
-          '" value="' +
-          esc(end) +
+          '" data-win="0" value="' +
+          esc(first.end) +
+          '" /><input type="time" data-start="' +
+          day +
+          '" data-win="1" value="' +
+          esc(second.start) +
+          '" /><span>–</span><input type="time" data-end="' +
+          day +
+          '" data-win="1" value="' +
+          esc(second.end) +
           '" /></label>'
         );
       }).join("") +
@@ -232,7 +253,20 @@
       '<input type="checkbox" id="svc-public"' +
       (svc.public !== false ? " checked" : "") +
       " /><span>On the public book page</span></label>" +
-      hoursEditor(svc.weekly_hours) +
+      (function () {
+        var durs = svc.durations || [];
+        var by = svc.hours_by_duration || {};
+        if (durs.length > 1) {
+          return durs.map(function (d) {
+            var hours = by[String(d)] || by[d] || svc.weekly_hours || {};
+            return '<div class="svc-hour-set" data-hour-dur="' + d + '">' +
+              '<p class="desk-meta">' + d + ' min hours</p>' +
+              hoursEditor(hours) +
+              "</div>";
+          }).join("");
+        }
+        return '<div class="svc-hour-set">' + hoursEditor(svc.weekly_hours) + "</div>";
+      })() +
       '<div class="desk-actions">' +
       '<button class="btn" type="button" id="svc-save">' +
       (isNew ? "Add service" : "Save service") +
@@ -284,11 +318,16 @@
     DAYS.forEach(function (day) {
       var ck = root.querySelector('input[type=checkbox][data-day="' + day + '"]');
       if (!ck || !ck.checked) return;
-      var startEl = root.querySelector('input[data-start="' + day + '"]');
-      var endEl = root.querySelector('input[data-end="' + day + '"]');
-      var start = startEl ? startEl.value : "";
-      var end = endEl ? endEl.value : "";
-      if (start && end) out[day] = { start: start, end: end };
+      var wins = [];
+      [0, 1].forEach(function (i) {
+        var startEl = root.querySelector('input[data-start="' + day + '"][data-win="' + i + '"]');
+        var endEl = root.querySelector('input[data-end="' + day + '"][data-win="' + i + '"]');
+        var start = startEl ? startEl.value : "";
+        var end = endEl ? endEl.value : "";
+        if (start && end) wins.push({ start: start, end: end });
+      });
+      if (wins.length === 1) out[day] = wins[0];
+      else if (wins.length) out[day] = { windows: wins };
     });
     return out;
   }
@@ -345,7 +384,14 @@
       calendar_duration_minutes: calRaw ? parseInt(calRaw, 10) : null,
       price_usd: prices.price_usd,
       price_by_duration: prices.price_by_duration,
-      weekly_hours: readHours(root),
+      weekly_hours: readHours(root.querySelector('.svc-hour-set') || root),
+      hours_by_duration: (function () {
+        var by = {};
+        root.querySelectorAll(".svc-hour-set[data-hour-dur]").forEach(function (set) {
+          by[set.getAttribute("data-hour-dur")] = readHours(set);
+        });
+        return by;
+      })(),
       enabled: !!(document.getElementById("svc-on") && document.getElementById("svc-on").checked),
       public: !!(document.getElementById("svc-public") && document.getElementById("svc-public").checked),
       slot_interval_minutes: durs.length && Math.min.apply(null, durs) <= 15 ? 15 : 30,

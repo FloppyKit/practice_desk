@@ -10,12 +10,17 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tests import (  # noqa: E402
+    test_chat_threads,
     test_cipher_p1,
     test_demo_store,
     test_desk_mobile,
     test_modejson,
     test_oss_hygiene,
+    test_slots,
+    test_sms_bridge,
+    test_spruce_api,
     test_staff_auth,
+    test_verify_codes,
     test_week_people,
 )
 
@@ -24,6 +29,7 @@ def main() -> int:
     failed = 0
     ran = 0
     for mod in (
+        test_chat_threads,
         test_week_people,
         test_staff_auth,
         test_oss_hygiene,
@@ -31,6 +37,10 @@ def main() -> int:
         test_cipher_p1,
         test_modejson,
         test_desk_mobile,
+        test_slots,
+        test_sms_bridge,
+        test_spruce_api,
+        test_verify_codes,
     ):
         for name in sorted(dir(mod)):
             if not name.startswith("test_"):

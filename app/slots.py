@@ -24,6 +24,63 @@ def _parse_hhmm(s: str) -> time:
     return time(int(h), int(m))
 
 
+def day_windows(raw: Any, duration_minutes: int = 0) -> list[dict[str, str]]:
+    """One day may be a single block or several windows (a gap between them)."""
+    if isinstance(raw, list):
+        return [w for w in raw if isinstance(w, dict) and w.get("start") and w.get("end")]
+    if not isinstance(raw, dict):
+        return []
+    by = raw.get("by_duration") or raw.get("hours_by_duration")
+    if isinstance(by, dict) and duration_minutes:
+        specific = by.get(duration_minutes) or by.get(str(duration_minutes))
+        if specific is not None:
+            return day_windows(specific, 0)
+    windows = raw.get("windows")
+    if isinstance(windows, list):
+        return day_windows(windows, 0)
+    if raw.get("start") and raw.get("end"):
+        return [raw]
+    return []
+
+
+def windows_for(event_type: dict[str, Any], day_key: str, duration_minutes: int) -> list[dict[str, str]]:
+    by = event_type.get("hours_by_duration") or {}
+    if isinstance(by, dict):
+        specific = by.get(duration_minutes) or by.get(str(duration_minutes))
+        if isinstance(specific, dict) and day_key in specific:
+            return day_windows(specific.get(day_key), duration_minutes)
+    weekly = event_type.get("weekly_hours") or {}
+    return day_windows(weekly.get(day_key), duration_minutes)
+
+
+def window_starts(
+    day,
+    window: dict[str, str],
+    *,
+    interval: int,
+    cal_dur: int,
+    tz,
+) -> list[datetime]:
+    """Starts inside one window. latest_start caps the start; otherwise the block must finish by end."""
+    open_t = _parse_hhmm(window["start"])
+    cursor = datetime.combine(day, open_t, tzinfo=tz)
+    latest = str(window.get("latest_start") or "").strip()
+    if latest:
+        limit = datetime.combine(day, _parse_hhmm(latest), tzinfo=tz)
+        out = []
+        while cursor <= limit:
+            out.append(cursor)
+            cursor += timedelta(minutes=interval)
+        return out
+    close_t = _parse_hhmm(window["end"])
+    day_end = datetime.combine(day, close_t, tzinfo=tz)
+    out = []
+    while cursor + timedelta(minutes=cal_dur) <= day_end:
+        out.append(cursor)
+        cursor += timedelta(minutes=interval)
+    return out
+
+
 def _overlaps(a0: datetime, a1: datetime, b0: datetime, b1: datetime) -> bool:
     return a0 < b1 and b0 < a1
 
@@ -83,37 +140,28 @@ def generate_slots(
 
     while day <= end_day:
         key = WEEKDAY_KEYS[day.weekday()]
-        hours = weekly.get(key)
-        if hours:
-            open_t = _parse_hhmm(hours["start"])
-            close_t = _parse_hhmm(hours["end"])
-            cursor = datetime.combine(day, open_t, tzinfo=tz)
-            day_end = datetime.combine(day, close_t, tzinfo=tz)
-            # Need enough open day for the *calendar* block (may exceed client duration)
-            while cursor + timedelta(minutes=cal_dur) <= day_end:
-                start = cursor
-                client_end = cursor + timedelta(minutes=client_dur)
-                if start >= earliest:
-                    # Busy check uses full calendar block (+ optional buffers; default 0)
-                    block_start = start - timedelta(minutes=buf_before)
-                    block_end = start + timedelta(minutes=cal_dur + buf_after)
-                    conflict = False
-                    for b in busy_local:
-                        if _overlaps(block_start, block_end, b["start"], b["end"]):
-                            conflict = True
-                            break
-                    if not conflict:
-                        slots.append(
-                            {
-                                "start": start.isoformat(),
-                                # client-facing end (visit length); calendar write may be longer
-                                "end": client_end.isoformat(),
-                                "label": start.strftime("%a %b %-d · %-I:%M %p")
-                                if hasattr(start, "strftime")
-                                else start.isoformat(),
-                            }
-                        )
-                cursor += timedelta(minutes=interval)
+        for window in windows_for(event_type, key, client_dur):
+            for start in window_starts(
+                day, window, interval=interval, cal_dur=cal_dur, tz=tz
+            ):
+                client_end = start + timedelta(minutes=client_dur)
+                if start < earliest:
+                    continue
+                block_start = start - timedelta(minutes=buf_before)
+                block_end = start + timedelta(minutes=cal_dur + buf_after)
+                conflict = False
+                for b in busy_local:
+                    if _overlaps(block_start, block_end, b["start"], b["end"]):
+                        conflict = True
+                        break
+                if not conflict:
+                    slots.append(
+                        {
+                            "start": start.isoformat(),
+                            "end": client_end.isoformat(),
+                            "label": start.isoformat(),
+                        }
+                    )
         day += timedelta(days=1)
 
     # normalize labels (Linux strftime %-d may fail on some; fix)
