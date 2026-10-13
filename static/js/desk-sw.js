@@ -1,5 +1,5 @@
 /* Practice desk shell cache. Never caches API or note bodies. */
-var CACHE = "psycharts-desk-v20";
+var CACHE = "psycharts-desk-v21";
 var SHELL = [
   "/desk",
   "/static/desk.webmanifest",
