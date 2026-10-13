@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
@@ -227,6 +227,7 @@ class VerifyRequest(BaseModel):
     first_name: str = ""
     last_name: str = ""
     dob: str = ""
+    portal: bool = False
 
 
 def _durations(et: dict[str, Any]) -> list[int]:
@@ -445,20 +446,31 @@ class VerifyCodeRequest(BaseModel):
 
 @app.post("/api/verify-patient")
 def api_verify_patient(req: VerifyRequest):
-    """Send a code to the email or mobile on the account. Name and DOB do nothing."""
-    from .verify_codes import start_verify
+    """Phone or email on file can name a message. No token. No chart."""
+    from .verify_codes import recognize_for_message
 
     if not (req.email or "").strip() and not (req.phone or "").strip():
-        return {"ok": False, "reason": "need_email_or_phone"}
+        return {"ok": False, "level": "none", "reason": "need_email_or_phone"}
+    return recognize_for_message(email=req.email, phone=req.phone)
+
+
+@app.post("/api/verify-patient/code-send")
+def api_verify_code_send(req: VerifyRequest):
+    """Send a code before any visit, note, or billing detail."""
+    from .verify_codes import start_verify
+
     return start_verify(email=req.email, phone=req.phone)
 
 
 @app.post("/api/verify-patient/code")
 def api_verify_patient_code(req: VerifyCodeRequest):
-    """Mint a booking token only after the code. No chart fields in the body."""
+    """Mint a token only after the code. No chart fields."""
     from .verify_codes import confirm_code
 
-    return confirm_code(email=req.email, phone=req.phone, code=req.code)
+    result = confirm_code(email=req.email, phone=req.phone, code=req.code)
+    if result.get("ok"):
+        result["level"] = "sensitive"
+    return result
 
 
 @app.get("/api/types")
@@ -521,7 +533,7 @@ def _send_booking_notices(
     notes: str,
     sms_consent: bool,
     price_label: str = "",
-    location_line: str = "Video visit · https://meet.drmattbrown.com",
+    location_line: str = "Video visit · https://live.psycharts.org/guest",
     extra_notify: list[str] | None = None,
     rebook_url: str = "",
     duration_minutes: int | None = None,
@@ -534,6 +546,7 @@ def _send_booking_notices(
     patient_confirm_email(
         name=name,
         email=email,
+        phone=phone,
         title=title,
         when_label=when_label,
         cancel_url=cancel_url,
@@ -589,15 +602,20 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
     src = (req.source or "web").strip().lower()
     if req.event_type == "follow-up" and src in ("voice", "chat", "agent"):
         token = (req.verify_token or "").strip()
-        if not token:
-            raise HTTPException(
-                401,
-                "Follow-up booking needs a verified current patient (email, phone, or name + date of birth).",
-            )
-        try:
-            verify_patient_token(token)
-        except ValueError as e:
-            raise HTTPException(401, f"Patient verification expired or invalid: {e}") from e
+        if token:
+            try:
+                verify_patient_token(token)
+            except ValueError as e:
+                raise HTTPException(401, f"Patient verification expired or invalid: {e}") from e
+        else:
+            from .verify_codes import recognize_for_message
+
+            found = recognize_for_message(email=req.email, phone=req.phone)
+            if not found.get("ok"):
+                raise HTTPException(
+                    401,
+                    "Follow-up booking needs the phone or email on file. A code is not required.",
+                )
 
     tz = ZoneInfo(cfg.get("timezone", "America/Chicago"))
     start = dateparser.isoparse(req.start)
@@ -992,8 +1010,190 @@ def _visit_details_from_payload(payload: dict[str, Any]) -> dict[str, str]:
         }
 
 
+class PublicTokenRequest(BaseModel):
+    verify_token: str
+
+
+class PublicCancelVisitRequest(BaseModel):
+    verify_token: str
+    event_id: str
+
+
+def _verified_client(token: str) -> dict:
+    from .patients import client_by_id
+
+    try:
+        payload = verify_patient_token(token)
+    except ValueError as e:
+        raise HTTPException(401, str(e)) from e
+    row = client_by_id(str(payload.get("id") or ""))
+    if not row:
+        raise HTTPException(404, "not found")
+    return row
+
+
+@app.post("/api/public/upcoming")
+def api_public_upcoming(req: PublicTokenRequest):
+    """Next visits for a verified current patient. No chart."""
+    row = _verified_client(req.verify_token)
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    visits = _visits_for_client(row, tz)
+    upcoming = [v for v in visits if v.get("upcoming")]
+    upcoming.sort(key=lambda v: v.get("start_iso") or "")
+    return {
+        "ok": True,
+        "name": row.get("name") or "",
+        "visits": [
+            {
+                "event_id": v.get("event_id") or "",
+                "title": v.get("title") or "Visit",
+                "when_label": v.get("when_label") or "",
+                "duration_minutes": v.get("duration_minutes"),
+                "start_iso": v.get("start_iso") or "",
+            }
+            for v in upcoming[:6]
+        ],
+    }
+
+
+@app.post("/api/public/cancel-visit")
+def api_public_cancel_visit(req: PublicCancelVisitRequest):
+    """Cancel one of this verified patient's visits. Used to reschedule."""
+    row = _verified_client(req.verify_token)
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    match = None
+    for v in _visits_for_client(row, tz):
+        if str(v.get("event_id") or "") == req.event_id:
+            match = v
+            break
+    if not match:
+        raise HTTPException(404, "visit not found")
+    delete_event(match["calendar_id"], match["event_id"])
+    return {"ok": True, "cancelled": match.get("when_label") or ""}
+
+
+@app.post("/api/public/folders")
+def api_public_folders(req: PublicTokenRequest):
+    """Cloaked visit-notes and superbill folder links. No note bodies."""
+    row = _verified_client(req.verify_token)
+    return {
+        "ok": True,
+        "notes_url": row.get("chart_url") or "",
+        "billing_url": row.get("billing_url") or "",
+        "notes_label": "Visit notes",
+        "billing_label": "Superbills",
+    }
+
+
+@app.post("/api/public/balance")
+def api_public_balance(req: PublicTokenRequest):
+    """Owed amount for a verified patient. No line-item detail."""
+    row = _verified_client(req.verify_token)
+    from .fees import dollars, owed_cents
+
+    cents = owed_cents(str(row.get("id") or ""))
+    return {"ok": True, "owed_cents": cents, "owed_pretty": dollars(cents)}
+
+
+@app.post("/api/public/pay")
+def api_public_pay(req: PublicTokenRequest):
+    """Stripe Checkout for the open balance. Saves the card for later."""
+    row = _verified_client(req.verify_token)
+    from . import clients_db
+    from .fees import attach_invoice, dollars, list_open, owed_cents
+    from .stripe_pay import (
+        create_balance_checkout,
+        ensure_customer,
+        open_checkout_url,
+        stripe_ready,
+        void_invoice,
+    )
+
+    if not stripe_ready():
+        raise HTTPException(503, "card payments are not on")
+    cid = str(row.get("id") or "")
+    email = str(row.get("email") or "").strip()
+    if not email:
+        raise HTTPException(400, "no email on file for a card")
+    open_fees = list_open(cid)
+    cents = owed_cents(cid)
+    if cents <= 0 or not open_fees:
+        return {"ok": True, "url": "", "owed_cents": 0, "owed_pretty": dollars(0)}
+    for fee in open_fees:
+        sid = str(fee.get("stripe_id") or "")
+        url = str(fee.get("pay_url") or "")
+        if sid.startswith("cs_") and url.startswith("https://"):
+            live = open_checkout_url(sid)
+            if live:
+                return {
+                    "ok": True,
+                    "url": live,
+                    "owed_cents": cents,
+                    "owed_pretty": dollars(cents),
+                    "reused": True,
+                }
+    for fee in open_fees:
+        sid = str(fee.get("stripe_id") or "")
+        if sid.startswith("in_"):
+            void_invoice(sid)
+    cust = ensure_customer(
+        email=email,
+        existing_id=str(row.get("stripe_customer_id") or ""),
+        client_id=cid,
+    )
+    if cust and cust != row.get("stripe_customer_id"):
+        clients_db.upsert({"id": cid, "stripe_customer_id": cust})
+    fee_ids = [str(fee.get("id") or "") for fee in open_fees if fee.get("id")]
+    sess = create_balance_checkout(
+        customer_id=cust,
+        amount_cents=cents,
+        client_id=cid,
+        fee_ids=fee_ids,
+        success_url=PUBLIC_BASE + "/pay/thanks?session_id={CHECKOUT_SESSION_ID}",
+        cancel_url=SITE_PUBLIC + "/portal",
+    )
+    attach_invoice(fee_ids, stripe_id=str(sess["id"]), pay_url=str(sess["url"]))
+    return {
+        "ok": True,
+        "url": sess["url"],
+        "owed_cents": cents,
+        "owed_pretty": dollars(cents),
+    }
+
+
+@app.get("/pay/thanks", response_class=HTMLResponse)
+def pay_thanks(session_id: str = ""):
+    from .stripe_pay import finalize_checkout
+
+    title = "Payment not completed"
+    note = "If you closed the payment page, nothing was charged."
+    if session_id.startswith("cs_"):
+        try:
+            done = finalize_checkout(session_id)
+        except Exception:
+            done = {"ok": False}
+        if done.get("ok") and not done.get("pending"):
+            title = "Payment received"
+            note = "This card is saved for later visits."
+        elif done.get("pending"):
+            title = "Payment still processing"
+            note = "If the bank finishes it, the balance will clear on its own."
+    page = f"""<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
+<body style="margin:0;font-family:Georgia,serif;background:#f6f3ee;color:#1a1a1a;display:flex;min-height:100vh;align-items:center;justify-content:center">
+<main style="max-width:28rem;padding:2rem;text-align:center">
+<h1 style="font-size:1.5rem;font-weight:500">{title}</h1>
+<p style="line-height:1.5">{note}</p>
+<p><a href="{SITE_PUBLIC}" style="color:#1a1a1a">Back to the practice site</a></p>
+</main>
+"""
+    return HTMLResponse(page)
+
+
 @app.get("/cancel", response_class=HTMLResponse)
-def cancel_page(token: str = ""):
+def cancel_page(token: str = "", done: str = ""):
     if not token:
         return HTMLResponse(_cancel_html(error="Missing cancel token."), status_code=400)
     try:
@@ -1002,11 +1202,11 @@ def cancel_page(token: str = ""):
         return HTMLResponse(_cancel_html(error=str(e)), status_code=400)
     details = _visit_details_from_payload(payload)
     rebook = f"/{payload.get('et')}" if payload.get("et") else "/"
-    if details.get("gone") == "1":
+    if details.get("gone") == "1" or done == "1":
         return HTMLResponse(
             _cancel_html(
                 done=True,
-                note="This visit was already cancelled or removed.",
+                note="This visit is cancelled.",
                 title=details.get("title", ""),
                 when_label=details.get("when_label", ""),
                 name=details.get("name", ""),
@@ -1070,16 +1270,10 @@ def cancel_submit(token: str = Form(...)):
             )
         except Exception:
             pass
-    return HTMLResponse(
-        _cancel_html(
-            done=True,
-            note="Your visit has been cancelled. Pick a new time to reschedule.",
-            title=details.get("title", ""),
-            when_label=details.get("when_label", ""),
-            name=details.get("name", ""),
-            email=details.get("email", ""),
-            rebook_path=rebook,
-        )
+    from urllib.parse import quote
+    return RedirectResponse(
+        url=f"/cancel?token={quote(token)}&done=1",
+        status_code=303,
     )
 
 
@@ -1146,7 +1340,7 @@ def _cancel_html(
     if done:
         body = f"""
         <p style="font-size:1.15rem;font-weight:650;margin:0 0 8px">This visit is cancelled.</p>
-        <p>It is off the calendar. A confirmation email goes out if we have an address on file.</p>
+        <p>It is off the calendar.</p>
         {visit_card}
         <p style="margin-top:12px">To reschedule, pick a new time below.</p>
         <p style="margin-top:16px"><a class="btn" href="{_esc(rebook_href)}" style="display:inline-block;text-decoration:none">Book a new time</a></p>
@@ -1506,6 +1700,10 @@ def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, A
             summary = str(ev.get("summary") or "").lower()
             hit = bool(email and ev_email == email)
             if not hit and name and ev_name == name:
+                hit = True
+            ev_phone = "".join(ch for ch in str(fields.get("phone") or "") if ch.isdigit())
+            client_phone = "".join(ch for ch in str(client.get("phone") or "") if ch.isdigit())
+            if not hit and len(client_phone) >= 10 and ev_phone[-10:] == client_phone[-10:]:
                 hit = True
             if not hit and name and len(name) > 4 and name in summary:
                 hit = True
@@ -1929,6 +2127,15 @@ async def api_stripe_webhook(request: Request):
         iid = str(obj.get("id") or "")
         n = mark_paid_by_stripe(iid)
         return {"ok": True, "marked": n, "type": et}
+    if et == "checkout.session.completed":
+        from .stripe_pay import finalize_checkout
+
+        sid = str(obj.get("id") or "")
+        try:
+            done = finalize_checkout(sid)
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)[:160]}
+        return {"ok": True, "type": et, **done}
     return {"ok": True, "ignored": et}
 
 

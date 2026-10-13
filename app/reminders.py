@@ -177,7 +177,7 @@ def process_reminders(*, dry_run: bool = False) -> dict[str, Any]:
                         start_iso=start.isoformat(),
                         timezone=str(tz),
                         price_label=price_label,
-                        location_line="Video visit (telehealth) · https://meet.drmattbrown.com",
+                        location_line="Video visit (telehealth) · https://live.psycharts.org/guest",
                         ics_url=ics_url,
                     )
                 if channel == "sms":

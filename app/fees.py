@@ -305,6 +305,20 @@ def attach_invoice(fee_ids: list[str], *, stripe_id: str, pay_url: str = "") -> 
     return n
 
 
+def mark_paid_ids(fee_ids: list[str], stripe_id: str = "") -> int:
+    n = 0
+    for fid in fee_ids:
+        fid = (fid or "").strip()
+        if not fid:
+            continue
+        row = get(fid)
+        if not row or row.get("status") == "paid":
+            continue
+        set_status(fid, status="paid", stripe_id=stripe_id or None)
+        n += 1
+    return n
+
+
 def mark_paid_by_stripe(stripe_id: str) -> int:
     sid = (stripe_id or "").strip()
     if not sid:

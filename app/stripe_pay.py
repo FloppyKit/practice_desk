@@ -223,3 +223,94 @@ def charge_off_session(
         "stripe_id": sid,
         "error": status or "charge did not complete",
     }
+
+
+def open_checkout_url(session_id: str) -> str:
+    if not (session_id or "").startswith("cs_"):
+        return ""
+    try:
+        sess = _get("/checkout/sessions/" + session_id)
+    except RuntimeError:
+        return ""
+    if sess.get("status") == "open" and sess.get("url"):
+        return str(sess["url"])
+    return ""
+
+
+def create_balance_checkout(
+    *,
+    customer_id: str,
+    amount_cents: int,
+    client_id: str,
+    fee_ids: list[str],
+    success_url: str,
+    cancel_url: str,
+) -> dict[str, Any]:
+    if amount_cents <= 0:
+        raise RuntimeError("nothing due")
+    if not customer_id.startswith("cus_"):
+        raise RuntimeError("no Stripe customer")
+    bucket = int(time.time()) // 600
+    form = {
+        "mode": "payment",
+        "customer": customer_id,
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "line_items[0][quantity]": "1",
+        "line_items[0][price_data][currency]": "usd",
+        "line_items[0][price_data][unit_amount]": str(int(amount_cents)),
+        "line_items[0][price_data][product_data][name]": "Balance due",
+        "payment_intent_data[setup_future_usage]": "off_session",
+        "payment_intent_data[metadata][client_id]": (client_id or "")[:80],
+        "metadata[client_id]": (client_id or "")[:80],
+        "metadata[fee_ids]": ",".join(fee_ids)[:500],
+    }
+    sess = _post(
+        "/checkout/sessions",
+        form,
+        idem=f"bal-{client_id[:16]}-{amount_cents}-{bucket}"[:80],
+    )
+    sid = str(sess.get("id") or "")
+    url = str(sess.get("url") or "") or open_checkout_url(sid)
+    if not sid.startswith("cs_") or not url:
+        raise RuntimeError("could not open checkout")
+    return {"id": sid, "url": url}
+
+
+def finalize_checkout(session_id: str) -> dict[str, Any]:
+    if not (session_id or "").startswith("cs_"):
+        raise RuntimeError("bad session")
+    sess = _get("/checkout/sessions/" + session_id + "?expand[]=payment_intent")
+    if sess.get("payment_status") != "paid":
+        return {"ok": True, "pending": True, "marked": 0}
+    cust = str(sess.get("customer") or "")
+    pi = sess.get("payment_intent") or {}
+    if isinstance(pi, str) and pi:
+        pi = _get("/payment_intents/" + pi)
+    pm = pi.get("payment_method") if isinstance(pi, dict) else ""
+    if isinstance(pm, dict):
+        pm = pm.get("id")
+    pm = str(pm or "")
+    client_id = str((sess.get("metadata") or {}).get("client_id") or "")
+    if cust.startswith("cus_") and pm.startswith("pm_") and client_id:
+        from . import clients_db
+
+        clients_db.upsert(
+            {
+                "id": client_id,
+                "stripe_customer_id": cust,
+                "stripe_payment_method_id": pm,
+                "card_on_file": 1,
+            }
+        )
+        _post(
+            f"/customers/{cust}",
+            {"invoice_settings[default_payment_method]": pm},
+        )
+    from .fees import mark_paid_by_stripe, mark_paid_ids
+
+    ids = [x for x in str((sess.get("metadata") or {}).get("fee_ids") or "").split(",") if x]
+    n = mark_paid_by_stripe(session_id)
+    if ids:
+        n += mark_paid_ids(ids, stripe_id=session_id)
+    return {"ok": True, "marked": n, "saved_card": bool(pm)}
