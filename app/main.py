@@ -34,6 +34,16 @@ from .notify import (
     staff_notify_email,
 )
 from .reminders import process_reminders
+from .sms_bridge import (
+    ack as sms_bridge_ack,
+    bridge_enabled,
+    claim as sms_bridge_claim,
+    due_summary,
+    enqueue as sms_bridge_enqueue,
+    render_agent_template,
+    secret_ok,
+)
+from .spruce_api import spruce_api_enabled
 from .slots import generate_slots
 from .patients import (
     client_by_email,
@@ -41,11 +51,10 @@ from .patients import (
     create_client as patient_create_client,
     search_clients,
     supabase_ready,
-    verify_patient,
 )
 from .week_people import merge_client_hits, people_from_visits
 from .staff_auth import COOKIE as STAFF_COOKIE, secret_from_request
-from .tokens import mint_cancel_token, mint_verify_token, verify_cancel_token, verify_patient_token
+from .tokens import mint_cancel_token, verify_cancel_token, verify_patient_token
 from . import cipher_mode, cipher_queue, cipher_seal
 
 def _seed_caldav_bg() -> None:
@@ -284,6 +293,9 @@ def health():
         "reminder_sms_minutes": float(os.environ.get("REMINDER_SMS_MINUTES", "30")),
         "suite": True,
         "sms_enabled": ENABLE_SMS,
+        "sms_bridge": (
+            "on" if spruce_api_enabled() or bridge_enabled() else "off"
+        ),
         "desk_call": bool(
             os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
             and os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
@@ -425,29 +437,28 @@ def ics_visit(token: str = Query("")):
     )
 
 
+class VerifyCodeRequest(BaseModel):
+    email: str = ""
+    phone: str = ""
+    code: str = ""
+
+
 @app.post("/api/verify-patient")
 def api_verify_patient(req: VerifyRequest):
-    """Current-patient gate. Email or phone alone, or full name + DOB."""
-    result = verify_patient(
-        email=req.email,
-        phone=req.phone,
-        full_name=req.full_name,
-        first_name=req.first_name,
-        last_name=req.last_name,
-        dob=req.dob,
-    )
-    if not result.get("ok"):
-        return result
-    try:
-        result["verify_token"] = mint_verify_token(
-            client_id=str(result.get("client_id") or ""),
-            email=str(result.get("email") or ""),
-            name=str(result.get("name") or ""),
-            matched=str(result.get("matched") or ""),
-        )
-    except Exception:
-        result["verify_token"] = ""
-    return result
+    """Send a code to the email or mobile on the account. Name and DOB do nothing."""
+    from .verify_codes import start_verify
+
+    if not (req.email or "").strip() and not (req.phone or "").strip():
+        return {"ok": False, "reason": "need_email_or_phone"}
+    return start_verify(email=req.email, phone=req.phone)
+
+
+@app.post("/api/verify-patient/code")
+def api_verify_patient_code(req: VerifyCodeRequest):
+    """Mint a booking token only after the code. No chart fields in the body."""
+    from .verify_codes import confirm_code
+
+    return confirm_code(email=req.email, phone=req.phone, code=req.code)
 
 
 @app.get("/api/types")
@@ -517,6 +528,7 @@ def _send_booking_notices(
     start_iso: str | None = None,
     timezone: str = "America/Chicago",
     ics_url: str = "",
+    event_id: str = "",
 ) -> None:
     """Run after response — Proton can take 10–60s; do not block the thanks screen."""
     patient_confirm_email(
@@ -540,6 +552,7 @@ def _send_booking_notices(
         when_label=when_label,
         sms_consent=sms_consent,
         duration_minutes=duration_minutes,
+        event_id=event_id,
     )
     staff_notify_email(
         name=name,
@@ -759,6 +772,7 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
             start_iso=start.isoformat(),
             timezone=str(cfg.get("timezone", "America/Chicago")),
             ics_url=ics_url,
+            event_id=event_id,
         )
 
     return {
@@ -791,6 +805,135 @@ def api_reminders_run(
     if REMIND_SECRET and secret != REMIND_SECRET:
         raise HTTPException(401, "unauthorized")
     return process_reminders(dry_run=dry_run)
+
+
+class ChatThreadPost(BaseModel):
+    body: str
+    token: str = ""
+    label: str = ""
+    email: str = ""
+    phone: str = ""
+    hear_back: str = ""
+    sms_consent: bool = False
+    name: str = ""
+
+
+@app.post("/api/public/chat-threads")
+def api_chat_thread_post(req: ChatThreadPost):
+    from .chat_threads import post_message
+
+    try:
+        return post_message(
+            body=req.body,
+            token=req.token,
+            label=req.label,
+            email=req.email,
+            phone=req.phone,
+            hear_back=req.hear_back,
+            sms_consent=req.sms_consent,
+            name=req.name,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.get("/api/public/chat-threads")
+def api_chat_thread_get(token: str = Query(default="")):
+    from .chat_threads import get_thread
+
+    if not token:
+        raise HTTPException(400, "token required")
+    try:
+        row = get_thread(token)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not row:
+        raise HTTPException(404, "thread not found")
+    return row
+
+
+@app.post("/api/spruce/webhook")
+async def api_spruce_webhook(request: Request):
+    """Spruce conversationItem.created. Signature required. No message bodies in the response."""
+    from .chat_threads import handle_spruce_webhook
+
+    raw = await request.body()
+    sig = request.headers.get("x-spruce-signature") or ""
+    result = handle_spruce_webhook(raw, sig)
+    if result.get("unauthorized"):
+        raise HTTPException(401, "unauthorized")
+    return {"ok": True, "accepted": int(result.get("accepted") or 0)}
+
+
+class SmsBridgeEnqueue(BaseModel):
+    template: str
+    phone: str
+    source: str = "voice"
+    idempotency_key: str = ""
+
+
+class SmsBridgeAck(BaseModel):
+    id: str
+    status: str
+
+
+def _require_bridge(request: Request) -> None:
+    if not secret_ok(request.headers.get("x-bridge-secret", "")):
+        raise HTTPException(401, "unauthorized")
+
+
+@app.get("/api/sms-bridge/due")
+def api_sms_bridge_due(request: Request):
+    """Counts only. No phone numbers. Worker uses this while send is off."""
+    _require_bridge(request)
+    return {"ok": True, **due_summary()}
+
+
+@app.post("/api/sms-bridge/claim")
+def api_sms_bridge_claim(request: Request):
+    """Lease one due text for the desk Mac. Secret header. Not a public pull."""
+    _require_bridge(request)
+    return {"ok": True, "job": sms_bridge_claim()}
+
+
+@app.post("/api/sms-bridge/ack")
+def api_sms_bridge_ack(req: SmsBridgeAck, request: Request):
+    _require_bridge(request)
+    try:
+        result = sms_bridge_ack(req.id, req.status)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("detail") or "ack failed")
+    return result
+
+
+@app.post("/api/sms-bridge/enqueue")
+def api_sms_bridge_enqueue(req: SmsBridgeEnqueue, request: Request):
+    """Voice or website chat may queue a logistics template. No free text."""
+    _require_bridge(request)
+    if not bridge_enabled():
+        raise HTTPException(409, "sms bridge off")
+    source = (req.source or "").strip().lower()
+    if source not in ("voice", "chat"):
+        raise HTTPException(400, "source must be voice or chat")
+    template = (req.template or "").strip()
+    if template not in ("book_link", "join"):
+        raise HTTPException(400, "template not allowed")
+    from .notify import normalize_e164
+
+    phone = normalize_e164(req.phone)
+    if not phone:
+        raise HTTPException(400, "invalid phone")
+    body = render_agent_template(template)
+    return sms_bridge_enqueue(
+        to=phone,
+        body=body,
+        kind=template,
+        source=source,
+        idempotency_key=(req.idempotency_key or "").strip(),
+        template=template,
+    )
 
 
 def _visit_details_from_payload(payload: dict[str, Any]) -> dict[str, str]:
@@ -1002,7 +1145,8 @@ def _cancel_html(
     rebook_href = rebook_path if rebook_path.startswith("/") else f"/{rebook_path}"
     if done:
         body = f"""
-        <div class="msg ok">{_esc(note or "Cancelled.")}</div>
+        <p style="font-size:1.15rem;font-weight:650;margin:0 0 8px">This visit is cancelled.</p>
+        <p>It is off the calendar. A confirmation email goes out if we have an address on file.</p>
         {visit_card}
         <p style="margin-top:12px">To reschedule, pick a new time below.</p>
         <p style="margin-top:16px"><a class="btn" href="{_esc(rebook_href)}" style="display:inline-block;text-decoration:none">Book a new time</a></p>
@@ -1029,7 +1173,7 @@ def _cancel_html(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cancel visit · Psych Arts</title>
+  <title>{'Visit cancelled' if done else 'Cancel visit'} · Psych Arts</title>
   <link rel="stylesheet" href="/static/css/booker.css" />
   <style>
     .cancel-row {{ display:flex; gap:12px; margin:6px 0; flex-wrap:wrap; }}
@@ -1042,7 +1186,7 @@ def _cancel_html(
   <div class="wrap">
     <div class="brand">
       <div class="kicker">Psych Arts · Dr. Matt Brown</div>
-      <h1>Cancel visit</h1>
+      <h1>{'Visit cancelled' if done else 'Cancel visit'}</h1>
     </div>
     <div class="card">
       {body}
@@ -1840,7 +1984,11 @@ class DeskNoteSignRequest(BaseModel):
 
 
 @app.post("/api/desk/note/sign")
-def api_desk_note_sign(req: DeskNoteSignRequest, secret: str = Query(default="")):
+def api_desk_note_sign(
+    req: DeskNoteSignRequest,
+    background_tasks: BackgroundTasks,
+    secret: str = Query(default=""),
+):
     """Sign an after-visit summary to Chart/Visit notes. Body never logged."""
     import base64
 
@@ -1942,6 +2090,13 @@ def api_desk_note_sign(req: DeskNoteSignRequest, secret: str = Query(default="")
         raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
     if not saved.get("ok"):
         raise HTTPException(502, "drive save failed")
+    # Local style-pack learn (scrub Name/DOB first; never log body; no cloud train).
+    try:
+        from .style_pack_learn import learn_safe
+
+        background_tasks.add_task(learn_safe, dict(fields), tid)
+    except Exception:
+        pass
     return {"ok": True, "path": dest, "name": fname, "bytes": len(pdf), "template": tid}
 
 
@@ -2079,21 +2234,33 @@ def api_desk_note_draft(req: DeskNoteDraftRequest, secret: str = Query(default="
 
     if not XAI_KEY:
         raise HTTPException(503, "desk agent key unset")
+    style_ctx = ""
+    try:
+        from .style_pack import draft_prompt_context, enabled_for_draft
+
+        if enabled_for_draft():
+            style_ctx = draft_prompt_context()
+    except Exception:
+        style_ctx = ""
     prompt = (
         "From this visit transcript, fill a SOAP note and an after-visit summary. "
-        "Do not invent facts. JSON only with keys: subjective, objective, assessment, "
+        "Do not invent facts. Prefer practice style-pack stems and formulary names when "
+        "the transcript supports them. JSON only with keys: subjective, objective, assessment, "
         "plan, return_visit, medications, supplements, recommendations. "
-        "AVS fields are the Plan in patient language.\n\n"
+        "AVS fields (return_visit/medications/supplements/recommendations) are patient language.\n\n"
+        + (style_ctx + "\n\n" if style_ctx else "")
+        + "TRANSCRIPT:\n"
         + raw[:12000]
+    )
+    system = (
+        "You draft psychiatry notes for this practice. Reply with JSON only. No markdown fence. "
+        "Follow STYLE PACK priors when present. Never invent meds, doses, or findings absent from the transcript."
     )
     payload = json.dumps(
         {
             "model": XAI_MODEL,
             "messages": [
-                {
-                    "role": "system",
-                    "content": "You draft psychiatry notes. Reply with JSON only. No markdown fence.",
-                },
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.2,
@@ -2138,6 +2305,90 @@ def api_desk_note_draft(req: DeskNoteDraftRequest, secret: str = Query(default="
     )
     out = {k: str(parsed.get(k) or "")[:8000] for k in keys}
     return {"ok": True, "fields": out}
+
+
+class DeskScribeIngestRequest(BaseModel):
+    transcript: str = ""
+    note: str = ""
+    title: str = ""
+    template: str = "avs"
+    duration_minutes: int = 0
+    client_id: str = ""
+    email: str = ""
+    name: str = ""
+    room: str = ""
+    ended_at: str = ""
+
+
+def _scribe_ingest_authorized(request: Request, secret: str = "") -> None:
+    """Staff unlock secret or dedicated edge ingest token."""
+    tok = (os.environ.get("SCRIBE_INGEST_TOKEN") or "").strip()
+    hdr = ""
+    try:
+        hdr = (request.headers.get("X-Scribe-Ingest-Token") or "").strip()
+    except Exception:
+        hdr = ""
+    if tok and hdr and hdr == tok:
+        return
+    _require_staff(secret, request)
+
+
+@app.post("/api/desk/note/scribe-ingest")
+def api_desk_note_scribe_ingest(
+    req: DeskScribeIngestRequest,
+    request: Request,
+    secret: str = Query(default=""),
+):
+    """Edge-scribe finish → pending blank draft. Body never logged."""
+    _scribe_ingest_authorized(request, secret)
+    from . import scribe_drafts
+
+    try:
+        row = scribe_drafts.put(
+            note=req.note,
+            transcript=req.transcript,
+            title=req.title,
+            template=(req.template or "avs").strip() or "avs",
+            client_id=req.client_id,
+            email=req.email,
+            name=req.name,
+            duration_minutes=req.duration_minutes,
+            room=req.room,
+            ended_at=req.ended_at,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True, "id": row["id"]}
+
+
+@app.get("/api/desk/note/scribe-pending")
+def api_desk_note_scribe_pending(request: Request, secret: str = Query(default="")):
+    _require_staff(secret, request)
+    from . import scribe_drafts
+
+    return {"ok": True, "drafts": scribe_drafts.list_pending()}
+
+
+@app.get("/api/desk/note/scribe-pending/{draft_id}")
+def api_desk_note_scribe_pending_one(draft_id: str, request: Request, secret: str = Query(default="")):
+    _require_staff(secret, request)
+    from . import scribe_drafts
+
+    row = scribe_drafts.get(draft_id)
+    if not row:
+        raise HTTPException(404, "draft not found")
+    return {"ok": True, "draft": row}
+
+
+@app.post("/api/desk/note/scribe-pending/{draft_id}/ack")
+def api_desk_note_scribe_pending_ack(draft_id: str, request: Request, secret: str = Query(default="")):
+    _require_staff(secret, request)
+    from . import scribe_drafts
+
+    ok = scribe_drafts.ack(draft_id)
+    if not ok:
+        raise HTTPException(404, "draft not found or already claimed")
+    return {"ok": True}
 
 
 @app.post("/api/desk/book")
@@ -2969,7 +3220,13 @@ def api_desk_drive_share(req: DriveShareRequest, secret: str = Query(default="")
         )
     if want_sms:
         first = (name or "there").split()[0]
-        sms = send_sms(phone, f"Hi {first}, a file is ready from the practice: {url} — Dr. B")
+        sms = send_sms(
+            phone,
+            f"Hi {first}, a file is ready from the practice: {url} — Dr. B",
+            kind="file",
+            source="desk",
+            template="file",
+        )
 
     ok = bool(mail.get("ok") or sms.get("ok"))
     return {
@@ -2977,7 +3234,12 @@ def api_desk_drive_share(req: DriveShareRequest, secret: str = Query(default="")
         "cloaked": cloaked,
         "kind": "cloak" if cloaked else "proton",
         "email": {"ok": bool(mail.get("ok")), "skipped": bool(mail.get("skipped")), "detail": mail.get("detail") or ""},
-        "sms": {"ok": bool(sms.get("ok")), "skipped": bool(sms.get("skipped")), "detail": sms.get("detail") or ""},
+        "sms": {
+            "ok": bool(sms.get("ok")),
+            "queued": bool(sms.get("queued")),
+            "skipped": bool(sms.get("skipped")),
+            "detail": sms.get("detail") or "",
+        },
     }
 
 

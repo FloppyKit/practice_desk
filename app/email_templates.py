@@ -573,7 +573,7 @@ def reminder_sms(*, title: str, when_label: str, kind: str, duration_minutes: in
     else:
         horizon = "soon"
     return (
-        f"Brown Psychiatric Services: Reminder — {heading} {horizon} "
+        f"Dr. Matt Brown: Reminder — {heading} {horizon} "
         f"({when_label} CT). Join: {MEET_HOST} "
         f"Reply STOP to opt out, HELP for help. Msg & data rates may apply."
     )
@@ -582,9 +582,23 @@ def reminder_sms(*, title: str, when_label: str, kind: str, duration_minutes: in
 def confirm_sms(*, title: str, when_label: str, duration_minutes: int | None = None) -> str:
     heading = visit_heading(title, duration_minutes)
     return (
-        f"Brown Psychiatric Services: Confirmed {heading} on {when_label} CT. "
+        f"Dr. Matt Brown: Confirmed {heading} on {when_label} CT. "
         f"Join: {MEET_HOST} Reply STOP to opt out, HELP for help. "
         f"Msg & data rates may apply."
+    )
+
+
+def book_link_sms() -> str:
+    return (
+        "Dr. Matt Brown: Book a visit at https://book.psycharts.org "
+        "Reply STOP to opt out, HELP for help. Msg & data rates may apply."
+    )
+
+
+def join_sms() -> str:
+    return (
+        f"Dr. Matt Brown: Join your visit at {MEET_HOST} "
+        "Reply STOP to opt out, HELP for help. Msg & data rates may apply."
     )
 
 

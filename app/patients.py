@@ -233,48 +233,16 @@ def verify_patient(
     last_name: str = "",
     dob: str = "",
 ) -> dict[str, Any]:
-    """Current-patient check.
+    """Current-patient check. Name and date of birth are not verifiers.
 
-    Enough: matching email, OR matching phone, OR full name + DOB.
-    Never leak whether the email exists if the other half is wrong.
+    A matching email or phone does not return a chart link. The public door
+    sends a code to that channel and mints a token only after the code.
     """
+    del full_name, first_name, last_name, dob
+    em = (email or "").strip().lower()
+    e164 = normalize_phone(phone) if phone else None
+    if not ((em and EMAIL_RE.match(em)) or e164):
+        return {"ok": False, "reason": "need_email_or_phone"}
     if not clients_ready():
         return {"ok": False, "reason": "verify_unavailable"}
-
-    em = (email or "").strip().lower()
-    if em and EMAIL_RE.match(em):
-        row = clients_db.get_by_email(em)
-        if row:
-            return _public_row(row, "email")
-        return {"ok": False, "reason": "not_found"}
-
-    e164 = normalize_phone(phone) if phone else None
-    if e164:
-        row = clients_db.get_by_phone(e164)
-        if row:
-            return _public_row(row, "phone")
-        return {"ok": False, "reason": "not_found"}
-
-    dob_iso = parse_dob(dob)
-    name = normalize_name(full_name)
-    if not name and (first_name or last_name):
-        name = normalize_name(f"{first_name} {last_name}")
-    parts = [p for p in name.split() if p]
-    if dob_iso and len(parts) >= 2:
-        rows = clients_db.list_by_dob(dob_iso, limit=20)
-        hits = []
-        for row in rows:
-            given = normalize_name(row.get("given_name") or "")
-            family = normalize_name(row.get("family_name") or "")
-            display = normalize_name(row.get("display_name") or "")
-            pref = normalize_name(row.get("preferred_name") or "")
-            first, last = parts[0], parts[-1]
-            if family == last and (given == first or pref == first or display.startswith(first)):
-                hits.append(row)
-            elif display == name or (pref and pref == first and family == last):
-                hits.append(row)
-        if len(hits) == 1:
-            return _public_row(hits[0], "name_dob")
-        return {"ok": False, "reason": "not_found"}
-
-    return {"ok": False, "reason": "need_identifier"}
+    return {"ok": False, "reason": "need_code"}

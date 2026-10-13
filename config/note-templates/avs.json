@@ -1,8 +1,9 @@
 {
   "title": "After-Visit Summary",
+  "style_pack": "config/style-pack",
   "sections": [
     {"id": "dos", "label": "Date of service", "type": "date"},
-    {"id": "return_visit", "label": "Return visit", "type": "line"},
+    {"id": "return_visit", "label": "Meet again / return visit", "type": "line"},
     {"id": "subjective", "label": "Subjective", "type": "paragraph"},
     {"id": "objective", "label": "Objective", "type": "paragraph"},
     {"id": "assessment", "label": "Assessment", "type": "paragraph"},

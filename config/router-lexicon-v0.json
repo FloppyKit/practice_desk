@@ -1,0 +1,599 @@
+{
+  "version": "0",
+  "law": "Tiny tool-router picks intent + slots; mouth speaks canned multi-sentence copy with {slots}. No freestyle clinical chat. PHI on-box; no paid chat LLM on the happy path.",
+  "priority": [
+    "refuse",
+    "crisis_divert",
+    "confirm_yesno",
+    "book",
+    "reschedule",
+    "cancel",
+    "refill",
+    "pay",
+    "forms",
+    "join_visit",
+    "message_clinician",
+    "faq",
+    "ack_smalltalk",
+    "desk_help",
+    "desk_book",
+    "desk_reschedule",
+    "desk_send",
+    "desk_call",
+    "desk_open"
+  ],
+  "faq_intent_ids": [
+    "new-patients",
+    "hours",
+    "approach",
+    "after-erp",
+    "directories",
+    "meds-therapy",
+    "insurance",
+    "fees",
+    "superbill",
+    "privacy",
+    "intro-call",
+    "cancellation",
+    "join-visit",
+    "states",
+    "waitlist",
+    "contact"
+  ],
+  "intents": [
+    {
+      "id": "refuse",
+      "surface": [
+        "patient",
+        "shared"
+      ],
+      "triggers": [
+        "change my dose",
+        "adjust my dose",
+        "increase my dose",
+        "decrease my dose",
+        "what should i take",
+        "should i take",
+        "diagnose me",
+        "do i have",
+        "clinical advice",
+        "is this medication",
+        "which med",
+        "drug interaction",
+        "side effects of my",
+        "taper off",
+        "wean off",
+        "stop my medication",
+        "prescribe me",
+        "give me a script",
+        "write me a prescription",
+        "is xanax",
+        "is adderall",
+        "controlled substance for me"
+      ],
+      "slots": [],
+      "tool": null,
+      "replies": {
+        "clinical_advice": "I can’t give clinical advice, change doses, or prescribe in chat — that needs a visit with Dr. Brown.\n\nIf this is urgent and you feel unsafe, call 911 or 988 (Suicide & Crisis Lifeline).\n\nOtherwise, book or message through the practice, or call {phone}.",
+        "off_script": "That’s outside what I can handle here — I stick to scheduling, fees, forms, and practice info.\n\nFor anything clinical, please book a visit or call the office at {phone}."
+      }
+    },
+    {
+      "id": "crisis_divert",
+      "surface": [
+        "patient",
+        "shared"
+      ],
+      "triggers": [
+        "suicidal",
+        "suicide",
+        "kill myself",
+        "kill myself",
+        "end my life",
+        "want to die",
+        "wanna die",
+        "self harm",
+        "self-harm",
+        "hurt myself",
+        "cutting myself",
+        "overdose",
+        "i'm in crisis",
+        "im in crisis",
+        "emergency",
+        "homicidal",
+        "going to hurt"
+      ],
+      "slots": [],
+      "tool": null,
+      "replies": {
+        "crisis": "If you are in danger or thinking about hurting yourself, please get help right now.\n\nCall 911 for emergencies, or 988 (Suicide & Crisis Lifeline) for 24/7 crisis support.\n\nThis chat is not monitored for crisis and cannot keep you safe. You can also call the practice at {phone} for non-emergency office help once you are safe."
+      }
+    },
+    {
+      "id": "confirm_yesno",
+      "surface": [
+        "patient",
+        "clinician",
+        "shared"
+      ],
+      "triggers": [
+        "yes",
+        "y",
+        "ok",
+        "okay",
+        "do it",
+        "confirm",
+        "go",
+        "no",
+        "n",
+        "cancel",
+        "stop",
+        "nevermind",
+        "never mind"
+      ],
+      "slots": [
+        "pendingAction"
+      ],
+      "tool": "confirm.resolve",
+      "replies": {
+        "need_pending": "I don’t have anything waiting on a yes/no. What would you like to do?",
+        "yes_ack": "Got it — confirmed.",
+        "no_ack": "Okay — cancelled."
+      }
+    },
+    {
+      "id": "ack_smalltalk",
+      "surface": [
+        "patient",
+        "shared"
+      ],
+      "triggers": [
+        "hi",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "thanks",
+        "thank you",
+        "thx",
+        "ty",
+        "appreciate it"
+      ],
+      "slots": [],
+      "tool": null,
+      "replies": {
+        "greeting": "Hi — I can answer the usual questions (video visits, fees, insurance, cancellation) and help you book a new-patient evaluation if you’re in Illinois, Kansas, or Missouri. I don’t access medical records. Not for emergencies (call 911 or 988). What would you like to know?",
+        "thanks": "You’re welcome. When you want to book, tell me if you’re in IL, KS, or MO."
+      }
+    },
+    {
+      "id": "book",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "book",
+        "schedule",
+        "i want to book",
+        "make an appointment",
+        "new patient",
+        "new evaluation",
+        "see the doctor",
+        "get an appointment",
+        "availability",
+        "openings",
+        "i need an appointment"
+      ],
+      "slots": [
+        "preference",
+        "book_url"
+      ],
+      "tool": "portal.book.open",
+      "replies": {
+        "hand_booker": "Here’s the booking link — pick a time that works: {book_url}\n\nNew patient evaluations are ~90–100 minutes ($600). Telehealth only for Illinois, Kansas, or Missouri.",
+        "overview_then_state": "Thanks for reaching out — glad you’re here.\n\nA few things most people like to know:\n\n• All visits are online by video.\n• Appointments are Monday through Thursday.\n• New patients: evaluation visit (~90–100 minutes, $600).\n• Follow-ups are 30 minutes ($265) or 60 minutes ($420).\n• Cancel anytime; under 24 hours’ notice is charged in full.\n• Out-of-network: HSA/FSA welcome. Pay at the visit; receipt/superbill for PPO reimbursement (check your plan).\n• Telehealth only for Illinois, Kansas, or Missouri.\n\nTo book, I’ll need to confirm you’ll be in Illinois, Kansas, or Missouri for visits — which state?",
+        "ready": "Ready to book? {book_url}"
+      }
+    },
+    {
+      "id": "reschedule",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "reschedule",
+        "change my appointment",
+        "move my appointment",
+        "different time",
+        "another time",
+        "change the time"
+      ],
+      "slots": [
+        "when",
+        "manage_url"
+      ],
+      "tool": "portal.manage.open",
+      "replies": {
+        "hand_manager": "You can reschedule from your booking / manage link: {manage_url}\n\nWith 24+ hours’ notice there’s no charge. Under 24 hours, the visit is charged in full.\n\nNeed help? Call {phone}."
+      }
+    },
+    {
+      "id": "cancel",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "cancel my appointment",
+        "cancel appointment",
+        "cancel my visit",
+        "cancel the visit",
+        "i need to cancel"
+      ],
+      "slots": [
+        "manage_url"
+      ],
+      "tool": "portal.manage.open",
+      "replies": {
+        "hand_manager": "You can cancel from your booking / manage link: {manage_url}\n\nCancel anytime with 24+ hours’ notice (no charge). Under 24 hours, the full visit fee is charged.\n\nOffice: {phone}."
+      }
+    },
+    {
+      "id": "refill",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "refill",
+        "refill my",
+        "need a refill",
+        "prescription refill",
+        "renew my",
+        "ran out of",
+        "out of my medication",
+        "pharmacy refill"
+      ],
+      "slots": [
+        "med"
+      ],
+      "tool": "portal.message.refill",
+      "replies": {
+        "request_not_guarantee": "I can help you send a refill request for the office to review{med_clause}.\n\nImportant: a request is not a guarantee — refills are clinical decisions and are never automatic. Chat cannot prescribe or promise a medication.\n\nIf you’re out and in distress, contact your pharmacy or call {phone}. For emergencies call 911."
+      }
+    },
+    {
+      "id": "pay",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "pay",
+        "pay my bill",
+        "payment",
+        "make a payment",
+        "owe",
+        "balance",
+        "how do i pay",
+        "pay link"
+      ],
+      "slots": [
+        "pay_url"
+      ],
+      "tool": "portal.pay.open",
+      "replies": {
+        "hand_pay": "Payment is due at the appointment (or anytime before). Methods: FSA/HSA debit, credit card, ACH, or Bitcoin (visit-by-visit — not stored on file).\n\nFees: new patient eval ~$600; 60 min follow-up $420; 30 min $265.\n\nIf you have a pay link from the office: {pay_url}\nQuestions: {phone}."
+      }
+    },
+    {
+      "id": "forms",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "forms",
+        "intake",
+        "paperwork",
+        "intake packet",
+        "consents",
+        "new patient forms",
+        "fill out forms"
+      ],
+      "slots": [
+        "forms_url"
+      ],
+      "tool": "portal.forms.open",
+      "replies": {
+        "hand_forms": "Intake and practice forms are here: {forms_url}\n\nAfter you book, paperwork is sent promptly. Complete what you can before the visit.\n\nStuck? Call {phone}."
+      }
+    },
+    {
+      "id": "join_visit",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "join visit",
+        "join my visit",
+        "join the visit",
+        "waiting room",
+        "video visit",
+        "how do i join",
+        "telehealth link",
+        "meet link"
+      ],
+      "slots": [
+        "join_url"
+      ],
+      "tool": "portal.join.open",
+      "replies": {
+        "hand_join": "All visits are online video. Current patients use the waiting room: {join_url}\n\nBookmark it for easy access. If the link fails, call {phone}."
+      }
+    },
+    {
+      "id": "message_clinician",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [
+        "message the doctor",
+        "message dr",
+        "message clinician",
+        "leave a message",
+        "tell the doctor",
+        "ask the doctor",
+        "contact the office",
+        "email the doctor"
+      ],
+      "slots": [],
+      "tool": "portal.message.open",
+      "replies": {
+        "hand_message": "Between visits, use this chat for general practice questions, or call {phone}.\n\nI don’t access medical records and can’t give clinical advice here. For refill requests, say “refill” and the medication name. For anything urgent or unsafe: 911 or 988."
+      }
+    },
+    {
+      "id": "faq",
+      "surface": [
+        "patient"
+      ],
+      "triggers": [],
+      "faqTriggers": {
+        "new-patients": [
+          "new patients",
+          "taking patients",
+          "accepting patients"
+        ],
+        "hours": [
+          "hours",
+          "what days",
+          "schedule days",
+          "monday",
+          "open what days"
+        ],
+        "approach": [
+          "erp",
+          "do you do erp",
+          "exposure"
+        ],
+        "after-erp": [
+          "after erp",
+          "already did erp",
+          "did cbt",
+          "still stuck"
+        ],
+        "directories": [
+          "psychology today",
+          "iocdf",
+          "directory",
+          "profile listing"
+        ],
+        "meds-therapy": [
+          "prescribe",
+          "psychotherapy",
+          "talk therapy",
+          "medication management"
+        ],
+        "insurance": [
+          "insurance",
+          "in network",
+          "out of network",
+          "do you accept",
+          "ppo"
+        ],
+        "fees": [
+          "cost",
+          "costs",
+          "fee",
+          "fees",
+          "price",
+          "how much",
+          "what do visits cost",
+          "payment methods"
+        ],
+        "superbill": [
+          "superbill",
+          "submit a claim",
+          "insurance claim",
+          "reimbursement"
+        ],
+        "privacy": [
+          "privacy",
+          "hipaa",
+          "confidential"
+        ],
+        "intro-call": [
+          "intro call",
+          "short call",
+          "15 minute",
+          "phone consult",
+          "free consult"
+        ],
+        "cancellation": [
+          "cancellation policy",
+          "cancel policy",
+          "no show",
+          "24 hour"
+        ],
+        "join-visit": [
+          "join visit",
+          "waiting room",
+          "meet.drmattbrown"
+        ],
+        "states": [
+          "which states",
+          "what states",
+          "illinois",
+          "kansas",
+          "missouri",
+          "where do you see"
+        ],
+        "waitlist": [
+          "waitlist",
+          "no times",
+          "available times don’t",
+          "available times dont"
+        ],
+        "contact": [
+          "phone number",
+          "fax",
+          "how do i contact",
+          "contact the practice"
+        ]
+      },
+      "slots": [],
+      "tool": "portal.faq",
+      "replies": {
+        "new-patients": "Yes — telehealth in Illinois, Kansas, and Missouri. New patients book a full video evaluation (~90–100 minutes). The first visit is a consultation; ongoing care begins after a second visit. Use chat for questions, then book online when ready: {book_url}",
+        "hours": "Visits are scheduled Monday through Thursday.",
+        "approach": "Dr. Brown does not provide ERP himself. He often works with people who have already done ERP or understand the ideas and still feel stuck — combining medication, dynamic therapy, and lifestyle support, coordinated with ERP therapists when you have one.",
+        "after-erp": "Yes — that is a common reason people reach out. When skills make sense but symptoms, sleep, mood, focus, or daily follow-through still get in the way, a psychiatry visit can help sort the next layer.",
+        "directories": "Dr. Brown is listed in the International OCD Foundation directory, and on Psychology Today for Illinois and Kansas. Links are on the About and OCD pages of this site.",
+        "meds-therapy": "Yes. As a psychiatrist, Dr. Brown prescribes and manages medications and also offers ongoing dynamic talk therapy when that is a good fit — not refill-only visits for everyone.",
+        "insurance": "Out-of-network for all plans. HSA/FSA debit cards are welcome. Payment is collected at the visit; you receive a receipt/superbill to submit to a PPO for possible reimbursement. Dr. Brown does not bill insurance companies directly. Contact your insurer for your out-of-network rate. CPT codes often used: new patient 90792; 30 min follow-up 99213 and 90833; 60 min 99213 and 90838.",
+        "fees": "New patient evaluation (~90–100 min) $600; 60 min follow-up $420; 30 min follow-up $265. FSA/HSA debit, credit card, ACH, or Bitcoin (visit-by-visit — not stored on file). Payment is due at the appointment (or anytime before).",
+        "superbill": "After payment you receive a superbill/receipt to submit yourself. Ask your insurer how they want claims filed and what your out-of-network benefits are.",
+        "privacy": "Personal and health information is stored with encrypted practice systems and clinical tools used for care. This website chat does not access your medical record.",
+        "intro-call": "Most questions are answered in website chat (same information as a typical intake email). The first appointment is a 90-minute new-client video visit — you can ask anything there. A separate short intro call is not the usual path.",
+        "cancellation": "You may cancel or reschedule anytime. With less than 24 hours’ notice, the visit is charged in full to the payment method on file.",
+        "join-visit": "All visits are online video. Current patients use Join visit ({join_url}) — that is the waiting room. Bookmark it for easy access.",
+        "states": "Secure telehealth for residents of Illinois, Kansas, and Missouri only.",
+        "waitlist": "If the posted times don’t work, use chat or call {phone} and the office can note what you’re looking for. Booking still uses the online scheduler when a slot fits.",
+        "contact": "Phone: {phone}. Fax: 678-392-1720. New clients: use chat for questions, confirm IL/KS/MO, then book online. Existing clients: Join visit for video; use site chat for questions between visits."
+      }
+    },
+    {
+      "id": "desk_help",
+      "surface": [
+        "clinician"
+      ],
+      "triggers": [
+        "help",
+        "what can you do"
+      ],
+      "slots": [],
+      "tool": "desk.help",
+      "replies": {
+        "desk_help_menu": "Call, open, send, or book. Examples: call Jane · open Fuller chart · send Jane intake · book Jane Thursday 2pm. Yes / no confirms. Leftover English still goes to the model."
+      }
+    },
+    {
+      "id": "desk_book",
+      "surface": [
+        "clinician"
+      ],
+      "triggers": [
+        "book",
+        "schedule"
+      ],
+      "slots": [
+        "who",
+        "when",
+        "duration"
+      ],
+      "tool": "desk.book",
+      "replies": {
+        "ask_time": "What time? e.g. Thursday 2pm or tomorrow 3:30.",
+        "confirm": "Book {who} · {when} · {duration}m? Say yes or no.",
+        "done": "Booked {who} · {when} · {duration}m."
+      }
+    },
+    {
+      "id": "desk_reschedule",
+      "surface": [
+        "clinician"
+      ],
+      "triggers": [
+        "reschedule"
+      ],
+      "slots": [
+        "who",
+        "when"
+      ],
+      "tool": "desk.reschedule",
+      "replies": {
+        "stub": "Reschedule isn’t a one-shot verb yet — cancel then book, or use the calendar. Say help for verbs."
+      }
+    },
+    {
+      "id": "desk_send",
+      "surface": [
+        "clinician"
+      ],
+      "triggers": [
+        "send"
+      ],
+      "slots": [
+        "who",
+        "items"
+      ],
+      "tool": "desk.send",
+      "replies": {
+        "confirm": "Send {items} to {who} at {email}? Say yes or no.",
+        "done": "Sent {items} to {email}."
+      }
+    },
+    {
+      "id": "desk_call",
+      "surface": [
+        "clinician"
+      ],
+      "triggers": [
+        "call",
+        "dial"
+      ],
+      "slots": [
+        "who"
+      ],
+      "tool": "desk.call",
+      "replies": {
+        "confirm": "Confirm the call on the card, or say yes.",
+        "placing": "Placing the call."
+      }
+    },
+    {
+      "id": "desk_open",
+      "surface": [
+        "clinician"
+      ],
+      "triggers": [
+        "open"
+      ],
+      "slots": [
+        "who",
+        "target"
+      ],
+      "tool": "desk.open",
+      "replies": {
+        "done": "Opened {who}{bit}."
+      }
+    }
+  ],
+  "defaults": {
+    "book_url": "https://book.psycharts.org/new-client",
+    "follow_url": "https://book.psycharts.org/follow-up",
+    "manage_url": "https://book.psycharts.org",
+    "pay_url": "https://book.psycharts.org",
+    "forms_url": "/forms",
+    "join_url": "https://meet.drmattbrown.com",
+    "phone": "773-312-3858"
+  }
+}

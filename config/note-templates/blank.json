@@ -1,0 +1,7 @@
+{
+  "title": "Blank note",
+  "sections": [
+    {"id": "dos", "label": "Date of service", "type": "date"},
+    {"id": "body", "label": "Note", "type": "paragraph"}
+  ]
+}

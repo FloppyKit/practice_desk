@@ -29,6 +29,16 @@ CarePatron*
 *phi*
 *PHI*
 
+# Practice-specific (lives in private FloppyKit/psycharts-edge under practice-private/)
+config/style-pack/
+docs/intake-reshape/
+docs/intake-source/
+
+# Editor / agent backups
+*.bak
+*.bak-*
+*.bak.*
+
 # OS / editor
 .DS_Store
 .idea/

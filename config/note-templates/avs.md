@@ -1,12 +1,13 @@
-# After-Visit Summary
+# After Visit Summary
 
-Matt's note: AVS plus S/O/A. No long-run section.
+Style pack: `config/style-pack` (corpus-backed formulary + stems).
+Chart fields S/O/A optional for internal note; patient-facing body prioritizes Meet again / Meds / Supplements / Other recommendations. No obligatory long-run essay.
 
 - **Name:** {{name}}
 - **Date of birth:** {{dob}}
 - **Physician:** {{physician}}
 - **Date of service:** {{dos}}
-- **Return visit:** {{return_visit}}
+- **Meet again:** {{return_visit}}
 
 ## Subjective
 {{subjective}}

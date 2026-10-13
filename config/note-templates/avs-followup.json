@@ -1,0 +1,12 @@
+{
+  "title": "AVS — follow-up",
+  "style_pack": "config/style-pack",
+  "sections": [
+    {"id": "dos", "label": "Date of service", "type": "date"},
+    {"id": "return_visit", "label": "Meet again", "type": "line"},
+    {"id": "interval_update", "label": "Interval update", "type": "paragraph"},
+    {"id": "medications", "label": "Medications", "type": "paragraph"},
+    {"id": "supplements", "label": "Supplements", "type": "paragraph"},
+    {"id": "recommendations", "label": "Other recommendations", "type": "paragraph"}
+  ]
+}

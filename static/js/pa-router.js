@@ -31,6 +31,19 @@
   };
 
   var pending = null;
+
+  function deskIntentId(verb) {
+    var map = {
+      help: "desk_help",
+      yes: "confirm_yesno",
+      no: "confirm_yesno",
+      call: "desk_call",
+      open: "desk_open",
+      send: "desk_send",
+      book: "desk_book",
+    };
+    return map[verb] || null;
+  }
   var KEY = "dmb-desk";
 
   function apiBase() {
@@ -395,10 +408,16 @@
   function handle(text) {
     var intent = parse(text);
     if (!intent) return Promise.resolve({ handled: false });
+    function stamp(res) {
+      if (!res || typeof res !== "object") return res;
+      if (!res.intentId) res.intentId = deskIntentId(intent.verb);
+      return res;
+    }
 
     if (intent.verb === "help") {
       return Promise.resolve({
         handled: true,
+        intentId: "desk_help",
         reply: "Call, open, send, or book. Examples: call Jane · open Fuller chart · send Jane intake · book Jane Thursday 2pm. Yes / no confirms. Leftover English still goes to the model.",
       });
     }
@@ -502,7 +521,17 @@
   }
 
   global.PaRouter = {
-    handle: handle,
+    handle: function (text) {
+      return handle(text).then(function (res) {
+        if (res && res.handled && !res.intentId) {
+          var parsed = parse(text);
+          if (parsed) res.intentId = deskIntentId(parsed.verb);
+        }
+        return res;
+      });
+    },
+    // raw handle kept for tests
+    _handle: handle,
     parse: parse,
     pending: function () {
       return pending;

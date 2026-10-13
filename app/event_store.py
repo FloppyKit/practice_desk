@@ -71,23 +71,50 @@ def apply_overlay(cfg: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _hours(raw: Any) -> dict[str, dict[str, str]]:
-    out: dict[str, dict[str, str]] = {}
+def _window(block: Any) -> dict[str, str] | None:
+    if not isinstance(block, dict):
+        return None
+    start = str(block.get("start") or "").strip()
+    end = str(block.get("end") or "").strip()
+    if not (_HHMM.match(start) and _HHMM.match(end)):
+        return None
+    sh, sm = (int(x) for x in start.split(":"))
+    eh, em = (int(x) for x in end.split(":"))
+    if (eh, em) <= (sh, sm):
+        return None
+    out = {"start": f"{sh:02d}:{sm:02d}", "end": f"{eh:02d}:{em:02d}"}
+    latest = str(block.get("latest_start") or "").strip()
+    if _HHMM.match(latest):
+        lh, lm = (int(x) for x in latest.split(":"))
+        out["latest_start"] = f"{lh:02d}:{lm:02d}"
+    return out
+
+
+def _day_hours(block: Any) -> dict[str, Any] | None:
+    windows: list[dict[str, str]] = []
+    if isinstance(block, list):
+        windows = [w for w in (_window(x) for x in block) if w]
+    elif isinstance(block, dict) and isinstance(block.get("windows"), list):
+        windows = [w for w in (_window(x) for x in block["windows"]) if w]
+    else:
+        one = _window(block)
+        if one:
+            windows = [one]
+    if not windows:
+        return None
+    if len(windows) == 1:
+        return windows[0]
+    return {"windows": windows}
+
+
+def _hours(raw: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
     if not isinstance(raw, dict):
         return out
     for day in WEEKDAYS:
-        block = raw.get(day)
-        if not isinstance(block, dict):
-            continue
-        start = str(block.get("start") or "").strip()
-        end = str(block.get("end") or "").strip()
-        if not (_HHMM.match(start) and _HHMM.match(end)):
-            continue
-        sh, sm = (int(x) for x in start.split(":"))
-        eh, em = (int(x) for x in end.split(":"))
-        if (eh, em) <= (sh, sm):
-            continue
-        out[day] = {"start": f"{sh:02d}:{sm:02d}", "end": f"{eh:02d}:{em:02d}"}
+        cleaned = _day_hours(raw.get(day))
+        if cleaned:
+            out[day] = cleaned
     return out
 
 
@@ -164,6 +191,7 @@ def public_type(slug: str, et: dict[str, Any]) -> dict[str, Any]:
         "minimum_notice_minutes": int(et.get("minimum_notice_minutes") or 120),
         "booking_window_days": int(et.get("booking_window_days") or 30),
         "weekly_hours": et.get("weekly_hours") or {},
+        "hours_by_duration": et.get("hours_by_duration") or {},
         "shipped": slug in ("new-client", "follow-up", "intro-15"),
     }
 
@@ -235,6 +263,16 @@ def save_type(cfg: dict[str, Any], slug: str, fields: dict[str, Any], *, creatin
         }
     elif hours is not None:
         patch["weekly_hours"] = hours
+    by_hours = fields.get("hours_by_duration")
+    if isinstance(by_hours, dict):
+        cleaned_by = {}
+        for raw_dur, raw_hours in by_hours.items():
+            try:
+                dur_key = str(int(raw_dur))
+            except (TypeError, ValueError):
+                continue
+            cleaned_by[dur_key] = _hours(raw_hours)
+        patch["hours_by_duration"] = cleaned_by
     if creating:
         cal_id = ""
         for et in (cfg.get("event_types") or {}).values():

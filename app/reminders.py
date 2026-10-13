@@ -20,6 +20,7 @@ from .notify import (
     patient_reminder_email,
     patient_reminder_sms,
 )
+from .sms_bridge import sms_settled
 from .tokens import mint_cancel_token
 
 log = logging.getLogger("booker.reminders")
@@ -187,14 +188,20 @@ def process_reminders(*, dry_run: bool = False) -> dict[str, Any]:
                         kind=kind,
                         sms_consent=sms_consent,
                         duration_minutes=duration_minutes,
+                        event_id=event_id,
+                        not_after=start.isoformat(),
                     )
                 entry["email_result"] = mail
                 entry["sms_result"] = sms
-                entry["ok"] = bool(mail.get("ok") or sms.get("ok"))
+                if channel == "sms":
+                    settled = sms_settled(sms)
+                else:
+                    settled = bool(mail.get("ok"))
+                entry["ok"] = settled
 
-                # Mark flag only if at least email attempted successfully
-                # (or SMS sent). If both fail, retry next run.
-                if mail.get("ok") or sms.get("ok"):
+                # Queued SMS is not sent yet. Do not set the flag until the
+                # Mac worker acks, or the job is expired / uncertain.
+                if settled:
                     new_props = dict(props)
                     new_props[flag] = "1"
                     try:

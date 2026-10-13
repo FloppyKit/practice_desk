@@ -60,9 +60,7 @@
       linesHtml(books) +
       inv +
       '<div class="home-actions" style="margin:0.35rem 0 0">' +
-      (Number(books.owed_cents || 0) > 0
-        ? '<button class="btn secondary" type="button" id="hm-invoice">Invoice owed</button>'
-        : "") +
+      '<button class="btn" type="button" id="hm-invoice">Send invoice</button>' +
       "</div>" +
       '<div class="home-charge" id="hm-charge-box" hidden>' +
       '<label class="field">Amount <input id="hm-fee-amt" inputmode="decimal" value="' +
@@ -165,45 +163,74 @@
         }
       };
     }
+    function invoiceOpen() {
+      var url =
+        String(opts.apiBase || "").replace(/\/$/, "") +
+        "/api/desk/fees/invoice";
+      return (window.deskFetch || fetch)(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: opts.clientId }),
+      }).then(function (r) {
+        return r.text().then(function (t) {
+          var d = {};
+          try { d = t ? JSON.parse(t) : {}; } catch (_) { d = { detail: t.slice(0, 160) }; }
+          return { ok: r.ok, d: d };
+        });
+      });
+    }
     if (invBtn) {
       invBtn.onclick = function () {
         if (!opts.clientId) {
           say("Open a directory client first.");
           return;
         }
-        say("Making invoice…");
-        var url =
-          String(opts.apiBase || "").replace(/\/$/, "") +
-          "/api/desk/fees/invoice";
-        (window.deskFetch || fetch)(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: opts.clientId }),
-        })
-          .then(function (r) {
-            return r.text().then(function (t) {
-              var d = {};
-              try {
-                d = t ? JSON.parse(t) : {};
-              } catch (_) {
-                d = { detail: t.slice(0, 160) };
+        invBtn.disabled = true;
+        say("Sending invoice…");
+        var owed = Number((opts.books || {}).owed_cents || 0);
+        var start = owed > 0
+          ? Promise.resolve({ ok: true, d: { ok: true } })
+          : (window.deskFetch || fetch)(
+              String(opts.apiBase || "").replace(/\/$/, "") + "/api/desk/fees",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  client_id: opts.clientId,
+                  dos: opts.dos || new Date().toISOString().slice(0, 10),
+                  amount: (opts.books && opts.books.suggest_pretty || "").replace(/[$,]/g, ""),
+                  note: "Visit",
+                  kind: "visit",
+                  event_id: opts.eventId || "",
+                  charge: false,
+                }),
               }
-              return { ok: r.ok, d: d };
+            ).then(function (r) {
+              return r.json().then(function (d) { return { ok: r.ok && d.ok, d: d }; });
             });
-          })
-          .then(function (x) {
-            if (!x.ok || !x.d || !x.d.ok) {
-              say((x.d && (x.d.detail || x.d.error)) || "Could not invoice.");
-              return;
-            }
-            if (x.d.pay_url && navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(x.d.pay_url);
-            }
-            if (typeof opts.onDone === "function") opts.onDone(x.d);
-          })
-          .catch(function (e) {
-            say((e && e.message) || "failed");
-          });
+        start.then(function (made) {
+          if (!made.ok) {
+            invBtn.disabled = false;
+            say((made.d && (made.d.detail || made.d.error)) || "Could not add the visit fee.");
+            return null;
+          }
+          return invoiceOpen();
+        }).then(function (x) {
+          if (!x) return;
+          invBtn.disabled = false;
+          if (!x.ok || !x.d || !x.d.ok) {
+            say((x.d && (x.d.detail || x.d.error)) || "Could not invoice.");
+            return;
+          }
+          if (x.d.pay_url && navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(x.d.pay_url);
+          }
+          say("Invoice emailed. Pay link copied.");
+          if (typeof opts.onDone === "function") opts.onDone(x.d);
+        }).catch(function (e) {
+          invBtn.disabled = false;
+          say((e && e.message) || "failed");
+        });
       };
     }
     var books = opts.books || {};
