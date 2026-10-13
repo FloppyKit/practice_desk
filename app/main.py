@@ -77,7 +77,10 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Psych Arts Booker", version="0.3.62", lifespan=_lifespan)
+VERSION = "0.4.0"
+GIT_SHA = (os.environ.get("GIT_SHA") or "").strip() or "unknown"
+
+app = FastAPI(title="Psych Arts Booker", version=VERSION, lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -284,7 +287,8 @@ def health():
     cfg = load_config()
     return {
         "status": "ok",
-        "version": "0.3.61",
+        "version": VERSION,
+        "git_sha": GIT_SHA,
         "types": list(cfg.get("event_types", {}).keys()),
         "timezone": cfg.get("timezone"),
         "public_base": PUBLIC_BASE,
