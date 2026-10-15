@@ -273,11 +273,13 @@ def patient_confirm_email(
     timezone: str = "America/Chicago",
     notes: str = "",
     ics_url: str = "",
+    phone: str = "",
 ) -> dict[str, Any]:
     from .email_templates import render_visit_email
 
     subject, html, _text = render_visit_email(
         kind="confirm",
+        phone=phone,
         name=name,
         email=email,
         title=title,

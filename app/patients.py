@@ -13,8 +13,12 @@ FOLDER_HOSTS = {"go.psycharts.org", "go.drmattbrown.com", "drive.proton.me"}
 
 
 def folder_url(short: str = "", long: str = "") -> str:
-    """Prefer the cloaked short. Never invent a path. Only known hosts."""
-    for raw in (short, long):
+    """Share a link that opens. Prefer the Drive URL.
+
+    The go.psycharts.org shorts are not loaded in Shlink, so they 404.
+    Never invent a path. Only known hosts.
+    """
+    for raw in (long, short):
         u = (raw or "").strip()
         if not u.startswith("https://"):
             continue

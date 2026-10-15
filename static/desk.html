@@ -634,13 +634,21 @@
     .svc-ed { border:1px solid var(--border); border-radius:0.55rem; padding:0.5rem 0.55rem 0.35rem; margin:0 0 0.45rem; }
     .svc-hours { display:grid; gap:0.28rem; margin:0.2rem 0 0.55rem; }
     .svc-day {
-      display:grid; grid-template-columns:1.15rem 2.35rem minmax(0,1fr) 0.55rem minmax(0,1fr);
-      gap:0.28rem; align-items:center; font-size:0.78rem; color:var(--muted);
+      display:flex; flex-wrap:wrap; gap:0.28rem; align-items:center;
+      font-size:0.78rem; color:var(--muted);
     }
     .svc-day input[type=time] {
-      min-width:0; font:inherit; font-size:0.78rem; color:var(--foreground);
-      background:var(--background); border:1px solid var(--border); border-radius:0.45rem;
-      padding:0.32rem 0.35rem;
+      width:6.6rem; flex:0 0 6.6rem; min-width:0; font:inherit; font-size:0.78rem;
+      color:var(--foreground); background:var(--background); border:1px solid var(--border);
+      border-radius:0.45rem; padding:0.32rem 0.35rem;
+    }
+    .book-pop-top {
+      position:sticky; top:0; z-index:3; background:var(--surface, #fff);
+    }
+    #note-pop, #superbill-pop, #files-pop {
+      width:min(28rem, calc(100vw - 1.25rem));
+      max-width:calc(100vw - 1.25rem);
+      box-sizing:border-box;
     }
     .svc-day input[type=checkbox] { margin:0; }
     .svc-day.is-off input[type=time] { opacity:0.4; }
@@ -1255,7 +1263,7 @@
   <script src="/static/js/desk-auth.js?v=1"></script>
   <script src="/static/js/desk-layout.js?v=1"></script>
   <script src="/static/js/desk-vault.js?v=3"></script>
-  <script src="/static/js/desk-books.js?v=2"></script>
+  <script src="/static/js/desk-books.js?v=3"></script>
   <script src="/static/js/desk-services.js?v=2"></script>
   <script src="/static/js/desk-phrases.js?v=1"></script>
   <script>
@@ -1417,7 +1425,10 @@
       }
       // Always below banner so Close stays reachable (dogfood: was top:12 under banner).
       el.style.top = topPad + "px";
+      el.style.maxWidth = (window.innerWidth - pad * 2) + "px";
+      el.style.boxSizing = "border-box";
       requestAnimationFrame(() => {
+        el.scrollTop = 0;
         if (el.hidden) return;
         const need = el.scrollHeight;
         if (need > max) {
@@ -2454,6 +2465,7 @@
       });
       const pop = $("note-pop");
       pop.hidden = false;
+      pop.scrollTop = 0;
       syncSheetLock();
       fitSheet(pop);
     }

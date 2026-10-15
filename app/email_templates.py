@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timedelta
 from html import escape
 from typing import Any
+from urllib.parse import quote
 
 LOGO_CID = "cid:logo.png"
 LOGO_HTTPS = "https://book.psycharts.org/api/practice/logo"
@@ -19,8 +20,8 @@ HOST_SHORT = "Dr. B"
 HOST_EMAIL = "matt@drmattbrown.com"
 HOST_PHONE = "773-312-3858"
 PRACTICE = "Psych Arts"
-MEET_URL = "https://meet.drmattbrown.com"
-MEET_HOST = "meet.drmattbrown.com"
+MEET_URL = "https://live.psycharts.org/guest"
+MEET_HOST = "live.psycharts.org/guest"
 DEFAULT_TZ = "America/Chicago"
 SITE_URL = "https://drmattbrown.com"
 
@@ -334,7 +335,7 @@ def _visit_copy(kind: str, heading: str) -> tuple[str, str, str]:
         return (
             f"Confirmed: {heading}",
             "This visit is scheduled.",
-            "Your time is on the practice calendar. Details are below.",
+            "Your time is on the practice calendar. Please complete the intake forms before we meet.",
         )
     if kind == "remind_24h":
         return (
@@ -479,6 +480,18 @@ def render_visit_email(
             ghosts.append((cancel_url, "Cancel"))
         if rebook_url:
             ghosts.append((rebook_url, "Book a new time"))
+        if kind == "confirm":
+            forms_url = (
+                f"{FORMS_URL}/personal?kiosk=1"
+                f"&name={quote(name or '')}&email={quote(email or '')}&phone={quote(phone or '')}"
+            )
+            rows.append(
+                (
+                    "Forms",
+                    f'<a href="{_esc(forms_url)}" style="color:#111111;">Open intake forms</a>',
+                )
+            )
+            ghosts.insert(0, (forms_url, "Intake forms"))
 
     return render_card(
         subject=subject,
