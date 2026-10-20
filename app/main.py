@@ -3270,6 +3270,7 @@ def _bill_send(*, kind: str, view: dict[str, Any], fields: dict[str, Any], sms_b
 def _bill_share(rec: dict[str, Any], view: dict[str, Any], *, send_email: bool, send_sms: bool,
                 ttl: int | None) -> dict[str, Any]:
     from . import billing
+    from .superbill_pdf import superbill_filename
 
     if rec.get("superbill_status") != "saved":
         raise HTTPException(409, "No saved superbill to share yet.")
@@ -3283,7 +3284,7 @@ def _bill_share(rec: dict[str, Any], view: dict[str, Any], *, send_email: bool, 
         client_id=rec["client_id"],
         source=rec.get("superbill_source") or "drive",
         path=rec.get("superbill_path") or "",
-        name=(rec.get("superbill_path") or "Superbill.pdf").rsplit("/", 1)[-1],
+        name=superbill_filename(rec["dos"]),
         ttl_seconds=seconds,
     )
     url = f"{PUBLIC_BASE}/sb/{link['token']}"
