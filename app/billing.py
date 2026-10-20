@@ -35,8 +35,12 @@ def live_enabled() -> bool:
 
 
 def sms_enabled() -> bool:
-    """Billing SMS stays off until A2P is approved and BILLING_SMS=true is set."""
-    return _flag("BILLING_SMS")
+    """Billing SMS goes only through the practice Spruce API line (not Twilio, not ENABLE_SMS).
+    On when BILLING_SMS=true and the Spruce token + phone endpoint are configured."""
+    from .spruce_api import spruce_config
+
+    token, endpoint = spruce_config()
+    return _flag("BILLING_SMS") and bool(token and endpoint)
 
 
 def _now() -> str:

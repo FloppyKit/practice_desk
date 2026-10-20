@@ -3240,7 +3240,8 @@ def _bill_send(*, kind: str, view: dict[str, Any], fields: dict[str, Any], sms_b
                send_email: bool, send_sms: bool, dry: bool, key: str) -> dict[str, Any]:
     from . import billing
     from .email_templates import render_named
-    from .notify import send_named_email, send_sms as sms_send
+    from .notify import normalize_e164, send_named_email
+    from .spruce_api import send_spruce_sms
 
     out: dict[str, Any] = {"email": {"skipped": True}, "sms": {"skipped": True}}
     email = str(view.get("email") or "")
@@ -3255,15 +3256,17 @@ def _bill_send(*, kind: str, view: dict[str, Any], fields: dict[str, Any], sms_b
             r = send_named_email(kind=kind, to=email, fields=fields)
             out["email"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("ok"))}
     if send_sms:
+        e164 = normalize_e164(phone) or ""
         if not billing.sms_enabled():
-            out["sms"] = {"ok": False, "skipped": True, "detail": "SMS is off (BILLING_SMS unset; A2P not approved)"}
-        elif not phone:
+            out["sms"] = {"ok": False, "skipped": True, "detail": "SMS is off (BILLING_SMS unset or Spruce not configured)"}
+        elif not e164:
             out["sms"] = {"ok": False, "detail": "no phone on file"}
         elif dry:
-            out["sms"] = {"ok": True, "dry_run": True, "sent": False, "chars": len(sms_body)}
+            out["sms"] = {"ok": True, "dry_run": True, "sent": False, "via": "spruce_api",
+                          "to": "•••" + e164[-4:], "text": sms_body[:480]}
         else:
-            r = sms_send(phone, sms_body, kind="billing", source="desk", idempotency_key=key, template="billing")
-            out["sms"] = {"ok": bool(r.get("ok")), "queued": bool(r.get("queued"))}
+            r = send_spruce_sms(e164, sms_body, idempotency_key=key)
+            out["sms"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("sent")), "via": "spruce_api"}
     return out
 
 
@@ -3493,7 +3496,8 @@ def api_desk_bill_superbill(req: BillSuperbillRequest, secret: str = Query(defau
     if req.share_ttl_seconds is not None and not rec.get("dry_run"):
         raise HTTPException(400, "share_ttl_seconds is dry-run only")
     raw, view = _bill_client(rec["client_id"])
-    if rec.get("superbill_status") == "saved":
+    redo_specimen = bool(rec.get("dry_run")) and str(rec.get("superbill_detail") or "").startswith("specimen")
+    if rec.get("superbill_status") == "saved" and not (redo_specimen and not req.specimen):
         return {"ok": True, "created": False, "detail": "Superbill already saved.",
                 "billing": billing.public_billing(rec)}
     dx = billing.clean_dx(req.diagnoses) or rec.get("dx") or []

@@ -2985,7 +2985,7 @@
       $("bl-email").checked = !!d.client.email;
       $("bl-sms").checked = false;
       $("bl-sms").disabled = !d.sms || !d.client.has_phone;
-      $("bl-sms-label").textContent = d.sms ? "SMS" : "SMS (off until A2P is approved)";
+      $("bl-sms-label").textContent = d.sms ? "SMS (Spruce)" : "SMS (off)";
       $("bl-share").checked = true;
       $("bl-dry").checked = true;
       $("bl-dry").disabled = !d.live;

@@ -238,3 +238,47 @@ def test_standing_dx_defaults_preview() -> None:
         prev = main.api_desk_bill_preview("", "c-unit", "ev-9", "2026-10-21", "follow-up", 60)
         assert prev["standing_dx"] == [{"code": "F42.2", "label": "OCD"}]
         assert prev["guess"] == "fu60" and prev["sms"] is False
+
+
+def test_billing_sms_uses_spruce_only_and_dry_run_sends_nothing() -> None:
+    from app import spruce_api
+
+    saved = {k: os.environ.get(k) for k in ("SPRUCE_API_TOKEN", "SPRUCE_PHONE_ENDPOINT_ID", "ENABLE_SMS")}
+    sent: list[tuple] = []
+    orig = spruce_api.send_spruce_sms
+    try:
+        os.environ.update(SPRUCE_API_TOKEN="unit-token", SPRUCE_PHONE_ENDPOINT_ID="unit-ep", ENABLE_SMS="false")
+        spruce_api.send_spruce_sms = lambda *a, **k: sent.append(a) or {"ok": True, "sent": True}
+        with _desk(letterhead=True) as (main, fake, drive):
+            from app import clients_db
+
+            clients_db.upsert({"id": "c-unit", "phone_e164": "+15555550123"})
+            os.environ["BILLING_SMS"] = "true"
+            assert main.api_desk_bill_preview("", "c-unit", "ev-s", "2026-10-20", "follow-up", 30)["sms"] is True
+            out = main.api_desk_bill_confirm(_req(main, event_id="ev-s", send_sms=True), "")
+            sms = out["payment"]["notify"]["sms"]
+            assert sms["dry_run"] and sms["via"] == "spruce_api" and "$265.00" in sms["text"]
+            assert out["share"]["sms"]["via"] == "spruce_api" and sent == []
+    finally:
+        spruce_api.send_spruce_sms = orig
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_specimen_can_be_rebuilt_as_real_superbill() -> None:
+    with _desk(letterhead=True) as (main, fake, drive):
+        from app import practice
+
+        prac_store = practice.ROOT / "practice.json"
+        data = json.loads(prac_store.read_text())
+        data["ein"] = ""
+        prac_store.write_text(json.dumps(data))
+        out = main.api_desk_bill_confirm(_req(main, specimen=True), "")
+        assert out["superbill"]["specimen"] is True
+        practice.save({"ein": "00-0000000"})
+        again = main.api_desk_bill_superbill(main.BillSuperbillRequest(billing_id=out["billing"]["id"], send_email=False), "")
+        assert again["superbill"]["status"] == "saved" and again["superbill"]["specimen"] is False
+        assert drive == {} and fake.posts == []
