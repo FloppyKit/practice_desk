@@ -2208,6 +2208,11 @@ def api_desk_note_sign(
     from .note_templates import get_template, render_template
 
     _require_staff(secret)
+    from .billing import letterhead_missing, refusal_message
+
+    missing = letterhead_missing(load_practice())
+    if missing:
+        raise HTTPException(409, refusal_message(missing))
     row = client_by_id(req.client_id) if req.client_id else None
     if not row and req.email:
         row = client_by_email(req.email)
@@ -2989,10 +2994,15 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
     import base64
 
     from .drive_paths import BILLING_CHILD, LIVING_ROOT, person_folder_name, paths_from_row, resolve_client_paths
-    from .practice import format_licenses, load as load_practice, next_statement
+    from .practice import asset_bytes, format_licenses, load as load_practice, next_statement
     from .superbill_pdf import superbill_filename, superbill_pdf
 
     _require_staff(secret)
+    from .billing import letterhead_missing, refusal_message
+
+    missing = letterhead_missing(load_practice())
+    if missing:
+        raise HTTPException(409, refusal_message(missing))
     row = client_by_id(req.client_id) if req.client_id else None
     if not row and req.email:
         row = client_by_email(req.email)
@@ -3071,6 +3081,16 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
                 "dob": row.get("dob") or "",
             },
             "licenses": format_licenses(prac.get("licenses") or []),
+            "letterhead": {
+                "name": prac.get("legal_name") or prac.get("display_name") or "",
+                "address": prac.get("address") or "",
+                "phone": prac.get("phone") or "",
+                "email": prac.get("email") or "",
+                "ein": prac.get("ein") or "",
+                "npi": prac.get("npi") or "",
+                "licenses": format_licenses(prac.get("licenses") or []),
+            },
+            "logo": asset_bytes("logo"),
             "diagnoses": diagnoses,
             "lines": lines,
         }
@@ -3092,6 +3112,470 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
     if not saved.get("ok"):
         raise HTTPException(502, "drive save failed")
     return {"ok": True, "path": dest, "name": fname, "statement": statement, "bytes": len(pdf)}
+
+
+# ---- One-click billing: Bill visit (docs/GO_BILLING_ONE_CLICK.md) ----------
+# Nothing is charged, written, or sent until the clinician confirms the visit code.
+# BILLING_LIVE unset means every confirm is a dry run (no fee row, no Stripe, no Drive, no sends).
+
+
+def _bill_client(client_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    from . import clients_db
+
+    raw = clients_db.get_by_id((client_id or "").strip()) if client_id else None
+    if not raw:
+        raise HTTPException(404, "client not found")
+    return raw, client_by_id(raw["id"]) or {}
+
+
+def _bill_billing_folder(view: dict[str, Any]) -> str:
+    from .drive_paths import BILLING_CHILD, LIVING_ROOT, person_folder_name, paths_from_row, resolve_client_paths
+
+    billing = paths_from_row(view).get("billing") or ""
+    if not billing:
+        try:
+            billing = resolve_client_paths(view, _drive_list).get("billing") or ""
+        except Exception:
+            billing = ""
+    if not billing:
+        dest = person_folder_name(view)
+        if dest:
+            billing = f"{LIVING_ROOT}/{dest}/{BILLING_CHILD}"
+    return billing
+
+
+def _bill_drive_save(dest: str, data: bytes) -> None:
+    import base64
+
+    code, saved = _notify_post("/drive/save", {"path": dest, "b64": base64.b64encode(data).decode("ascii")})
+    if code >= 400 or not saved.get("ok"):
+        raise HTTPException(502, "drive save failed")
+
+
+@app.get("/api/desk/bill")
+def api_desk_bill_preview(
+    secret: str = Query(default=""),
+    client_id: str = Query(default=""),
+    event_id: str = Query(default=""),
+    dos: str = Query(default=""),
+    event_type: str = Query(default=""),
+    duration_minutes: int | None = Query(default=None),
+):
+    """Confirm-sheet data: guessed code, CPT lines, standing dx, card, letterhead gaps."""
+    _require_staff(secret)
+    from . import billing
+    from .practice import load as load_practice
+
+    raw, view = _bill_client(client_id)
+    codes = billing.load_codes()
+    day = (dos or "")[:10] or datetime.now().date().isoformat()
+    key = billing.event_key(event_id, raw["id"], day)
+    existing = billing.find_billing(key, dry_run=False) or billing.find_billing(key, dry_run=True)
+    missing = billing.letterhead_missing(load_practice())
+    return {
+        "ok": True,
+        "client": {
+            "id": raw["id"],
+            "name": view.get("name") or "",
+            "email": view.get("email") or "",
+            "has_phone": bool(view.get("phone")),
+            "dob": view.get("dob") or "",
+        },
+        "event_id": event_id,
+        "dos": day,
+        "guess": billing.guess_code(event_type, duration_minutes),
+        "pos": codes["pos"],
+        "codes": list(codes["visit_types"].values()),
+        "standing_dx": billing.standing_dx(raw),
+        "card": {
+            "on_file": bool(raw.get("stripe_customer_id") and raw.get("stripe_payment_method_id")),
+            "brand": raw.get("stripe_card_brand") or "",
+            "last4": raw.get("stripe_card_last4") or "",
+        },
+        "live": billing.live_enabled(),
+        "sms": billing.sms_enabled(),
+        "letterhead_missing": missing,
+        "letterhead_message": billing.refusal_message(missing) if missing else "",
+        "existing": billing.public_billing(existing),
+    }
+
+
+class BillConfirmRequest(BaseModel):
+    client_id: str = ""
+    event_id: str = ""
+    dos: str = ""
+    visit_code: str = ""
+    confirm_code: str = ""  # must equal visit_code: the clinician's explicit confirm
+    diagnoses: list[Any] = []
+    save_dx: bool = False
+    payment: str = "link"  # link | card
+    confirm_charge: bool = False  # required when payment == card
+    send_email: bool = True
+    send_sms: bool = False
+    share_superbill: bool = True
+    dry_run: bool = True
+    specimen: bool = False  # dry run only: mark missing letterhead [not set] instead of refusing
+    share_ttl_seconds: int | None = None  # dry run only (expiry proof); live is always 30 days
+
+
+class BillSuperbillRequest(BaseModel):
+    billing_id: str = ""
+    diagnoses: list[Any] = []
+    save_dx: bool = False
+    share_superbill: bool = True
+    send_email: bool = True
+    send_sms: bool = False
+    specimen: bool = False
+    share_ttl_seconds: int | None = None
+
+
+class BillShareRequest(BaseModel):
+    billing_id: str = ""
+    send_email: bool = True
+    send_sms: bool = False
+    share_ttl_seconds: int | None = None
+
+
+def _bill_send(*, kind: str, view: dict[str, Any], fields: dict[str, Any], sms_body: str,
+               send_email: bool, send_sms: bool, dry: bool, key: str) -> dict[str, Any]:
+    from . import billing
+    from .email_templates import render_named
+    from .notify import send_named_email, send_sms as sms_send
+
+    out: dict[str, Any] = {"email": {"skipped": True}, "sms": {"skipped": True}}
+    email = str(view.get("email") or "")
+    phone = str(view.get("phone") or "")
+    if send_email:
+        if not email:
+            out["email"] = {"ok": False, "detail": "no email on file"}
+        elif dry:
+            subject = render_named(kind, {"email": email, **fields})[0]
+            out["email"] = {"ok": True, "dry_run": True, "sent": False, "subject": subject}
+        else:
+            r = send_named_email(kind=kind, to=email, fields=fields)
+            out["email"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("ok"))}
+    if send_sms:
+        if not billing.sms_enabled():
+            out["sms"] = {"ok": False, "skipped": True, "detail": "SMS is off (BILLING_SMS unset; A2P not approved)"}
+        elif not phone:
+            out["sms"] = {"ok": False, "detail": "no phone on file"}
+        elif dry:
+            out["sms"] = {"ok": True, "dry_run": True, "sent": False, "chars": len(sms_body)}
+        else:
+            r = sms_send(phone, sms_body, kind="billing", source="desk", idempotency_key=key, template="billing")
+            out["sms"] = {"ok": bool(r.get("ok")), "queued": bool(r.get("queued"))}
+    return out
+
+
+def _bill_share(rec: dict[str, Any], view: dict[str, Any], *, send_email: bool, send_sms: bool,
+                ttl: int | None) -> dict[str, Any]:
+    from . import billing
+
+    if rec.get("superbill_status") != "saved":
+        raise HTTPException(409, "No saved superbill to share yet.")
+    dry = bool(rec.get("dry_run"))
+    seconds = billing.SHARE_TTL_SECONDS
+    if ttl is not None and dry:
+        seconds = int(ttl)
+    revoked = billing.revoke_shares(rec["id"])
+    link = billing.mint_share(
+        billing_id=rec["id"],
+        client_id=rec["client_id"],
+        source=rec.get("superbill_source") or "drive",
+        path=rec.get("superbill_path") or "",
+        name=(rec.get("superbill_path") or "Superbill.pdf").rsplit("/", 1)[-1],
+        ttl_seconds=seconds,
+    )
+    url = f"{PUBLIC_BASE}/sb/{link['token']}"
+    inv = rec.get("invoice") or {}
+    first = (str(view.get("name") or "there").split() or ["there"])[0]
+    sent = _bill_send(
+        kind="superbill",
+        view=view,
+        fields={"name": view.get("name") or "", "title": inv.get("label") or "Visit",
+                "amount": inv.get("amount_pretty") or "", "url": url},
+        sms_body=f"Hi {first}, your superbill is ready (link good for 30 days): {url} — Dr. B",
+        send_email=send_email,
+        send_sms=send_sms,
+        dry=dry,
+        key=f"sb-{link['id']}",
+    )
+    return {"ok": True, "url": url, "share_id": link["id"], "expires_iso": link["expires_iso"],
+            "replaced": revoked, **sent}
+
+
+def _bill_superbill(rec: dict[str, Any], raw: dict[str, Any], view: dict[str, Any], *,
+                    specimen: bool) -> dict[str, Any]:
+    from . import billing
+    from .practice import asset_bytes, load as load_practice, next_statement
+    from .superbill_pdf import superbill_filename, superbill_pdf
+
+    dry = bool(rec.get("dry_run"))
+    prac = load_practice()
+    missing = billing.letterhead_missing(prac)
+    dx = rec.get("dx") or []
+    if missing and not (dry and specimen):
+        msg = billing.refusal_message(missing)
+        billing.update_billing(rec["id"], superbill_status="refused", superbill_detail=msg[:400])
+        return {"ok": False, "status": "refused", "missing": missing, "detail": msg}
+    if not dx:
+        msg = "Superbill not built: add at least one ICD-10 code. The invoice is not affected."
+        billing.update_billing(rec["id"], superbill_status="refused", superbill_detail=msg)
+        return {"ok": False, "status": "refused", "missing": ["ICD-10 code"], "detail": msg}
+    statement = next_statement() if not dry else "DRY-" + rec["id"][:6].upper()
+    doc = billing.superbill_doc(
+        prac=prac, client=view, rec=rec, dx=dx, statement=statement,
+        paid=rec.get("payment_status") == "paid", specimen=bool(missing),
+    )
+    doc["logo"] = asset_bytes("logo")
+    pdf = superbill_pdf(doc)
+    fname = superbill_filename(rec["dos"])
+    if dry:
+        local = f"{rec['id']}.pdf"
+        (billing.dryrun_dir() / local).write_bytes(pdf)
+        source, path = "local", local
+    else:
+        folder = _bill_billing_folder(view)
+        if not folder:
+            msg = "Superbill not saved: no billing folder for this client."
+            billing.update_billing(rec["id"], superbill_status="failed", superbill_detail=msg)
+            return {"ok": False, "status": "failed", "detail": msg}
+        _drive_mkdir(folder)
+        path = folder.rstrip("/") + "/" + fname
+        _bill_drive_save(path, pdf)
+        source = "drive"
+    billing.update_billing(
+        rec["id"], superbill_status="saved", superbill_source=source, superbill_path=path,
+        superbill_detail="specimen (dry run)" if missing else "", statement=statement,
+    )
+    return {"ok": True, "status": "saved", "source": source, "path": path, "name": fname,
+            "statement": statement, "bytes": len(pdf), "specimen": bool(missing)}
+
+
+@app.post("/api/desk/bill")
+def api_desk_bill_confirm(req: BillConfirmRequest, secret: str = Query(default="")):
+    """Bill visit: invoice + payment (card or link) + superbill, after the clinician confirms."""
+    _require_staff(secret)
+    from . import billing
+    from .fees import attach_invoice, create as fee_create, set_status
+    from .stripe_pay import charge_off_session, create_invoice, ensure_customer, stripe_ready
+
+    raw, view = _bill_client(req.client_id)
+    cid = raw["id"]
+    codes = billing.load_codes()
+    spec = codes["visit_types"].get((req.visit_code or "").strip())
+    if not spec:
+        raise HTTPException(400, "Pick a visit code.")
+    if (req.confirm_code or "").strip() != spec["id"]:
+        raise HTTPException(400, "Confirm the visit code first. Nothing was charged or sent.")
+    dos = (req.dos or "").strip()[:10]
+    try:
+        datetime.strptime(dos, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "need a date of service (YYYY-MM-DD)")
+    payment = (req.payment or "").strip().lower()
+    if payment not in billing.PAYMENTS:
+        raise HTTPException(400, "Pick charge card on file or send payment link.")
+    card_ready = bool(raw.get("stripe_customer_id") and raw.get("stripe_payment_method_id"))
+    if payment == "card":
+        if not req.confirm_charge:
+            raise HTTPException(400, "Tick the charge confirmation to charge the card on file.")
+        if not card_ready:
+            raise HTTPException(409, "No card on file. Choose send payment link instead.")
+    live = billing.live_enabled()
+    dry = bool(req.dry_run) or not live
+    if req.specimen and not dry:
+        raise HTTPException(400, "specimen is dry-run only")
+    if req.share_ttl_seconds is not None and not dry:
+        raise HTTPException(400, "share_ttl_seconds is dry-run only")
+    if not dry and not stripe_ready():
+        raise HTTPException(503, "Stripe is not on the booker")
+
+    dx = billing.clean_dx(req.diagnoses)
+    if req.save_dx and dx:
+        billing.save_standing_dx(cid, dx)
+    key = billing.event_key(req.event_id, cid, dos)
+    invoice = billing.build_invoice(spec, codes["pos"], dos)
+    rec = billing.claim_billing(
+        client_id=cid, key=key, dos=dos, invoice=invoice, dx=dx, payment=payment, dry_run=dry,
+    )
+    if not rec:
+        existing = billing.find_billing(key, dry_run=dry)
+        return {"ok": True, "created": False, "detail": "This visit is already billed.",
+                "billing": billing.public_billing(existing)}
+
+    pay: dict[str, Any] = {"mode": payment, "dry_run": dry, "charged": False}
+    amount = int(invoice["amount_cents"])
+    if dry:
+        pay["detail"] = (
+            f"Dry run: would charge {invoice['amount_pretty']} to the card on file."
+            if payment == "card"
+            else f"Dry run: would create a {invoice['amount_pretty']} Stripe invoice and send the pay link."
+        )
+        rec = billing.update_billing(rec["id"], payment_status="dry_run")
+    else:
+        fee = fee_create(client_id=cid, dos=dos, amount_cents=amount, kind="visit",
+                         note=invoice["invoice_code"], event_id=req.event_id or "")
+        rec = billing.update_billing(rec["id"], fee_id=str(fee["id"]))
+        if payment == "card":
+            try:
+                result = charge_off_session(
+                    customer_id=str(raw["stripe_customer_id"]),
+                    payment_method_id=str(raw["stripe_payment_method_id"]),
+                    amount_cents=amount, dos=dos, fee_id=str(fee["id"]),
+                )
+            except RuntimeError as e:
+                result = {"ok": False, "error": str(e)[:200], "stripe_id": ""}
+            set_status(str(fee["id"]), status="paid" if result.get("ok") else "failed",
+                       stripe_id=str(result.get("stripe_id") or ""))
+            pay["charged"] = bool(result.get("ok"))
+            pay["detail"] = "" if pay["charged"] else str(result.get("error") or "charge failed")
+            rec = billing.update_billing(rec["id"], payment_status="paid" if pay["charged"] else "failed",
+                                         stripe_id=str(result.get("stripe_id") or ""))
+        else:
+            try:
+                cust = ensure_customer(email=str(raw.get("email") or ""),
+                                       existing_id=str(raw.get("stripe_customer_id") or ""), client_id=cid)
+                if cust and cust != raw.get("stripe_customer_id"):
+                    from . import clients_db
+
+                    clients_db.upsert({"id": cid, "stripe_customer_id": cust})
+                inv = create_invoice(customer_id=cust, lines=[fee], client_id=cid)
+            except RuntimeError as e:
+                rec = billing.update_billing(rec["id"], payment_status="failed")
+                raise HTTPException(502, "Invoice not created: " + str(e)[:160]) from e
+            attach_invoice([str(fee["id"])], stripe_id=str(inv["stripe_id"]), pay_url=str(inv.get("pay_url") or ""))
+            pay["pay_url"] = str(inv.get("pay_url") or "")
+            rec = billing.update_billing(rec["id"], payment_status="sent", stripe_id=str(inv["stripe_id"]),
+                                         pay_url=pay["pay_url"])
+    if payment == "link":
+        first = (str(view.get("name") or "there").split() or ["there"])[0]
+        url = pay.get("pay_url") or f"{PUBLIC_BASE}/pay"
+        pay["notify"] = _bill_send(
+            kind="payment_due", view=view,
+            fields={"name": view.get("name") or "", "amount": invoice["amount_pretty"],
+                    "title": invoice["label"], "url": url},
+            sms_body=f"Hi {first}, your visit balance of {invoice['amount_pretty']} is ready: {url} — Dr. B",
+            send_email=req.send_email, send_sms=req.send_sms, dry=dry, key=f"pay-{rec['id']}",
+        )
+
+    sb = _bill_superbill(rec, raw, view, specimen=req.specimen)
+    rec = billing.get_billing(rec["id"]) or rec
+    share: dict[str, Any] = {"skipped": True}
+    if sb.get("ok") and req.share_superbill:
+        share = _bill_share(rec, view, send_email=req.send_email, send_sms=req.send_sms,
+                            ttl=req.share_ttl_seconds)
+    return {
+        "ok": True,
+        "created": True,
+        "dry_run": dry,
+        "forced_dry_run": dry and not req.dry_run,
+        "invoice": invoice,
+        "payment": pay,
+        "superbill": sb,
+        "share": share,
+        "billing": billing.public_billing(billing.get_billing(rec["id"])),
+    }
+
+
+@app.post("/api/desk/bill/superbill")
+def api_desk_bill_superbill(req: BillSuperbillRequest, secret: str = Query(default="")):
+    """Build the superbill for an already-billed visit (e.g. once the letterhead is filled)."""
+    _require_staff(secret)
+    from . import billing
+
+    rec = billing.get_billing(req.billing_id)
+    if not rec:
+        raise HTTPException(404, "billing not found")
+    if req.specimen and not rec.get("dry_run"):
+        raise HTTPException(400, "specimen is dry-run only")
+    if req.share_ttl_seconds is not None and not rec.get("dry_run"):
+        raise HTTPException(400, "share_ttl_seconds is dry-run only")
+    raw, view = _bill_client(rec["client_id"])
+    if rec.get("superbill_status") == "saved":
+        return {"ok": True, "created": False, "detail": "Superbill already saved.",
+                "billing": billing.public_billing(rec)}
+    dx = billing.clean_dx(req.diagnoses) or rec.get("dx") or []
+    if req.save_dx and dx:
+        billing.save_standing_dx(raw["id"], dx)
+    rec = billing.update_billing(rec["id"], dx_json=json.dumps(dx))
+    sb = _bill_superbill(rec, raw, view, specimen=req.specimen)
+    share: dict[str, Any] = {"skipped": True}
+    if sb.get("ok") and req.share_superbill:
+        share = _bill_share(billing.get_billing(rec["id"]) or rec, view, send_email=req.send_email,
+                            send_sms=req.send_sms, ttl=req.share_ttl_seconds)
+    return {"ok": True, "created": bool(sb.get("ok")), "superbill": sb, "share": share,
+            "billing": billing.public_billing(billing.get_billing(rec["id"]))}
+
+
+@app.post("/api/desk/bill/share")
+def api_desk_bill_share(req: BillShareRequest, secret: str = Query(default="")):
+    """Rotate: turn off the old branded link and mint a fresh 30-day one (optionally send it)."""
+    _require_staff(secret)
+    from . import billing
+
+    rec = billing.get_billing(req.billing_id)
+    if not rec:
+        raise HTTPException(404, "billing not found")
+    if req.share_ttl_seconds is not None and not rec.get("dry_run"):
+        raise HTTPException(400, "share_ttl_seconds is dry-run only")
+    _raw, view = _bill_client(rec["client_id"])
+    return _bill_share(rec, view, send_email=req.send_email, send_sms=req.send_sms, ttl=req.share_ttl_seconds)
+
+
+@app.post("/api/desk/bill/share/revoke")
+def api_desk_bill_share_revoke(req: BillShareRequest, secret: str = Query(default="")):
+    _require_staff(secret)
+    from . import billing
+
+    if not billing.get_billing(req.billing_id):
+        raise HTTPException(404, "billing not found")
+    return {"ok": True, "revoked": billing.revoke_shares(req.billing_id)}
+
+
+def _share_page(message: str, status: int) -> HTMLResponse:
+    from html import escape
+
+    body = (
+        "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='robots' content='noindex'><title>Superbill</title>"
+        "<body style='font-family:Inter,system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem;color:#111'>"
+        "<img src='/api/practice/logo' alt='' style='height:56px'><h1 style='font-size:1.2rem'>Superbill link</h1>"
+        f"<p>{escape(message)}</p></body>"
+    )
+    return HTMLResponse(body, status_code=status, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
+@app.get("/sb/{token}")
+def public_superbill_share(token: str):
+    """Branded, signed, expiring superbill link (30 days; rotate or revoke from the desk)."""
+    from . import billing
+
+    try:
+        row = billing.verify_share(token)
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status)
+    name = (row.get("name") or "Superbill.pdf").replace('"', "")
+    if row.get("source") == "local":
+        local = billing.dryrun_dir() / Path(str(row.get("path") or "")).name
+        if not local.is_file():
+            return _share_page("This file is no longer available.", 404)
+        data = local.read_bytes()
+    else:
+        code, data, _ctype = _notify_get("/drive/file?path=" + quote(str(row.get("path") or ""), safe="/"))
+        if code != 200:
+            return _share_page("The file could not be loaded right now. Try again shortly.", 502)
+    billing.note_hit(row["id"])
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{name}"',
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 def _last_note_listing(vn_path: str) -> dict[str, Any]:
