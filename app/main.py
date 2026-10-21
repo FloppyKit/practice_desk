@@ -3454,7 +3454,9 @@ def api_desk_bill_confirm(req: BillConfirmRequest, secret: str = Query(default="
                                          pay_url=pay["pay_url"])
     if payment == "link":
         first = (str(view.get("name") or "there").split() or ["there"])[0]
-        url = pay.get("pay_url") or f"{PUBLIC_BASE}/pay"
+        url = pay.get("pay_url") or (
+            f"{SITE_PUBLIC}/pay?" + urlencode({"email": view.get("email") or "", "name": view.get("name") or ""})
+        )
         pay["notify"] = _bill_send(
             kind="payment_due", view=view,
             fields={"name": view.get("name") or "", "amount": invoice["amount_pretty"],
