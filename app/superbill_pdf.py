@@ -103,7 +103,7 @@ def superbill_pdf(doc: dict) -> bytes:
             header_lines.append("NPI: " + str(lh["npi"]))
         lic = " · ".join(str(x) for x in lh.get("licenses") or [])
         if lic:
-            header_lines.extend(_wrap("Licenses: " + lic, 46)[:2])
+            header_lines.extend(_wrap("Licenses: " + lic, 60)[:2])  # 3 licenses fit one 9pt line (~240pt of 264)
     hy = 760
     for i, ln in enumerate(header_lines):
         text(300, hy, ln, size=11 if i == 0 else 9, bold=i == 0)

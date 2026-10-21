@@ -325,3 +325,13 @@ def test_pay_thanks_route_still_wins() -> None:
 
     paths = [getattr(r, "path", "") for r in main.app.routes]
     assert paths.index("/pay/thanks") < paths.index("/pay/{token}")
+
+
+def test_letterhead_licenses_stay_on_one_line() -> None:
+    from app.superbill_pdf import superbill_pdf
+
+    lic = ["KS TW-00062", "IL 036.132941", "MO 2025054356"]
+    pdf = superbill_pdf({"letterhead": {"name": "Dr Matt Brown", "address": "332 South Michigan Avenue STE 121 #5386",
+                                        "licenses": lic}, "lines": []})
+    one = "Licenses: " + " \u00b7 ".join(lic)
+    assert ("(" + one + ")").encode("latin-1") in pdf
