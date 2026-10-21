@@ -3030,7 +3030,7 @@
       billCtx.billing = out.billing;
       if (!out.created) { status.textContent = out.detail || "Already billed."; return; }
       const bits = [(out.dry_run ? "Dry run · " : "") + out.invoice.invoice_code + " " + out.invoice.amount_pretty];
-      bits.push(out.payment.charged ? "card charged" : (out.payment.detail || (out.payment.pay_url ? "pay link sent" : "")));
+      bits.push(out.payment.charged ? "card charged" : (out.payment.detail || (out.payment.pay_url ? "pay link " + out.payment.pay_url : "")));
       bits.push(out.superbill.ok ? "superbill saved" : (out.superbill.detail || "superbill not built"));
       if (out.share && out.share.url) bits.push("link until " + String(out.share.expires_iso).slice(0, 10));
       status.textContent = bits.filter(Boolean).join(" · ");

@@ -31,7 +31,12 @@ class FakeStripe:
             return {"id": "in_unit", "hosted_invoice_url": "https://invoice.example.invalid/x", "amount_due": 26500}
         raise AssertionError("unexpected Stripe POST " + path)
 
+    invoice_status = "open"
+
     def get(self, path: str) -> dict:
+        if path.startswith("/invoices/"):
+            return {"id": path.rsplit("/", 1)[1], "status": self.invoice_status, "amount_due": 26500,
+                    "hosted_invoice_url": "https://invoice.stripe.com/i/unit"}
         return {"data": [{"id": "cus_unit"}]}
 
 
@@ -282,3 +287,41 @@ def test_specimen_can_be_rebuilt_as_real_superbill() -> None:
         again = main.api_desk_bill_superbill(main.BillSuperbillRequest(billing_id=out["billing"]["id"], send_email=False), "")
         assert again["superbill"]["status"] == "saved" and again["superbill"]["specimen"] is False
         assert drive == {} and fake.posts == []
+
+
+def test_branded_pay_link_redirects_closes_and_revokes() -> None:
+    with _desk(letterhead=True, live=True) as (main, fake, drive):
+        out = main.api_desk_bill_confirm(_req(main, dry_run=False, send_email=False, share_superbill=True), "")
+        url = out["payment"]["pay_url"]
+        assert url.startswith(main.PUBLIC_BASE + "/pay/") and out["billing"]["pay_url"] == url
+        assert out["billing"]["pay_link"] and out["billing"]["share"]
+        token = url.rsplit("/", 1)[1]
+        r = main.public_pay_link(token)
+        assert r.status_code == 302 and r.headers["location"] == "https://invoice.stripe.com/i/unit"
+        assert r.headers["cache-control"] == "no-store" and r.headers["x-robots-tag"] == "noindex"
+        assert main.public_pay_link(token[:-2] + "xx").status_code == 404
+        assert main.public_pay_link("garbage").status_code == 404
+        sb_token = out["share"]["url"].rsplit("/", 1)[1]
+        assert main.public_pay_link(sb_token).status_code == 404  # superbill tokens are not pay tokens
+        assert main.public_superbill_share(token).status_code == 404  # and vice versa
+        fake.invoice_status = "void"
+        closed = main.public_pay_link(token)
+        assert closed.status_code == 200 and b"closed" in closed.body and b"Unit Practice" in closed.body
+        fake.invoice_status = "paid"
+        assert b"paid" in main.public_pay_link(token).body
+        fake.invoice_status = "open"
+        bid = out["billing"]["id"]
+        main.api_desk_bill_share_revoke(main.BillShareRequest(billing_id=bid, pay_link=True), "")
+        assert main.public_pay_link(token).status_code == 410
+        assert main.public_superbill_share(sb_token).status_code == 200  # superbill link untouched
+        days = (out["billing"]["pay_link"]["expires_iso"])
+        from datetime import datetime, timezone
+
+        assert 29.9 < (datetime.fromisoformat(days) - datetime.now(timezone.utc)).total_seconds() / 86400 <= 30.0
+
+
+def test_pay_thanks_route_still_wins() -> None:
+    from app import main
+
+    paths = [getattr(r, "path", "") for r in main.app.routes]
+    assert paths.index("/pay/thanks") < paths.index("/pay/{token}")

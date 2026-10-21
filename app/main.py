@@ -3231,6 +3231,7 @@ class BillSuperbillRequest(BaseModel):
 
 class BillShareRequest(BaseModel):
     billing_id: str = ""
+    pay_link: bool = False
     send_email: bool = True
     send_sms: bool = False
     share_ttl_seconds: int | None = None
@@ -3450,7 +3451,9 @@ def api_desk_bill_confirm(req: BillConfirmRequest, secret: str = Query(default="
                 rec = billing.update_billing(rec["id"], payment_status="failed")
                 raise HTTPException(502, "Invoice not created: " + str(e)[:160]) from e
             attach_invoice([str(fee["id"])], stripe_id=str(inv["stripe_id"]), pay_url=str(inv.get("pay_url") or ""))
-            pay["pay_url"] = str(inv.get("pay_url") or "")
+            link = billing.mint_share(billing_id=rec["id"], client_id=cid, source="pay", kind="pay",
+                                      path=str(inv["stripe_id"]), name=invoice["invoice_code"])
+            pay["pay_url"] = f"{PUBLIC_BASE}/pay/{link['token']}"
             rec = billing.update_billing(rec["id"], payment_status="sent", stripe_id=str(inv["stripe_id"]),
                                          pay_url=pay["pay_url"])
     if payment == "link":
@@ -3538,20 +3541,55 @@ def api_desk_bill_share_revoke(req: BillShareRequest, secret: str = Query(defaul
 
     if not billing.get_billing(req.billing_id):
         raise HTTPException(404, "billing not found")
-    return {"ok": True, "revoked": billing.revoke_shares(req.billing_id)}
+    return {"ok": True, "revoked": billing.revoke_shares(req.billing_id, "pay" if req.pay_link else "sb")}
 
 
-def _share_page(message: str, status: int) -> HTMLResponse:
+def _share_page(message: str, status: int, title: str = "Superbill link") -> HTMLResponse:
     from html import escape
 
+    from .practice import load as load_practice
+
+    who = str(load_practice().get("display_name") or "")
     body = (
         "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<meta name='robots' content='noindex'><title>Superbill</title>"
+        f"<meta name='robots' content='noindex'><title>{escape(title)}</title>"
         "<body style='font-family:Inter,system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem;color:#111'>"
-        "<img src='/api/practice/logo' alt='' style='height:56px'><h1 style='font-size:1.2rem'>Superbill link</h1>"
-        f"<p>{escape(message)}</p></body>"
+        f"<img src='/api/practice/logo' alt='' style='height:56px'><p style='color:#2f57a5;margin:.4rem 0'>{escape(who)}</p>"
+        f"<h1 style='font-size:1.2rem'>{escape(title)}</h1><p>{escape(message)}</p></body>"
     )
-    return HTMLResponse(body, status_code=status, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+    return HTMLResponse(body, status_code=status, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex",
+                                                            "Referrer-Policy": "no-referrer"})
+
+
+_PAY_CLOSED = {
+    "paid": "This invoice is paid. Thank you!",
+    "void": "This invoice is closed. No payment is needed.",
+    "uncollectible": "This invoice is closed. Contact the practice with any questions.",
+}
+
+
+@app.get("/pay/{token}")
+def public_pay_link(token: str):
+    """Branded pay link (signed, 30-day, revocable): 302 to the Stripe hosted invoice while it is open."""
+    from . import billing, stripe_pay
+
+    try:
+        row = billing.verify_share(token, kind="pay")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="Payment link")
+    try:
+        inv = stripe_pay._get("/invoices/" + quote(str(row.get("path") or ""), safe=""))
+    except RuntimeError:
+        return _share_page("The invoice could not be loaded right now. Try again shortly.", 502, title="Payment link")
+    status = str(inv.get("status") or "")
+    if status in _PAY_CLOSED:
+        return _share_page(_PAY_CLOSED[status], 200, title="Payment link")
+    url = str(inv.get("hosted_invoice_url") or "")
+    if status != "open" or not url.startswith("https://invoice.stripe.com/"):
+        return _share_page("This invoice is not available. Contact the practice.", 404, title="Payment link")
+    billing.note_hit(row["id"])
+    return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex",
+                                                           "Referrer-Policy": "no-referrer"})
 
 
 @app.get("/sb/{token}")

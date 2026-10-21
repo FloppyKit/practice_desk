@@ -382,6 +382,7 @@ def public_billing(rec: dict[str, Any] | None) -> dict[str, Any] | None:
             "statement": rec.get("statement") or "",
         },
         "share": active_share(rec["id"]),
+        "pay_link": active_share(rec["id"], "pay"),
         "created": rec.get("created_at") or "",
     }
 
@@ -402,10 +403,17 @@ class ShareError(Exception):
         self.message = message
 
 
-def _sig(body: str) -> str:
+_DOMAIN = {"sb": b":superbill-share", "pay": b":pay-link"}
+
+
+def _sig(body: str, kind: str = "sb") -> str:
     from .tokens import _b64, _secret
 
-    return _b64(hmac.new(_secret() + b":superbill-share", body.encode("ascii"), hashlib.sha256).digest())
+    return _b64(hmac.new(_secret() + _DOMAIN[kind], body.encode("ascii"), hashlib.sha256).digest())
+
+
+def _kind_sql(kind: str) -> str:
+    return "COALESCE(source, '') = 'pay'" if kind == "pay" else "COALESCE(source, '') != 'pay'"
 
 
 def mint_share(
@@ -416,8 +424,13 @@ def mint_share(
     path: str,
     name: str,
     ttl_seconds: int = SHARE_TTL_SECONDS,
+    kind: str = "sb",
 ) -> dict[str, Any]:
+    """kind "sb": superbill PDF link. kind "pay": branded pay link; source "pay", path = Stripe invoice id."""
     from .tokens import _b64
+
+    if kind == "pay":
+        source = "pay"
 
     ttl = max(1, min(int(ttl_seconds), SHARE_TTL_SECONDS))
     sid = uuid.uuid4().hex[:16]
@@ -430,25 +443,25 @@ def mint_share(
             (sid, billing_id, client_id, source, path, name[:120], exp, _now()),
         )
         con.commit()
-    body = _b64(json.dumps({"k": "sb", "i": sid, "x": exp}, separators=(",", ":")).encode())
+    body = _b64(json.dumps({"k": kind, "i": sid, "x": exp}, separators=(",", ":")).encode())
     return {
         "id": sid,
-        "token": f"{body}.{_sig(body)}",
+        "token": f"{body}.{_sig(body, kind)}",
         "expires_at": exp,
         "expires_iso": datetime.fromtimestamp(exp, timezone.utc).isoformat(),
     }
 
 
-def verify_share(token: str) -> dict[str, Any]:
+def verify_share(token: str, kind: str = "sb") -> dict[str, Any]:
     from .tokens import _b64d
 
     try:
         body, sig = (token or "").split(".", 1)
-        ok = hmac.compare_digest(_sig(body), sig)
+        ok = hmac.compare_digest(_sig(body, kind), sig)
         payload = json.loads(_b64d(body)) if ok else {}
     except Exception:
         ok, payload = False, {}
-    if not ok or payload.get("k") != "sb" or not payload.get("i"):
+    if not ok or payload.get("k") != kind or not payload.get("i"):
         raise ShareError(404, "This link is not valid.")
     now = int(time.time())
     if int(payload.get("x") or 0) < now:
@@ -456,7 +469,7 @@ def verify_share(token: str) -> dict[str, Any]:
     with clients_db.connect() as con:
         _ensure(con)
         r = con.execute("SELECT * FROM share_links WHERE id = ?", (payload["i"],)).fetchone()
-    if r is None:
+    if r is None or (r["source"] == "pay") != (kind == "pay"):
         raise ShareError(404, "This link is not valid.")
     row = {k: r[k] for k in r.keys()}
     if row.get("revoked_at"):
@@ -473,23 +486,23 @@ def note_hit(sid: str) -> None:
         con.commit()
 
 
-def revoke_shares(billing_id: str) -> int:
+def revoke_shares(billing_id: str, kind: str = "sb") -> int:
     with clients_db.connect() as con:
         _ensure(con)
         cur = con.execute(
-            "UPDATE share_links SET revoked_at = ? WHERE billing_id = ? AND revoked_at IS NULL",
+            "UPDATE share_links SET revoked_at = ? WHERE billing_id = ? AND revoked_at IS NULL AND " + _kind_sql(kind),
             (_now(), billing_id),
         )
         con.commit()
         return int(cur.rowcount or 0)
 
 
-def active_share(billing_id: str) -> dict[str, Any] | None:
+def active_share(billing_id: str, kind: str = "sb") -> dict[str, Any] | None:
     with clients_db.connect() as con:
         _ensure(con)
         r = con.execute(
             "SELECT id, expires_at, hits, created_at FROM share_links WHERE billing_id = ? "
-            "AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT 1",
+            "AND revoked_at IS NULL AND expires_at > ? AND " + _kind_sql(kind) + " ORDER BY created_at DESC LIMIT 1",
             (billing_id, int(time.time())),
         ).fetchone()
     if r is None:
