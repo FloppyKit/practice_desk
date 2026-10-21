@@ -3266,7 +3266,8 @@ def _bill_send(*, kind: str, view: dict[str, Any], fields: dict[str, Any], sms_b
                           "to": "•••" + e164[-4:], "text": sms_body[:480]}
         else:
             r = send_spruce_sms(e164, sms_body, idempotency_key=key)
-            out["sms"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("sent")), "via": "spruce_api"}
+            out["sms"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("sent")), "via": "spruce_api",
+                          "request_id": r.get("request_id") or "", "detail": r.get("detail") or ""}
     return out
 
 
