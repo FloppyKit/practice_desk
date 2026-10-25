@@ -1,6 +1,6 @@
   scribe-aws:
     # 127.0.0.1:8795 adapter: AWS Transcribe Medical streaming -> whisper-worker fallback;
-    # note polish via booker /api/desk/note/draft. Flip off: SCRIBE_AWS_DISABLE=1 or SCRIBE_BACKEND=http.
+    # note polish: Bedrock nova-pro + booker style_pack (ro). Flip off: SCRIBE_AWS_DISABLE=1 or SCRIBE_BACKEND=http.
     build: ./scribe-aws
     restart: unless-stopped
     network_mode: host
