@@ -1,0 +1,46 @@
+# Catalog only. The pipe talks HTTP. Flip id via SCRIBE_BACKEND=
+# phi: true means "vendor will sign a BAA / you own the box" — not a legal opinion.
+# SCRIBE_PHI_ONLY=1 refuses any backend with phi: false.
+
+backends:
+  openrouter:
+    label: OpenRouter (cheap, always-on)
+    phi: false
+    kind: openrouter
+    notes: Router. Downstream model BAA is not yours. Fine for cash-practice drafts.
+
+  http:
+    label: Bring your own URL
+    phi: inherit   # you set SCRIBE_BACKEND_PHI=1 if that URL is a BAA box
+    kind: http
+    notes: Any service that speaks the scribe contract.
+
+  assemblyai:
+    label: AssemblyAI STT + LLM Gateway
+    phi: true
+    kind: http
+    notes: BAA available. STT + Claude/GPT/Gemini behind one vendor. Point SCRIBE_*_URL at a tiny adapter or their gateway.
+
+  deepgram:
+    label: Deepgram Nova-3 Medical
+    phi: true
+    kind: http
+    notes: BAA is enterprise, not hobby. Best LiveKit-native medical STT. Note writer still separate.
+
+  azure:
+    label: Azure Speech + Azure OpenAI
+    phi: true
+    kind: http
+    notes: Microsoft BAA covers those two services. Usual hospital IT path.
+
+  aws:
+    label: AWS Transcribe Medical + Bedrock
+    phi: true
+    kind: http
+    notes: AWS BAA. HealthScribe can return a note in one shot (set note on STT response).
+
+  local:
+    label: Your GPU / Bazzite whisper
+    phi: true
+    kind: http
+    notes: Audio never leaves a machine you own. Not always-on unless that box stays up.
