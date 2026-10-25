@@ -1,0 +1,15 @@
+  scribe-aws:
+    # 127.0.0.1:8795 adapter: AWS Transcribe Medical streaming -> whisper-worker fallback;
+    # note polish via booker /api/desk/note/draft. Flip off: SCRIBE_AWS_DISABLE=1 or SCRIBE_BACKEND=http.
+    build: ./scribe-aws
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ./scribe-aws/.env
+    environment:
+      SCRIBE_AWS_BIND: "127.0.0.1"
+      SCRIBE_AWS_PORT: "8795"
+    volumes:
+      # reuse booker style-pack priors as-is (read-only)
+      - ./booker/app/style_pack.py:/app/style_pack.py:ro
+      - ./booker/config/style-pack:/style-pack:ro

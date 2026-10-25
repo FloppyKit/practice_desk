@@ -7,11 +7,14 @@ POST chunks to a backend URL. Mail the DAP. Wipe. Never write PHI to disk.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import os
 import struct
 import time
 import traceback
+import urllib.error
+import urllib.request  # desk_ingest used these without importing (NameError → ok:false)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -60,6 +63,25 @@ def log_event(obj: dict[str, Any]) -> None:
     print(line, end="", flush=True)
 
 
+def mix_pcm(bufs: list[bytes]) -> bytes:
+    """Sum s16 mono tracks (host + guest) into one stream; pad short ones with silence."""
+    bufs = [b[: len(b) - (len(b) % 2)] for b in bufs if b]
+    if not bufs:
+        return b""
+    if len(bufs) == 1:
+        return bufs[0]
+    from array import array
+
+    n = max(len(b) for b in bufs) // 2
+    acc = [0] * n
+    for b in bufs:
+        a = array("h")
+        a.frombytes(b)
+        for i, v in enumerate(a):
+            acc[i] += v
+    return array("h", (32767 if v > 32767 else -32768 if v < -32768 else v for v in acc)).tobytes()
+
+
 def pcm_to_wav(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
     data_size = len(pcm)
     return (
@@ -106,7 +128,9 @@ def mail(subject: str, html: str) -> dict[str, Any]:
 
 
 
-def desk_ingest(note: str, transcript: str, minutes: int) -> dict[str, Any]:
+def desk_ingest(
+    note: str, transcript: str, minutes: int, target: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Push blank draft to Practice Desk. Never log bodies."""
     url = (os.environ.get("DESK_SCRIBE_INGEST_URL") or "").strip()
     if not url:
@@ -120,6 +144,10 @@ def desk_ingest(note: str, transcript: str, minutes: int) -> dict[str, Any]:
             "template": "blank",
             "duration_minutes": int(minutes or 0),
             "room": ROOM_NAME,
+            # Host may tag the visit (participant attrs desk_client_id/email/name).
+            "client_id": (target or {}).get("client_id", ""),
+            "email": (target or {}).get("email", ""),
+            "name": (target or {}).get("name", ""),
         }
     ).encode()
     headers = {"Content-Type": "application/json"}
@@ -265,7 +293,7 @@ async def mint_scribe_token() -> str:
     from livekit import api
 
     tok = api.AccessToken(LK_KEY, LK_SECRET)
-    tok.with_identity(f"scribe-{ROOM_NAME}").with_name("Scribe").with_ttl(60 * 60 * 6)
+    tok.with_identity(f"scribe-{ROOM_NAME}").with_name("Scribe").with_ttl(datetime.timedelta(hours=6))  # livekit-api>=1 needs timedelta
     grants = dict(room_join=True, room=ROOM_NAME, can_publish=False, can_subscribe=True)
     try:
         tok.with_grants(api.VideoGrants(**grants, hidden=True))
@@ -276,12 +304,14 @@ async def mint_scribe_token() -> str:
 
 class Session:
     def __init__(self) -> None:
-        self.pcm = bytearray()
+        self.pcm = bytearray()  # kept for compatibility; per-track buffers below
+        self.tracks: dict[str, bytearray] = {}
         self.parts: list[str] = []
         self.started = time.time()
         self.last_flush = time.time()
         self.lock = asyncio.Lock()
         self.shm = SHM / f"scribe-{os.getpid()}.wav"
+        self.target: dict[str, str] = {}
 
     def wipe_file(self) -> None:
         try:
@@ -290,19 +320,22 @@ class Session:
         except OSError:
             pass
 
-    async def add_pcm(self, chunk: bytes) -> None:
+    async def add_pcm(self, chunk: bytes, key: str = "") -> None:
+        # One buffer per track: appending two tracks into one buffer interleaved them.
         async with self.lock:
-            self.pcm.extend(chunk)
+            self.tracks.setdefault(key, bytearray()).extend(chunk)
 
     async def flush_chunk(self, force: bool = False) -> None:
         async with self.lock:
-            if not self.pcm:
+            if not any(self.tracks.values()):
                 return
             if not force and (time.time() - self.last_flush) < CHUNK_SEC:
                 return
-            pcm = bytes(self.pcm)
-            self.pcm.clear()
+            bufs = [bytes(b) for b in self.tracks.values()]
+            for b in self.tracks.values():
+                b.clear()
             self.last_flush = time.time()
+        pcm = await asyncio.to_thread(mix_pcm, bufs)
         if not stt_configured():
             log_event({"event": "stt_skip", "bytes": len(pcm)})
             return
@@ -311,8 +344,9 @@ class Session:
             self.shm.write_bytes(wav)
             text = ""
             extra_note = ""
+            out: dict[str, Any] = {}
             try:
-                out = transcribe(self.shm.read_bytes())
+                out = await asyncio.to_thread(transcribe, self.shm.read_bytes())  # keep audio flowing
                 text = (out.get("transcript") or out.get("text") or "").strip()
                 extra_note = (out.get("note") or "").strip()
             finally:
@@ -321,7 +355,16 @@ class Session:
                 self.parts.append(text)
             if extra_note:
                 self.parts.append("\n[backend note]\n" + extra_note)
-            log_event({"event": "stt_ok", "bytes": len(pcm), "chars": len(text)})
+            log_event(
+                {
+                    "event": "stt_ok",
+                    "backend": backend_kind(),
+                    "engine": str(out.get("engine") or "")[:40],
+                    "aws_error": str(out.get("aws_error") or "")[:120],
+                    "bytes": len(pcm),
+                    "chars": len(text),
+                }
+            )
         except Exception as e:
             self.wipe_file()
             log_event({"event": "stt_fail", "bytes": len(pcm), "err": str(e)[:160]})
@@ -336,14 +379,29 @@ class Session:
             try:
                 out = write_note(transcript, minutes)
                 note = (out.get("note") or "").strip()
+                log_event(
+                    {
+                        "event": "note_ok",
+                        "backend": backend_kind(),
+                        "note_engine": str(out.get("note_engine") or "")[:40],
+                        "chars": len(note),
+                    }
+                )
             except Exception as e:
                 log_event({"event": "note_fail", "err": str(e)[:160]})
         if not note and transcript:
             note = transcript[:4000]
         subject = f"Visit note · {time.strftime('%b %-d')} · {minutes} min"
         if note or transcript:
-            ingested = desk_ingest(note or transcript, transcript, minutes)
-            log_event({"event": "desk_ingest", "ok": bool(ingested.get("ok")), "id": (ingested.get("id") or "")[:32]})
+            ingested = desk_ingest(note or transcript, transcript, minutes, self.target)
+            log_event(
+                {
+                    "event": "desk_ingest",
+                    "ok": bool(ingested.get("ok")),
+                    "id": (ingested.get("id") or "")[:32],
+                    "targeted": bool(self.target.get("client_id")),
+                }
+            )
         if note:
             mailed = mail(subject, note_html(note, minutes, stt_ok))
             log_event({"event": "mailed", "ok": bool(mailed.get("ok")), "minutes": minutes})
@@ -365,23 +423,28 @@ class Session:
             STATE.last = {"ok": False, "detail": "empty transcript"}
         self.parts.clear()
         self.pcm.clear()
+        self.tracks.clear()
+        self.target = {}
         self.wipe_file()
 
 
 async def consume_audio(track: Any, session: Session) -> None:
     from livekit import rtc
 
+    key = str(getattr(track, "sid", "") or id(track))
+
     stream = None
     try:
         try:
-            stream = rtc.AudioStream.from_track(track, sample_rate=SAMPLE_RATE, num_channels=1)
+            # keyword-only in livekit>=1; positional raised TypeError → 48 kHz fallback
+            stream = rtc.AudioStream.from_track(track=track, sample_rate=SAMPLE_RATE, num_channels=1)
         except TypeError:
-            stream = rtc.AudioStream(track)
+            stream = rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=1)
         async for ev in stream:
             frame = getattr(ev, "frame", ev)
             data = getattr(frame, "data", b"")
             if data:
-                await session.add_pcm(bytes(data))
+                await session.add_pcm(bytes(data), key)
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -402,7 +465,7 @@ async def run_session() -> None:
     session = Session()
     tasks: list[asyncio.Task[Any]] = []
     STATE.joined = True
-    log_event({"event": "join", "room": ROOM_NAME})
+    log_event({"event": "join", "room": ROOM_NAME, "backend": backend_kind()})
 
     def on_track(track: Any, pub: Any, participant: Any) -> None:
         if getattr(track, "kind", None) != rtc.TrackKind.KIND_AUDIO:
@@ -427,6 +490,13 @@ async def run_session() -> None:
                 for p in room.remote_participants.values()
                 if not is_scribe(_ident(p))
             ]
+            for p in humans:
+                if is_host(_ident(p)) and _attr(p, "desk_client_id"):
+                    session.target = {
+                        "client_id": _attr(p, "desk_client_id")[:80],
+                        "email": _attr(p, "desk_client_email")[:200],
+                        "name": _attr(p, "desk_client_name")[:200],
+                    }
             if not humans:
                 # wait briefly — host might be alone between guests
                 await asyncio.sleep(8)
@@ -464,6 +534,7 @@ async def main() -> None:
             "stt": stt_configured(),
             "note": note_configured(),
             "room": ROOM_NAME,
+            "backend": backend_kind(),
         }
     )
     while True:

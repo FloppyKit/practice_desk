@@ -3,6 +3,7 @@
 Contract for BYO HTTP:
   POST STT  multipart file=audio/wav  → { "transcript": "...", "note"?: "..." }
   POST NOTE json { transcript, duration_minutes, kind } → { "note": "...", "title"?: "..." }
+  Optional response keys (logged, never bodies): "engine", "aws_error", "note_engine".
 """
 from __future__ import annotations
 
@@ -60,14 +61,23 @@ def assert_phi_ok() -> None:
         )
 
 
+def _url_contract() -> bool:
+    """Every kind except openrouter speaks the BYO HTTP contract (aws, local, http, ...).
+
+    Before: only kind=http did, so SCRIBE_BACKEND=aws with OPENROUTER_API_KEY present
+    would silently route PHI to OpenRouter. Never do that for a phi kind.
+    """
+    return backend_kind() != "openrouter"
+
+
 def stt_configured() -> bool:
-    if backend_kind() == "http":
+    if _url_contract():
         return bool(_env("SCRIBE_STT_URL"))
     return bool(_env("OPENROUTER_API_KEY") or _env("SCRIBE_STT_URL"))
 
 
 def note_configured() -> bool:
-    if backend_kind() == "http":
+    if _url_contract():
         return bool(_env("SCRIBE_NOTE_URL"))
     return bool(_env("OPENROUTER_API_KEY") or _env("SCRIBE_NOTE_URL"))
 
@@ -75,16 +85,16 @@ def note_configured() -> bool:
 def transcribe(wav: bytes) -> dict[str, str]:
     """Return {transcript, note?} — never log the body."""
     assert_phi_ok()
-    if backend_kind() == "http" or _env("SCRIBE_STT_URL"):
-        if backend_kind() == "http" or not _env("OPENROUTER_API_KEY"):
+    if _url_contract() or _env("SCRIBE_STT_URL"):
+        if _url_contract() or not _env("OPENROUTER_API_KEY"):
             return _http_stt(wav)
     return _openrouter_stt(wav)
 
 
 def write_note(transcript: str, duration_minutes: int) -> dict[str, str]:
     assert_phi_ok()
-    if backend_kind() == "http" or _env("SCRIBE_NOTE_URL"):
-        if backend_kind() == "http" or not _env("OPENROUTER_API_KEY"):
+    if _url_contract() or _env("SCRIBE_NOTE_URL"):
+        if _url_contract() or not _env("OPENROUTER_API_KEY"):
             return _http_note(transcript, duration_minutes)
     return _openrouter_note(transcript, duration_minutes)
 
