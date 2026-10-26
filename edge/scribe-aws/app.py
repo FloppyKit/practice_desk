@@ -4,7 +4,7 @@
   POST /transcribe  multipart file=audio/wav (16 kHz mono s16)
       → AWS Transcribe Medical *streaming* (PRIMARYCARE, CONVERSATION, speaker labels).
         No S3, nothing written to disk. Any AWS failure → whisper-worker (same body).
-      ← {"transcript", "engine": "aws-transcribe-medical"|"whisper-fallback", "aws_error"?}
+      ← {"transcript", "engine": "aws-transcribe-medical"|"aws-transcribe-standard[+vocab]"|"whisper-fallback", "aws_error"?}
   POST /note        json {transcript, duration_minutes}
       → Bedrock Nova Pro (BAA account, Bedrock API key — same mechanism as the site chat)
         with booker's own style_pack.draft_prompt_context() priors (mounted read-only)
@@ -34,6 +34,9 @@ BIND = os.environ.get("SCRIBE_AWS_BIND", "127.0.0.1")
 PORT = int(os.environ.get("SCRIBE_AWS_PORT", "8795"))
 REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 SPECIALTY = os.environ.get("AWS_MEDICAL_SPECIALTY", "PRIMARYCARE")  # only value streaming accepts
+# medical = StartMedicalStreamTranscription ($0.075/min); standard = StartStreamTranscription ($0.01/min)
+STT_MODE = "standard" if (os.environ.get("AWS_STT_MODE") or "").strip().lower() == "standard" else "medical"
+VOCAB = (os.environ.get("AWS_VOCAB_NAME") or "").strip()  # standard only, e.g. psych-drugs-v1
 WHISPER = os.environ.get("WHISPER_URL", "http://127.0.0.1:8794").rstrip("/")
 # Nova Pro: 300k-token context. ~100k chars = 120-min visit; 400k chars (~100k tokens) is a sane ceiling.
 NOTE_MAX_CHARS = int(os.environ.get("NOTE_MAX_CHARS", "400000"))
@@ -72,6 +75,8 @@ async def _aws_medical(pcm: bytes, rate: int) -> str:
         AudioStreamAudioEvent,
         MedicalTranscriptResultStreamTranscriptEvent,
         StartMedicalStreamTranscriptionInput,
+        StartStreamTranscriptionInput,
+        TranscriptResultStreamTranscriptEvent,
     )
     # Credentials: standard AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from env_file.
     # Duplex event streams need the CRT (HTTP/2) transport, not the aiohttp default.
@@ -79,16 +84,29 @@ async def _aws_medical(pcm: bytes, rate: int) -> str:
 
     cfg = await AsyncTranscribeStreamingConfig.resolve(region=REGION, transport=AWSCRTHTTPClient())
     client = AsyncTranscribeStreamingClient(config=cfg)
-    stream = await client.start_medical_stream_transcription(
-        input=StartMedicalStreamTranscriptionInput(
-            language_code="en-US",
-            media_sample_rate_hertz=rate,
-            media_encoding="pcm",
-            specialty=SPECIALTY,
-            type="CONVERSATION",
-            show_speaker_label=True,
+    if STT_MODE == "standard":
+        event_cls = TranscriptResultStreamTranscriptEvent
+        stream = await client.start_stream_transcription(
+            input=StartStreamTranscriptionInput(
+                language_code="en-US",
+                media_sample_rate_hertz=rate,
+                media_encoding="pcm",
+                show_speaker_label=True,
+                vocabulary_name=VOCAB or None,
+            )
         )
-    )
+    else:
+        event_cls = MedicalTranscriptResultStreamTranscriptEvent
+        stream = await client.start_medical_stream_transcription(
+            input=StartMedicalStreamTranscriptionInput(
+                language_code="en-US",
+                media_sample_rate_hertz=rate,
+                media_encoding="pcm",
+                specialty=SPECIALTY,
+                type="CONVERSATION",
+                show_speaker_label=True,
+            )
+        )
     lines: list[str] = []
 
     async def send() -> None:
@@ -103,7 +121,7 @@ async def _aws_medical(pcm: bytes, rate: int) -> str:
     async def recv() -> None:
         _, out = await stream.await_output()
         async for ev in out:
-            if not isinstance(ev, MedicalTranscriptResultStreamTranscriptEvent):
+            if not isinstance(ev, event_cls):
                 continue
             for res in ev.value.transcript.results or []:
                 if res.is_partial or not res.alternatives:
@@ -163,8 +181,8 @@ def do_transcribe(raw: bytes, ctype: str) -> dict[str, Any]:
             pcm, rate = wav_to_pcm(audio)
             text = asyncio.run(asyncio.wait_for(_aws_medical(pcm, rate), timeout=140))
             if text:
-                log({"event": "aws_ok", "bytes": len(pcm), "chars": len(text), "sec": round(time.time() - t0, 1)})
-                return {"transcript": text, "engine": "aws-transcribe-medical"}
+                log({"event": "aws_ok", "mode": STT_MODE, "bytes": len(pcm), "chars": len(text), "sec": round(time.time() - t0, 1)})
+                return {"transcript": text, "engine": "aws-transcribe-" + STT_MODE + (("+" + VOCAB) if STT_MODE == "standard" and VOCAB else "")}
             aws_err = "empty"
         except Exception as e:  # noqa: BLE001 — any AWS failure falls back
             aws_err = _errname(e)
@@ -393,7 +411,7 @@ class H(BaseHTTPRequestHandler):
         if self.path.split("?")[0] == "/health":
             self._json(200, {"ok": True, "service": "scribe-aws", "region": REGION,
                              "aws_creds": aws_creds(), "aws_disabled": AWS_OFF,
-                             "specialty": SPECIALTY, "bedrock": bool(BEDROCK_TOKEN),
+                             "specialty": SPECIALTY, "stt_mode": STT_MODE, "vocab": VOCAB, "bedrock": bool(BEDROCK_TOKEN),
                              "bedrock_model": BEDROCK_MODEL, "style_pack": bool(_style_ctx()),
                              "nonbaa_draft": ALLOW_NONBAA and bool(STAFF_SECRET)})
         else:
