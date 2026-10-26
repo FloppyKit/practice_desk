@@ -314,10 +314,10 @@ def render(f: dict[str, Any], minutes: int, transcript: str) -> tuple[str, dict[
             ("Follow-up", ret)]
     soap.append("\n".join(f"- {k}: {v}" for k, v in plan if v) or "—")
     avs = ["", "## After Visit Summary", "Dr. Brown’s notes from today’s visit"]
+    if ret:
+        avs += ["", "Meet again:", ret]
     for title, lines in (("Medications:", [a for a, _ in meds]), ("Supplements:", [a for a, _ in supps]),
                          ("Other recommendations:", recs)):
         if lines:
             avs += ["", title] + ["• " + x for x in lines]
-    if ret:
-        avs += ["", "Meet again:", ret]
     return "\n".join(soap + avs).strip(), stats
