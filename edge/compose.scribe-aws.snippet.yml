@@ -13,3 +13,5 @@
       # reuse booker style-pack priors as-is (read-only)
       - ./booker/app/style_pack.py:/app/style_pack.py:ro
       - ./booker/config/style-pack:/style-pack:ro
+      # dot phrases: read-only snapshot of booker-logs/dot-phrases.json, refreshed by */15 cron refresh-dot-phrases.sh
+      - ./scribe-aws/dot-phrases:/dot-phrases:ro

@@ -27,6 +27,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import wave
+
+import note_format
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -231,6 +233,9 @@ EXTRA_TERMS = (
     "L-theanine, inositol, magnesium glycinate, omega-3 fish oil, vitamin D, melatonin"
 )
 
+note_format.add_brand_generic(EXTRA_TERMS)
+
+
 def _grounded_style(style: str) -> str:
     """Keep style-pack form (voice, section order, field map, stems with {slots}, spellings);
     drop stock content (fixed advice stems, default supplement menu) so it can't leak into notes."""
@@ -242,7 +247,7 @@ def _grounded_style(style: str) -> str:
             if stems:
                 out.append(head + " (templates only; fill solely from the transcript): " + " | ".join(stems))
             continue
-        if line.startswith("Default supplement menu"):
+        if line.startswith(("Default supplement menu", "Output JSON keys", "Map:", "Preferred AVS section order")):
             continue
         if line.startswith(("Common meds", "Common supplements")):
             out.append(line.split(":", 1)[0] + " — SPELLING REFERENCE ONLY, never add one that was not discussed:"
@@ -301,11 +306,8 @@ def _bedrock_fields(transcript: str) -> dict[str, str]:
         "must come from what was actually said in the transcript. Do not add stock advice, default "
         "supplements, generic lifestyle tips, or exam/mental-status findings (appearance, grooming, "
         "affect, engagement, eye contact, etc.) unless the clinician said them. If nothing was said for "
-        "a field, return an empty string for it. "
-        "JSON only with keys: subjective, objective, assessment, "
-        "plan, return_visit, medications, supplements, recommendations. "
-        "AVS fields (return_visit/medications/supplements/recommendations) are patient language. "
-        "Every value is a plain string (use '- ' lines for lists, never objects). "
+        "a field, return an empty string/list for it. Subjective is free text; every other field "
+        "follows the JSON schema below exactly (the app renders the fixed note/AVS format). "
         "Medications and supplements: correct drug spelling (brand and generic if said), strength, "
         "count, and frequency exactly as the clinician stated it (e.g. 'NAC 600 mg, 2 caps twice daily'; "
         "do not convert to totals the clinician did not use as the instruction); "
@@ -318,6 +320,8 @@ def _bedrock_fields(transcript: str) -> dict[str, str]:
         "source of content.\n"
         + (style + "\n\n" if style else "")
         + "Drug-name spellings (reference only): " + EXTRA_TERMS + "\n\n"
+        + (note_format.prompt_block(transcript) + "\n\n" if note_format.prompt_block(transcript) else "")
+        + note_format.SCHEMA + "\n\n"
         + "TRANSCRIPT:\n"
         + transcript[:NOTE_MAX_CHARS]
     )
@@ -340,7 +344,7 @@ def _bedrock_fields(transcript: str) -> dict[str, str]:
     out = _post(url, body, {"Content-Type": "application/json", "Authorization": "Bearer " + BEDROCK_TOKEN}, 110)
     parts = (((out.get("output") or {}).get("message") or {}).get("content")) or []
     text = "".join(str(p.get("text") or "") for p in parts if isinstance(p, dict))
-    return _parse_fields(text)
+    return note_format.parse(text)
 
 
 def _desk_draft_fields(transcript: str, minutes: int) -> dict[str, str]:
@@ -367,9 +371,10 @@ def do_note(payload: dict[str, Any]) -> dict[str, Any]:
     for name, fn in writers if transcript else []:
         try:
             fields = fn()
-            if any((v or "").strip() for v in fields.values()):
-                note = _avs(fields, minutes)
-                log({"event": "note_ok", "note_engine": name, "chars": len(note)})
+            if note_format.has_content(fields):
+                note, st = note_format.render(fields, minutes, transcript)
+                log({"event": "note_ok", "note_engine": name, "chars": len(note), **st,
+                     "phrase_matches": len(note_format.matched_phrases(transcript))})
                 return {"note": note, "title": "Visit note", "note_engine": name}
             errs.append(name + ":empty")
         except urllib.error.HTTPError as e:
