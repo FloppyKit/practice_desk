@@ -35,6 +35,9 @@ PORT = int(os.environ.get("SCRIBE_AWS_PORT", "8795"))
 REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 SPECIALTY = os.environ.get("AWS_MEDICAL_SPECIALTY", "PRIMARYCARE")  # only value streaming accepts
 WHISPER = os.environ.get("WHISPER_URL", "http://127.0.0.1:8794").rstrip("/")
+# Nova Pro: 300k-token context. ~100k chars = 120-min visit; 400k chars (~100k tokens) is a sane ceiling.
+NOTE_MAX_CHARS = int(os.environ.get("NOTE_MAX_CHARS", "400000"))
+NOTE_MAX_TOKENS = int(os.environ.get("NOTE_MAX_TOKENS", "8000"))
 DRAFT_URL = os.environ.get("DESK_DRAFT_URL", "http://127.0.0.1:8090/api/desk/note/draft")
 STAFF_SECRET = (os.environ.get("DESK_STAFF_SECRET") or "").strip()
 PACE = float(os.environ.get("AWS_STREAM_PACE", "2.0"))  # x realtime when sending audio
@@ -174,26 +177,61 @@ def do_transcribe(raw: bytes, ctype: str) -> dict[str, Any]:
 
 def _avs(fields: dict[str, str], minutes: int) -> str:
     f = {k: (fields.get(k) or "").strip() for k in fields}
-    def sec(title: str, body: str) -> str:
-        return f"**{title}**\n{body or '—'}\n"
+    def sec(title: str, body: str, keep: bool = True) -> str:
+        # SOAP headers stay (shown as '—'); empty patient-facing AVS sections are omitted.
+        return f"**{title}**\n{body or '—'}\n" if (body or keep) else ""
     return "\n".join(
-        [
+        x for x in [
             f"## SOAP (draft · ~{minutes} min)",
             sec("Subjective", f.get("subjective", "")),
             sec("Objective", f.get("objective", "")),
             sec("Assessment", f.get("assessment", "")),
             sec("Plan", f.get("plan", "")),
             "## After-Visit Summary",
-            sec("Meet again", f.get("return_visit", "")),
-            sec("Medications", f.get("medications", "")),
-            sec("Supplements", f.get("supplements", "")),
-            sec("Other recommendations", f.get("recommendations", "")),
-        ]
+            sec("Meet again", f.get("return_visit", ""), keep=False),
+            sec("Medications", f.get("medications", ""), keep=False),
+            sec("Supplements", f.get("supplements", ""), keep=False),
+            sec("Other recommendations", f.get("recommendations", ""), keep=False),
+        ] if x
     ).strip()
 
 
 _FIELDS = ("subjective", "objective", "assessment", "plan",
            "return_visit", "medications", "supplements", "recommendations")
+
+
+# scribe-aws-only drug-name spellings (booker formulary is mounted read-only; it lacks some).
+EXTRA_TERMS = (
+    "Zoloft (sertraline), Remeron (mirtazapine), NAC (N-acetylcysteine), Wellbutrin (bupropion), "
+    "Lexapro (escitalopram), Prozac (fluoxetine), Celexa (citalopram), Paxil (paroxetine), "
+    "Effexor (venlafaxine), Pristiq (desvenlafaxine), Cymbalta (duloxetine), Luvox (fluvoxamine), "
+    "trazodone, Klonopin (clonazepam), Ativan (lorazepam), Xanax (alprazolam), hydroxyzine, "
+    "buspirone (Buspar), propranolol, prazosin, gabapentin, lithium, Lamictal (lamotrigine), "
+    "Seroquel (quetiapine), Abilify (aripiprazole), Adderall (amphetamine salts), "
+    "Vyvanse (lisdexamfetamine), Ritalin (methylphenidate), Concerta (methylphenidate ER), "
+    "Intuniv (guanfacine), Strattera (atomoxetine), Zenzedi (dextroamphetamine), "
+    "L-theanine, inositol, magnesium glycinate, omega-3 fish oil, vitamin D, melatonin"
+)
+
+def _grounded_style(style: str) -> str:
+    """Keep style-pack form (voice, section order, field map, stems with {slots}, spellings);
+    drop stock content (fixed advice stems, default supplement menu) so it can't leak into notes."""
+    out = []
+    for line in (style or "").splitlines():
+        if line.startswith("Useful stems"):
+            head, _, rest = line.partition(":")
+            stems = [x.strip() for x in rest.split("|") if "{" in x]
+            if stems:
+                out.append(head + " (templates only; fill solely from the transcript): " + " | ".join(stems))
+            continue
+        if line.startswith("Default supplement menu"):
+            continue
+        if line.startswith(("Common meds", "Common supplements")):
+            out.append(line.split(":", 1)[0] + " — SPELLING REFERENCE ONLY, never add one that was not discussed:"
+                       + line.split(":", 1)[1])
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def _style_ctx() -> str:
@@ -238,30 +276,43 @@ def _parse_fields(text: str) -> dict[str, str]:
 
 def _bedrock_fields(transcript: str) -> dict[str, str]:
     """Same prompt/field contract as booker /api/desk/note/draft, on Bedrock (BAA)."""
-    style = _style_ctx()
+    style = _grounded_style(_style_ctx())
     prompt = (
         "From this visit transcript, fill a SOAP note and an after-visit summary. "
-        "Do not invent facts. Prefer practice style-pack stems and formulary names when "
-        "the transcript supports them. JSON only with keys: subjective, objective, assessment, "
+        "GROUNDING RULE: every fact, finding, med, dose, supplement, recommendation, and follow-up "
+        "must come from what was actually said in the transcript. Do not add stock advice, default "
+        "supplements, generic lifestyle tips, or exam/mental-status findings (appearance, grooming, "
+        "affect, engagement, eye contact, etc.) unless the clinician said them. If nothing was said for "
+        "a field, return an empty string for it. "
+        "JSON only with keys: subjective, objective, assessment, "
         "plan, return_visit, medications, supplements, recommendations. "
         "AVS fields (return_visit/medications/supplements/recommendations) are patient language. "
         "Every value is a plain string (use '- ' lines for lists, never objects). "
         "Medications and supplements: correct drug spelling (brand and generic if said), strength, "
-        "count, and frequency exactly as said (e.g. '600 mg capsules, take 2 twice a day'); "
-        "include every supplement the patient takes. Objective = observations only.\n\n"
+        "count, and frequency exactly as the clinician stated it (e.g. 'NAC 600 mg, 2 caps twice daily'; "
+        "do not convert to totals the clinician did not use as the instruction); "
+        "include every med and supplement the patient reports taking. "
+        "Objective = only observations explicitly stated in the transcript; patient-reported info "
+        "belongs in Subjective. The transcript is machine speech-to-text: fix obvious mis-hearings of "
+        "drug names to the correct spelling only when context makes the drug unambiguous "
+        "(e.g. 'knack' / 'in acetylcyste' -> NAC / N-acetylcysteine; 'certa line' -> sertraline).\n\n"
+        "STYLE PACK use: formatting, section order, phrasing and drug-name spelling only; it is never a "
+        "source of content.\n"
         + (style + "\n\n" if style else "")
+        + "Drug-name spellings (reference only): " + EXTRA_TERMS + "\n\n"
         + "TRANSCRIPT:\n"
-        + transcript[:12000]
+        + transcript[:NOTE_MAX_CHARS]
     )
     system = (
         "You draft psychiatry notes for this practice. Reply with JSON only. No markdown fence. "
-        "Follow STYLE PACK priors when present. Never invent meds, doses, or findings absent from the transcript."
+        "Use STYLE PACK priors for form, never for content. Never invent meds, doses, findings, or "
+        "recommendations absent from the transcript."
     )
     body = json.dumps(
         {
             "system": [{"text": system}],
             "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"temperature": 0.2, "maxTokens": 2500},
+            "inferenceConfig": {"temperature": 0.2, "maxTokens": NOTE_MAX_TOKENS},
         }
     ).encode()
     url = (
