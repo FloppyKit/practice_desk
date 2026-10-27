@@ -403,9 +403,9 @@ class ShareError(Exception):
         self.message = message
 
 
-_DOMAIN = {"sb": b":superbill-share", "pay": b":pay-link", "avs": b":avs-share"}
+_DOMAIN = {"sb": b":superbill-share", "pay": b":pay-link", "avs": b":avs-share", "docs": b":intake-docs"}
 # share_links.source marks the link kind for "pay" and "avs"; anything else is a superbill link.
-_SOURCE_KINDS = ("pay", "avs")
+_SOURCE_KINDS = ("pay", "avs", "docs")
 
 
 def _row_kind(source: str | None) -> str:
@@ -422,7 +422,7 @@ def _sig(body: str, kind: str = "sb") -> str:
 def _kind_sql(kind: str) -> str:
     if kind in _SOURCE_KINDS:
         return f"COALESCE(source, '') = '{kind}'"
-    return "COALESCE(source, '') NOT IN ('pay', 'avs')"
+    return "COALESCE(source, '') NOT IN (" + ", ".join(f"'{k}'" for k in _SOURCE_KINDS) + ")"
 
 
 def mint_share(
@@ -436,7 +436,8 @@ def mint_share(
     kind: str = "sb",
 ) -> dict[str, Any]:
     """kind "sb": superbill PDF link. kind "pay": branded pay link; source "pay", path = Stripe invoice id.
-    kind "avs": after-visit summary PDF; source "avs", billing_id = signed_notes id, path = Drive path."""
+    kind "avs": after-visit summary PDF; source "avs", billing_id = signed_notes id, path = Drive path.
+    kind "docs": client's signed intake copies page; source "docs", billing_id = client id, path unused."""
     from .tokens import _b64
 
     if kind in _SOURCE_KINDS:

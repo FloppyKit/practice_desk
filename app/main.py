@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 from contextvars import ContextVar
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -1847,6 +1848,49 @@ def _chart_for(row: dict[str, Any]) -> str:
     return chart
 
 
+_COPIES_LOCK = threading.Lock()
+
+
+def _maybe_send_copies(client_id: str) -> dict[str, Any] | None:
+    """Once intake is complete, email + text the client a 30-day no-login link to their signed copies
+    (and the Notice of Privacy Practices). Re-sends with a fresh link when a newer document is signed.
+    Never raises; logs no PHI."""
+    from . import billing, intake_copies, onboarding
+
+    try:
+        with _COPIES_LOCK:
+            st = onboarding.status(client_id=client_id)
+            if not intake_copies.due(client_id, bool(st["complete"])):
+                return None
+            view = dict(client_by_id(client_id) or {})
+            if not view:
+                return None
+            ids = [d["id"] for d in intake_copies.docs_for(client_id)]
+            n = len(ids)
+            billing.revoke_shares(client_id, "docs")
+            link = billing.mint_share(billing_id=client_id, client_id=client_id, source="docs", path=",".join(ids),
+                                      name="Signed intake documents", kind="docs")
+        url = f"{PUBLIC_BASE}/docs/{link['token']}"
+        first = (str(view.get("name") or "there").split() or ["there"])[0]
+        sent = _bill_send(
+            kind="intake_copies",
+            view=view,
+            fields={"name": view.get("name") or "", "url": url, "count": n, "npp_url": intake_copies.NPP_URL},
+            sms_body=f"Hi {first}, copies of the forms you signed for Dr. Brown, plus our privacy notice "
+                     f"(private link, good for 30 days): {url}",
+            send_email=True,
+            send_sms=True,
+            dry=False,
+            key=f"docs-{link['id']}",
+        )
+        print("intake_copies_sent", n, "email", (sent.get("email") or {}).get("ok"),
+              "sms", (sent.get("sms") or {}).get("ok"), flush=True)
+        return sent
+    except Exception as e:
+        print("intake_copies_fail", type(e).__name__, flush=True)
+        return None
+
+
 def _file_intake_pdf(sub_id: str, client_id: str, form: str, fields: dict[str, Any], meta: dict[str, Any],
                      received_at: str) -> dict[str, Any]:
     """Render the signed submission and save it to the client's Chart/Consents (created if missing)."""
@@ -1882,6 +1926,7 @@ def _file_intake_pdf(sub_id: str, client_id: str, form: str, fields: dict[str, A
         if code >= 400 or not saved.get("ok"):
             raise HTTPException(502, "drive save failed")
         onboarding.set_pdf(sub_id, path=dest, status="saved")
+        _maybe_send_copies(client_id)
         return {"ok": True, "path": dest}
     except Exception as e:
         detail = e.detail if isinstance(e, HTTPException) else type(e).__name__
@@ -1906,15 +1951,23 @@ def api_internal_intake_submitted(req: InternalIntakeRequest, request: Request, 
     rec = onboarding.record_submission(form=form, email=email, link_verified=bool(link.get("verified")))
     background_tasks.add_task(_file_intake_pdf, rec["id"], rec["client_id"], form, dict(req.fields),
                               dict(req.meta), rec["received_at"])
-    confirmed: list[str] = []
+    # Confirming a hold patches two calendars and sends notices (slow); do it after responding so the
+    # site's call never times out. The PDF task above runs first, then this.
     if rec["client_id"]:
-        try:
-            confirmed = onboarding.check_client(_onboarding_fx(), client_id=rec["client_id"])
-        except Exception as e:
-            print("hold_check_fail", type(e).__name__, flush=True)
+        background_tasks.add_task(_check_client_bg, rec["client_id"])
     st = onboarding.status(client_id=rec["client_id"]) if rec["client_id"] else None
     return {"ok": True, "linked": bool(rec["client_id"]), "flags": (st or {}).get("flags"),
-            "complete": bool(st and st["complete"]), "confirmed_holds": confirmed}
+            "complete": bool(st and st["complete"])}
+
+
+def _check_client_bg(client_id: str) -> list[str]:
+    from . import onboarding
+
+    try:
+        return onboarding.check_client(_onboarding_fx(), client_id=client_id)
+    except Exception as e:
+        print("hold_check_fail", type(e).__name__, flush=True)
+        return []
 
 
 @app.get("/api/internal/intake/progress")
@@ -2016,6 +2069,9 @@ def api_internal_client_card(req: InternalCardRequest, request: Request, secret:
         from . import onboarding
 
         out["confirmed_holds"] = onboarding.check_client(_onboarding_fx(), email=req.email)
+        row = onboarding.find_client(req.email)
+        if row and row.get("id"):
+            _maybe_send_copies(str(row["id"]))
     except Exception as e:
         print("hold_check_fail", type(e).__name__, flush=True)
     return out
@@ -2024,7 +2080,7 @@ def api_internal_client_card(req: InternalCardRequest, request: Request, secret:
 def _intake_summary(row: dict[str, Any]) -> dict[str, Any]:
     """Per-client intake flags for the desk card. Never raises."""
     try:
-        from . import onboarding
+        from . import intake_copies, onboarding
 
         if not (row.get("id") or row.get("email")):
             return {}
@@ -2036,6 +2092,7 @@ def _intake_summary(row: dict[str, Any]) -> dict[str, Any]:
             "complete": st["complete"],
             "missing": st["missing"],
             "forms": st["forms"],
+            "copies": intake_copies.summary(st["client_id"]) if st["client_id"] else None,
             "hold": {k: open_hold[k] for k in ("event_id", "when_label", "deadline_at", "reminded_at")}
             if open_hold
             else None,
@@ -2835,6 +2892,69 @@ def public_avs_share(token: str):
             "Referrer-Policy": "no-referrer",
         },
     )
+
+
+@app.get("/docs/{token}")
+def public_intake_copies(token: str):
+    """Client's copies of their signed intake documents (30-day, no-login, revocable) + privacy notice."""
+    from html import escape
+
+    from . import billing, intake_copies
+    from .practice import load as load_practice
+
+    try:
+        row = billing.verify_share(token, kind="docs")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="Your signed documents")
+    docs = intake_copies.docs_for(str(row.get("client_id") or ""))
+    billing.note_hit(row["id"])
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    who = str(load_practice().get("display_name") or "")
+    exp = datetime.fromtimestamp(int(row.get("expires_at") or 0), timezone.utc).astimezone(tz)
+    items = "".join(
+        "<li style='margin:.6rem 0;padding:.8rem 1rem;border:1px solid #e5e7eb;border-radius:12px'>"
+        f"<a style='color:#111;font-weight:600' href='/docs/{escape(token)}/{escape(d['id'])}'>{escape(d['label'])}</a>"
+        "<div style='color:#6b7280;font-size:.85rem'>Signed "
+        f"{escape(datetime.fromisoformat(d['received_at']).astimezone(tz).strftime('%b %-d, %Y · %-I:%M %p CT'))} · PDF</div></li>"
+        for d in docs
+    ) or "<li>No signed documents yet.</li>"
+    body = (
+        "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='robots' content='noindex'><title>Your signed documents</title>"
+        "<body style='font-family:Inter,system-ui,sans-serif;max-width:34rem;margin:8vh auto;padding:0 1rem;color:#111'>"
+        f"<img src='/api/practice/logo' alt='' style='height:56px'><p style='color:#2f57a5;margin:.4rem 0'>{escape(who)}</p>"
+        "<h1 style='font-size:1.3rem;margin:.6rem 0'>Your signed documents</h1>"
+        "<p style='color:#374151'>Here are copies of the forms you signed, for your records. Tap one to open or save it.</p>"
+        f"<ul style='list-style:none;padding:0'>{items}</ul>"
+        "<h2 style='font-size:1rem;margin-top:1.6rem'>Notice of Privacy Practices</h2>"
+        "<p style='color:#374151'>How we use and protect your health information, and your rights. "
+        f"<a href='{escape(intake_copies.NPP_URL)}' style='color:#2f57a5'>Open the notice (PDF)</a>. "
+        "You can ask us for a paper copy anytime.</p>"
+        f"<p style='color:#6b7280;font-size:.85rem;margin-top:1.6rem'>This private link works until "
+        f"{escape(exp.strftime('%b %-d, %Y'))}. Questions? Reply to the email or call the practice.</p></body>"
+    )
+    return HTMLResponse(body, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex",
+                                       "Referrer-Policy": "no-referrer"})
+
+
+@app.get("/docs/{token}/{sub_id}")
+def public_intake_copy_file(token: str, sub_id: str):
+    from . import billing, intake_copies
+
+    try:
+        row = billing.verify_share(token, kind="docs")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="Your signed documents")
+    d = intake_copies.doc(str(row.get("client_id") or ""), sub_id)
+    if not d:
+        return _share_page("That document was not found.", 404, title="Your signed documents")
+    code, data, _ctype = _notify_get("/drive/file?path=" + quote(str(d["path"]), safe="/"))
+    if code != 200 or not data.startswith(b"%PDF"):
+        return _share_page("The file could not be loaded right now. Try again shortly.", 502, title="Your signed documents")
+    name = (d["path"].rsplit("/", 1)[-1] or "document.pdf").replace('"', "")
+    return Response(content=data, media_type="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="{name}"', "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer"})
 
 
 @app.get("/api/desk/note/templates")

@@ -4382,6 +4382,11 @@
       const f = intake.flags;
       const chip = (ok, label) => "<span class='home-chip" + (ok ? " ok" : " due") + "'>" + esc(label + (ok ? " ✓" : " due")) + "</span>";
       let html = chip(f.personal, "Personal info") + chip(f.consents, "Consents") + chip(f.card, "Card on file");
+      if (intake.copies && intake.copies.sent_at) {
+        const d = new Date(intake.copies.sent_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        html += "<span class='home-chip ok' title='Client was emailed/texted a 30-day link to their signed copies + privacy notice'>" +
+          esc("Copies sent " + d + " CT" + (intake.copies.opened ? " · opened" : "")) + "</span>";
+      }
       if (intake.hold && intake.hold.deadline_at) {
         const dl = new Date(intake.hold.deadline_at).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
         html += "<span class='home-chip due'>" + esc("Held: paperwork due by " + dl + " CT") + "</span>";

@@ -84,6 +84,7 @@ def _env():
         (main, "_notify_post"): main._notify_post,
         (main, "_notify_get"): main._notify_get,
         (main, "_drive_mkdir"): main._drive_mkdir,
+        (main, "_bill_send"): main._bill_send,
     }
     saved_env = {k: os.environ.get(k) for k in ("BOOKER_LOG_DIR", "CANCEL_SECRET_FILE")}
     cal = FakeCal()
@@ -116,6 +117,13 @@ def _env():
 
             main._onboarding_fx = fx
 
+            def bill_send(*, kind, view, fields, sms_body, **k):
+                sends.append(("email", str(view.get("email") or ""), kind))
+                sends.append(("sms", str(view.get("phone") or ""), sms_body))
+                return {"email": {"ok": True}, "sms": {"ok": True}}
+
+            main._bill_send = bill_send
+
             def notify_post(path, payload):
                 drive[payload["path"]] = base64.b64decode(payload["b64"])
                 return 200, {"ok": True}
@@ -124,6 +132,8 @@ def _env():
                 from urllib.parse import unquote
 
                 target = unquote(path.split("path=", 1)[1])
+                if path.startswith("/drive/file"):
+                    return (200, drive[target], "application/pdf") if target in drive else (404, b"", "")
                 if target not in folders:
                     return 502, b'{"ok": false}', "application/json"
                 pre = target.rstrip("/") + "/"

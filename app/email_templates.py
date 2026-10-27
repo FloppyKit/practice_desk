@@ -63,6 +63,7 @@ SUITE: dict[str, str] = {
     "document": "Visit summary ready",
     "superbill": "Superbill ready",
     "avs": "After-visit summary ready",
+    "intake_copies": "Copies of signed intake forms",
     "cancel": "Visit cancelled",
     "reschedule": "Visit rescheduled",
     "no_show": "No-show close-out",
@@ -1001,6 +1002,31 @@ def render_named(
             logo_src=logo,
         )
         return sub, html, text, ""
+
+    if kind == "intake_copies":
+        link = url
+        npp = _f(f, "npp_url")
+        letter = _esc(
+            f"Hi {first_name(name)},\n\n"
+            "Thank you for completing your paperwork. For your records, here are copies of the forms you signed, "
+            "along with our Notice of Privacy Practices. The link is private to you and works for 30 days; "
+            "you can save the PDFs to keep them."
+        )
+        rows = [("Includes", "Your signed forms (PDF) and the Notice of Privacy Practices")]
+        sub, html, text = render_card(
+            subject="Copies of your signed forms — Dr. Matt Brown",
+            kicker="For your records",
+            heading="Your signed forms",
+            lede="Open or save them anytime in the next 30 days. No login needed.",
+            letter=letter,
+            rows=rows,
+            primary=(link, "View my signed forms") if link else None,
+            ghosts=[(npp, "Notice of Privacy Practices")] if npp else None,
+            logo_src=logo,
+        )
+        sms = (f"Hi {first_name(name)}, copies of the forms you signed for Dr. Brown, plus our privacy notice "
+               f"(private link, good for 30 days): {link}") if link else ""
+        return sub, html, text, sms
 
     if kind == "avs":
         link = url
