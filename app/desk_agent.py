@@ -1,32 +1,23 @@
-"""Staff Grok on the practice desk — tools only, never the public chat."""
+"""Pa, the staff assistant on the practice desk — tools only, never the public chat.
+Writer: AWS Bedrock (Nova Pro, BAA-covered), same converse + bearer-token setup as scribe-aws. No xAI."""
 from __future__ import annotations
 
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
 from .patients import client_by_id, create_client, search_clients
 
-# Default = Grok (not a BAA path). Point DESK_AGENT_URL at Azure/Bedrock/Assembly
-# for a PHI-ok writer. Same OpenAI-compatible chat+tools shape.
-XAI_URL = (
-    os.environ.get("DESK_AGENT_URL")
-    or os.environ.get("XAI_API_URL")
-    or "https://api.x.ai/v1/chat/completions"
-).rstrip("/")
-XAI_MODEL = os.environ.get("DESK_AGENT_MODEL") or os.environ.get("XAI_MODEL", "grok-4.5")
-XAI_KEY = (
-    os.environ.get("DESK_AGENT_TOKEN") or os.environ.get("XAI_API_KEY") or ""
-).strip()
-DESK_PHI = (os.environ.get("DESK_AGENT_PHI") or "").strip().lower() in ("1", "true", "yes")
-DESK_PHI_ONLY = (os.environ.get("DESK_AGENT_PHI_ONLY") or "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
+BEDROCK_TOKEN = (os.environ.get("AWS_BEARER_TOKEN_BEDROCK") or "").strip()
+BEDROCK_REGION = os.environ.get("BEDROCK_REGION") or os.environ.get("AWS_REGION") or "us-east-1"
+BEDROCK_MODEL = os.environ.get("DESK_AGENT_MODEL") or os.environ.get("BEDROCK_MODEL_ID") or "amazon.nova-pro-v1:0"
+BEDROCK_URL = (
+    f"https://bedrock-runtime.{BEDROCK_REGION}.amazonaws.com/model/"
+    f"{urllib.parse.quote(BEDROCK_MODEL, safe='')}/converse"
 )
-
 SYSTEM = """You are Pa, the practice assistant on Dr. Matthew Brown's private desk.
 Simple lines — call, open, send, book, yes/no — are handled before you. You only see leftover English.
 He is the doctor. Do what he asks: look up patients, create a client, send forms,
@@ -235,36 +226,41 @@ TOOLS = [
 ]
 
 
-def _xai(messages: list[dict[str, Any]]) -> dict[str, Any]:
-    if DESK_PHI_ONLY and not DESK_PHI:
-        raise RuntimeError(
-            "DESK_AGENT_PHI_ONLY=1 but this agent is not marked PHI. "
-            "Point DESK_AGENT_URL at a BAA vendor and set DESK_AGENT_PHI=1."
-        )
-    if not XAI_KEY:
-        raise RuntimeError("DESK_AGENT_TOKEN or XAI_API_KEY unset")
+def _tool_config() -> dict[str, Any]:
+    specs = []
+    for t in TOOLS:
+        fn = t.get("function") or {}
+        specs.append({"toolSpec": {
+            "name": fn.get("name") or "",
+            "description": fn.get("description") or fn.get("name") or "",
+            "inputSchema": {"json": fn.get("parameters") or {"type": "object", "properties": {}}},
+        }})
+    return {"tools": specs}
+
+
+def _bedrock(system: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """One Bedrock converse turn (Nova Pro). Messages are Bedrock-shaped content blocks."""
+    if not BEDROCK_TOKEN:
+        raise RuntimeError("AWS_BEARER_TOKEN_BEDROCK unset (desk agent runs on Bedrock only)")
     payload = json.dumps(
         {
-            "model": XAI_MODEL,
+            "system": [{"text": system}],
             "messages": messages,
-            "tools": TOOLS,
-            "temperature": 0.3,
+            "toolConfig": _tool_config(),
+            "inferenceConfig": {"temperature": 0.3, "maxTokens": 2000},
         }
     ).encode()
     req = urllib.request.Request(
-        XAI_URL,
+        BEDROCK_URL,
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + XAI_KEY,
-        },
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + BEDROCK_TOKEN},
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"xai {e.code}: {e.read()[:200]!r}") from e
+        raise RuntimeError(f"bedrock {e.code}: {e.read()[:200]!r}") from e
 
 
 def _run_tool(name: str, args: dict[str, Any], book_fn, send_fn, mail_fn) -> Any:
@@ -336,6 +332,25 @@ def _run_tool(name: str, args: dict[str, Any], book_fn, send_fn, mail_fn) -> Any
     return {"error": "unknown tool"}
 
 
+def _history(history: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Desk chat history -> Bedrock messages: starts with user, roles alternate (same-role turns merged)."""
+    out: list[dict[str, Any]] = []
+    for m in history[-16:]:
+        role = m.get("role") or "user"
+        content = (m.get("content") or "").strip()[:4000]
+        if role not in ("user", "assistant") or not content:
+            continue
+        if not out and role != "user":
+            continue
+        if out and out[-1]["role"] == role:
+            out[-1]["content"][0]["text"] += "\n\n" + content
+        else:
+            out.append({"role": role, "content": [{"text": content}]})
+    while out and out[-1]["role"] != "user":
+        out.pop()
+    return out
+
+
 def run_desk_agent(
     history: list[dict[str, str]],
     *,
@@ -343,41 +358,28 @@ def run_desk_agent(
     send_fn,
     mail_fn,
 ) -> dict[str, Any]:
-    messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM}]
-    for m in history[-16:]:
-        role = m.get("role") or "user"
-        content = (m.get("content") or "").strip()
-        if role in ("user", "assistant") and content:
-            messages.append({"role": role, "content": content[:4000]})
-    if not any(m["role"] == "user" for m in messages):
+    messages = _history(history)
+    if not messages:
         return {"ok": False, "error": "empty"}
 
     used: list[str] = []
     action: dict[str, Any] | None = None
     for _ in range(5):
-        data = _xai(messages)
-        choice = (data.get("choices") or [{}])[0]
-        msg = choice.get("message") or {}
-        tool_calls = msg.get("tool_calls") or []
-        if not tool_calls:
-            out = {
-                "ok": True,
-                "reply": (msg.get("content") or "").strip() or "(no reply)",
-                "model": data.get("model") or XAI_MODEL,
-                "tools": used,
-            }
+        data = _bedrock(SYSTEM, messages)
+        msg = (data.get("output") or {}).get("message") or {}
+        blocks = [b for b in (msg.get("content") or []) if isinstance(b, dict)]
+        calls = [b["toolUse"] for b in blocks if isinstance(b.get("toolUse"), dict)]
+        text = "".join(str(b.get("text") or "") for b in blocks).strip()
+        if not calls:
+            out = {"ok": True, "reply": text or "(no reply)", "model": "bedrock-" + BEDROCK_MODEL, "tools": used}
             if action:
                 out["action"] = action
             return out
-        messages.append(msg)
-        for call in tool_calls:
-            fn = (call.get("function") or {})
-            name = fn.get("name") or ""
-            raw = fn.get("arguments") or "{}"
-            try:
-                args = json.loads(raw) if isinstance(raw, str) else (raw or {})
-            except json.JSONDecodeError:
-                args = {}
+        messages.append({"role": "assistant", "content": blocks})
+        results = []
+        for call in calls:
+            name = str(call.get("name") or "")
+            args = call.get("input") if isinstance(call.get("input"), dict) else {}
             used.append(name)
             try:
                 result = _run_tool(name, args, book_fn, send_fn, mail_fn)
@@ -385,11 +387,9 @@ def run_desk_agent(
                 result = {"error": str(e)[:200]}
             if isinstance(result, dict) and result.get("action") == "confirm_call":
                 action = {k: result[k] for k in result if k != "pending"}
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.get("id") or name,
-                    "content": json.dumps(result, default=str)[:6000],
-                }
-            )
+            results.append({"toolResult": {
+                "toolUseId": call.get("toolUseId") or name,
+                "content": [{"text": json.dumps(result, default=str)[:6000]}],
+            }})
+        messages.append({"role": "user", "content": results})
     return {"ok": False, "error": "too many tool rounds", "tools": used}

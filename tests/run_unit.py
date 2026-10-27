@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from tests import (  # noqa: E402
     test_avs,
+    test_desk_agent,
     test_billing,
     test_chat_threads,
     test_cipher_p1,
@@ -33,6 +34,7 @@ def main() -> int:
     ran = 0
     for mod in (
         test_avs,
+    test_desk_agent,
         test_billing,
         test_chat_threads,
         test_week_people,

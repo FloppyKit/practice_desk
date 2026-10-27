@@ -4167,7 +4167,7 @@ def api_desk_agent(
     background_tasks: BackgroundTasks,
     secret: str = Query(default=""),
 ):
-    """Staff Grok: look up, create, send forms/mail, book."""
+    """Pa (Bedrock Nova Pro): look up, create, send forms/mail, book."""
     _require_staff(secret)
     from .desk_agent import run_desk_agent
 
