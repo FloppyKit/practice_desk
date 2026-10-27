@@ -70,10 +70,15 @@ def _seed_caldav_bg() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    seed = None
     if os.environ.get("CALDAV_SEED_GOOGLE", "1").strip().lower() in ("1", "true", "yes"):
         import threading
 
-        threading.Thread(target=_seed_caldav_bg, name="caldav-seed", daemon=True).start()
+        seed = threading.Thread(target=_seed_caldav_bg, name="caldav-seed", daemon=True)
+        seed.start()
+    from . import gsync
+
+    gsync.start(wait_for=seed)  # Google -> CalDAV re-sync at startup, then every 5 min
     yield
 
 
@@ -501,10 +506,31 @@ def api_types():
     return {"types": out}
 
 
+# Phone line (Amazon Connect via Caddy /desk-bridge, which sets X-Desk-Channel).
+# Web requests never carry it (Caddy strips it on public routes), so web is unchanged.
+PHONE_WINDOW_DAYS = 92
+PHONE_NOTICE_MINUTES = 14 * 60
+
+
+def _phone_channel(request: Request) -> bool:
+    return (request.headers.get("x-desk-channel") or "").strip().lower() == "voice"
+
+
+def _phone_slots(cfg, et, dur: int, range_start: datetime | None = None):
+    return generate_slots(
+        cfg, et, dur,
+        range_start=range_start,
+        days=PHONE_WINDOW_DAYS,
+        min_notice_minutes=PHONE_NOTICE_MINUTES,
+    )
+
+
 @app.get("/api/slots")
 def api_slots(
+    request: Request,
     type: str = Query(..., alias="type"),
     duration: int | None = None,
+    date: str | None = None,
 ):
     cfg = load_config()
     et = get_event_type(cfg, type)
@@ -514,13 +540,24 @@ def api_slots(
     dur = int(duration or durs[0])
     if dur not in durs:
         raise HTTPException(400, f"duration must be one of {durs}")
-    slots = generate_slots(cfg, et, dur)
+    if _phone_channel(request):
+        rs = None
+        if date:
+            try:
+                rs = datetime.strptime(date, "%Y-%m-%d").replace(
+                    tzinfo=ZoneInfo(cfg.get("timezone", "America/Chicago"))
+                )
+            except ValueError:
+                raise HTTPException(400, "date must be YYYY-MM-DD")
+        slots = _phone_slots(cfg, et, dur, rs)
+    else:
+        slots = generate_slots(cfg, et, dur)
     return {
         "event_type": type,
         "title": et.get("title"),
         "duration_minutes": dur,
         "timezone": cfg.get("timezone"),
-        "slots": slots[:200],
+        "slots": slots[:1000],  # 92-day window needs >200
         "count": len(slots),
     }
 
@@ -587,7 +624,7 @@ def _send_booking_notices(
 
 
 @app.post("/api/book")
-def api_book(req: BookRequest, background_tasks: BackgroundTasks):
+def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Request):
     cfg = load_config()
     et = get_event_type(cfg, req.event_type)
     if not et:
@@ -639,7 +676,10 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
 
     staff_override = src == "desk"
     if not staff_override:
-        slots = generate_slots(cfg, et, dur)
+        if _phone_channel(request):
+            slots = _phone_slots(cfg, et, dur, start)
+        else:
+            slots = generate_slots(cfg, et, dur)
         ok = any(s["start"] == start.isoformat() for s in slots)
         if not ok:
             ok = any(
