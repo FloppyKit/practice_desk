@@ -62,6 +62,7 @@ SUITE: dict[str, str] = {
     "payment_received": "Payment received",
     "document": "Visit summary ready",
     "superbill": "Superbill ready",
+    "avs": "After-visit summary ready",
     "cancel": "Visit cancelled",
     "reschedule": "Visit rescheduled",
     "no_show": "No-show close-out",
@@ -904,6 +905,28 @@ def render_named(
             logo_src=logo,
         )
         return sub, html, text, ""
+
+    if kind == "avs":
+        link = url
+        dos_label = _f(f, "dos_label")
+        rows = [("Visit", f'<div style="font-weight:600;">{_esc(dos_label or "Your visit")}</div>')]
+        letter = _esc(
+            f"Hi {first_name(name)},\n\n"
+            "Here are my notes from today's visit: medications, supplements, other recommendations, "
+            "and when we meet again. The link is private to you and works for 30 days."
+        )
+        sub, html, text = render_card(
+            subject="Your after-visit summary — Dr. Matt Brown",
+            kicker="After your visit",
+            heading="Your after-visit summary",
+            lede="Open it anytime in the next 30 days. No login needed.",
+            letter=letter,
+            rows=rows,
+            primary=(link, "Open after-visit summary") if link else None,
+            logo_src=logo,
+        )
+        sms = f"Hi {first_name(name)}, your after-visit summary from Dr. Brown (link good for 30 days): {link}" if link else ""
+        return sub, html, text, sms
 
     if kind == "no_show":
         visit = visit_heading(title, duration)

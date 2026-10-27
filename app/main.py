@@ -2249,6 +2249,7 @@ def api_desk_note_sign(
 
     _require_staff(secret)
     from .billing import letterhead_missing, refusal_message
+    from .practice import load as load_practice  # was imported below its first use: every sign 500'd
 
     missing = letterhead_missing(load_practice())
     if missing:
@@ -2313,39 +2314,67 @@ def api_desk_note_sign(
     prac = load_practice()
     if not fields["physician"]:
         fields["physician"] = prac.get("clinician_name") or "Matthew Brown, D.O."
+    from .note_pdf import CHART_ONLY
+    from .practice import asset_bytes, format_licenses
+
     letterhead = {
         "name": prac.get("display_name") or "",
         "address": prac.get("address") or "",
         "phone": prac.get("phone") or "",
         "fax": prac.get("fax") or "",
+        "email": prac.get("email") or "",
         "clinician": prac.get("clinician_name") or "",
-        "npi": prac.get("npi") or "",
+        "licenses": format_licenses(prac.get("licenses") or []),
     }
+    # Logo slot: only a logo uploaded in desk -> Practice (no shipped placeholder on patient documents).
+    logo = asset_bytes("logo") if prac.get("logo") else None
     sections = spec.get("sections") or []
-    if sections:
+    is_avs = tid in ("avs", "avs-followup")
+    chart_pdf = b""
+    if is_avs:
+        # Patient-facing AVS (January 2025 letterhead layout, Meet again first). S/O/A never go on it;
+        # when present they are kept in a separate chart copy in the same Visit notes folder.
+        pdf = after_visit_pdf(fields, title="After Visit Summary", letterhead=letterhead, patient=True, logo=logo)
+        if any(str(fields.get(k) or "").strip() for k in CHART_ONLY):
+            chart_pdf = after_visit_pdf(
+                fields, sections, title=str(spec.get("title") or "After-Visit Summary") + " (chart copy)",
+                letterhead=letterhead, logo=logo,
+            )
+    elif sections:
         pdf = after_visit_pdf(
-            fields, sections, title=str(spec.get("title") or ""), letterhead=letterhead
+            fields, sections, title=str(spec.get("title") or ""), letterhead=letterhead, logo=logo
         )
-    elif tid == "avs":
-        pdf = after_visit_pdf(fields, letterhead=letterhead)
     else:
         pdf = markdown_pdf(render_template(tid, fields))
     from .notify import NOTIFY_TOKEN
 
-    payload = json.dumps({"path": dest, "b64": base64.b64encode(pdf).decode("ascii")}).encode()
-    r = UrlRequest(
-        _notify_base() + "/drive/save",
-        data=payload,
-        headers={"Content-Type": "application/json", "X-Notify-Token": NOTIFY_TOKEN},
-        method="POST",
+    def _save(path: str, blob: bytes) -> None:
+        payload = json.dumps({"path": path, "b64": base64.b64encode(blob).decode("ascii")}).encode()
+        r = UrlRequest(
+            _notify_base() + "/drive/save",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Notify-Token": NOTIFY_TOKEN},
+            method="POST",
+        )
+        try:
+            with urlopen(r, timeout=180) as resp:
+                saved = json.loads(resp.read().decode() or "{}")
+        except HTTPError as e:
+            raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+        if not saved.get("ok"):
+            raise HTTPException(502, "drive save failed")
+
+    _save(dest, pdf)
+    chart_dest = ""
+    if chart_pdf:
+        chart_dest = dest[: -len(".pdf")] + " chart.pdf"
+        _save(chart_dest, chart_pdf)
+    from . import signed_notes
+
+    note_id = signed_notes.record(
+        client_id=str(row.get("id") or ""), dos=dos, template=tid, fields=fields,
+        avs_path=dest if is_avs else "", avs_name=fname if is_avs else "", chart_path=chart_dest,
     )
-    try:
-        with urlopen(r, timeout=180) as resp:
-            saved = json.loads(resp.read().decode() or "{}")
-    except HTTPError as e:
-        raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
-    if not saved.get("ok"):
-        raise HTTPException(502, "drive save failed")
     # Local style-pack learn (scrub Name/DOB first; never log body; no cloud train).
     try:
         from .style_pack_learn import learn_safe
@@ -2353,7 +2382,116 @@ def api_desk_note_sign(
         background_tasks.add_task(learn_safe, dict(fields), tid)
     except Exception:
         pass
-    return {"ok": True, "path": dest, "name": fname, "bytes": len(pdf), "template": tid}
+    return {"ok": True, "path": dest, "name": fname, "bytes": len(pdf), "template": tid,
+            "note_id": note_id, "chart_path": chart_dest, "shareable": is_avs}
+
+
+# ---- signed AVS: prefill next note + 30-day patient link (no login) ----------
+
+@app.get("/api/desk/note/last-avs")
+def api_desk_note_last_avs(client_id: str = Query(default=""), secret: str = Query(default="")):
+    """Last signed AVS for a client: prefill fields for the next note + its share status."""
+    _require_staff(secret)
+    from . import billing, signed_notes
+
+    note = signed_notes.last_for_client(client_id.strip())
+    if not note:
+        return {"ok": True, "note": None, "prefill": {}}
+    share = billing.active_share(note["id"], "avs") if note.get("avs_path") else None
+    return {
+        "ok": True,
+        "note": {"id": note["id"], "dos": note["dos"], "template": note["template"],
+                 "name": note.get("avs_name") or "", "signed_at": note["signed_at"],
+                 "shareable": bool(note.get("avs_path"))},
+        "prefill": signed_notes.prefill(note),
+        "share": share,
+    }
+
+
+class AvsShareRequest(BaseModel):
+    note_id: str
+    send_email: bool = True
+    send_sms: bool = True
+    to_email: str = ""
+    to_phone: str = ""
+
+
+@app.post("/api/desk/note/avs/share")
+def api_desk_note_avs_share(req: AvsShareRequest, secret: str = Query(default="")):
+    """Send (or re-send) the signed AVS: turn off any old link, mint a fresh 30-day one, email + Spruce text."""
+    _require_staff(secret)
+    from . import billing, signed_notes
+    from .superbill_pdf import pretty_date
+
+    note = signed_notes.get(req.note_id.strip())
+    if not note or not note.get("avs_path"):
+        raise HTTPException(404, "signed AVS not found")
+    view = dict(client_by_id(note["client_id"]) or {})
+    if not view:
+        raise HTTPException(404, "client not found")
+    if req.to_email.strip():
+        view["email"] = req.to_email.strip()
+    if req.to_phone.strip():
+        view["phone"] = req.to_phone.strip()
+    revoked = billing.revoke_shares(note["id"], "avs")
+    link = billing.mint_share(
+        billing_id=note["id"], client_id=note["client_id"], source="avs", path=note["avs_path"],
+        name=note.get("avs_name") or "After Visit Summary.pdf", kind="avs",
+    )
+    url = f"{PUBLIC_BASE}/avs/{link['token']}"
+    first = (str(view.get("name") or "there").split() or ["there"])[0]
+    sent = _bill_send(
+        kind="avs",
+        view=view,
+        fields={"name": view.get("name") or "", "url": url, "dos_label": pretty_date(note["dos"])},
+        sms_body=f"Hi {first}, your after-visit summary from Dr. Brown (link good for 30 days): {url}",
+        send_email=req.send_email,
+        send_sms=req.send_sms,
+        dry=False,
+        key=f"avs-{link['id']}",
+    )
+    return {"ok": True, "url": url, "share_id": link["id"], "expires_iso": link["expires_iso"],
+            "replaced": revoked, **sent}
+
+
+class AvsRevokeRequest(BaseModel):
+    note_id: str
+
+
+@app.post("/api/desk/note/avs/share/revoke")
+def api_desk_note_avs_revoke(req: AvsRevokeRequest, secret: str = Query(default="")):
+    _require_staff(secret)
+    from . import billing, signed_notes
+
+    if not signed_notes.get(req.note_id.strip()):
+        raise HTTPException(404, "signed AVS not found")
+    return {"ok": True, "revoked": billing.revoke_shares(req.note_id.strip(), "avs")}
+
+
+@app.get("/avs/{token}")
+def public_avs_share(token: str):
+    """Branded, signed, expiring AVS link (30 days, no login; re-send or turn off from the desk)."""
+    from . import billing
+
+    try:
+        row = billing.verify_share(token, kind="avs")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="After-visit summary")
+    code, data, _ctype = _notify_get("/drive/file?path=" + quote(str(row.get("path") or ""), safe="/"))
+    if code != 200 or not data.startswith(b"%PDF"):
+        return _share_page("The file could not be loaded right now. Try again shortly.", 502, title="After-visit summary")
+    billing.note_hit(row["id"])
+    name = (row.get("name") or "After Visit Summary.pdf").replace('"', "")
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{name}"',
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 @app.get("/api/desk/note/templates")
@@ -2481,86 +2619,38 @@ class DeskNoteDraftRequest(BaseModel):
 
 @app.post("/api/desk/note/draft")
 def api_desk_note_draft(req: DeskNoteDraftRequest, secret: str = Query(default="")):
-    """SOAP + AVS from a transcript. Body never logged."""
+    """SOAP + AVS fields from a scribe note or a transcript. Body never logged. No xAI.
+
+    A scribe-aws note (fixed SOAP + After Visit Summary format) is parsed directly, no model call.
+    A raw transcript goes to the scribe-aws note writer (Bedrock Nova Pro, under the AWS BAA)."""
     _require_staff(secret)
     raw = (req.transcript or "").strip()
     if len(raw) < 20:
         raise HTTPException(400, "need a bit more transcript")
-    from .desk_agent import XAI_KEY, XAI_MODEL, XAI_URL
+    from .note_parse import is_structured, parse_structured
 
-    if not XAI_KEY:
-        raise HTTPException(503, "desk agent key unset")
-    style_ctx = ""
+    if is_structured(raw):
+        return {"ok": True, "fields": parse_structured(raw), "engine": "scribe-structured"}
+    minutes = 0
     try:
-        from .style_pack import draft_prompt_context, enabled_for_draft
-
-        if enabled_for_draft():
-            style_ctx = draft_prompt_context()
-    except Exception:
-        style_ctx = ""
-    prompt = (
-        "From this visit transcript, fill a SOAP note and an after-visit summary. "
-        "Do not invent facts. Prefer practice style-pack stems and formulary names when "
-        "the transcript supports them. JSON only with keys: subjective, objective, assessment, "
-        "plan, return_visit, medications, supplements, recommendations. "
-        "AVS fields (return_visit/medications/supplements/recommendations) are patient language.\n\n"
-        + (style_ctx + "\n\n" if style_ctx else "")
-        + "TRANSCRIPT:\n"
-        + raw[:12000]
-    )
-    system = (
-        "You draft psychiatry notes for this practice. Reply with JSON only. No markdown fence. "
-        "Follow STYLE PACK priors when present. Never invent meds, doses, or findings absent from the transcript."
-    )
-    payload = json.dumps(
-        {
-            "model": XAI_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.2,
-        }
-    ).encode()
-    http_req = UrlRequest(
-        XAI_URL,
-        data=payload,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + XAI_KEY},
-        method="POST",
-    )
+        minutes = int(str(req.duration or "0").strip() or 0)
+    except ValueError:
+        minutes = 0
+    body = json.dumps({"transcript": raw[:400000], "duration_minutes": minutes}).encode()
+    http_req = UrlRequest(SCRIBE_NOTE_URL, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urlopen(http_req, timeout=90) as resp:
+        with urlopen(http_req, timeout=150) as resp:
             data = json.loads(resp.read().decode() or "{}")
-    except HTTPError as e:
-        raise HTTPException(502, f"draft failed {e.code}") from e
-    text = ""
-    try:
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-    except Exception:
-        text = ""
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        parsed = {"plan": text[:2000]}
-    if not isinstance(parsed, dict):
-        parsed = {}
-    keys = (
-        "subjective",
-        "objective",
-        "assessment",
-        "plan",
-        "return_visit",
-        "medications",
-        "supplements",
-        "recommendations",
-    )
-    out = {k: str(parsed.get(k) or "")[:8000] for k in keys}
-    return {"ok": True, "fields": out}
+    except (HTTPError, URLError, TimeoutError, ValueError) as e:
+        raise HTTPException(502, "note writer unavailable") from e
+    note = str(data.get("note") or "")
+    if data.get("note_engine") == "raw-transcript" or not is_structured(note):
+        raise HTTPException(502, "note writer (Bedrock) unavailable; nothing was sent elsewhere")
+    return {"ok": True, "fields": parse_structured(note), "engine": str(data.get("note_engine") or "")}
+
+
+# scribe-aws sidecar (127.0.0.1 only): Bedrock note writer under the AWS BAA.
+SCRIBE_NOTE_URL = os.environ.get("SCRIBE_NOTE_URL", "http://127.0.0.1:8795/note")
 
 
 class DeskScribeIngestRequest(BaseModel):

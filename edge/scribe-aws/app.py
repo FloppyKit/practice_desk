@@ -10,8 +10,8 @@
         with booker's own style_pack.draft_prompt_context() priors (mounted read-only)
         and the same JSON field contract as booker POST /api/desk/note/draft.
       ← {"note": SOAP + AVS (Meet again → Meds → Supplements → Other), "note_engine"}
-        booker's /api/desk/note/draft calls xAI (its own comment: "not a BAA path"), so it is
-        used only if DESK_DRAFT_ALLOW_NONBAA=1. Any failure → raw transcript, nothing lost.
+        Bedrock (AWS BAA) is the only note writer; there is no non-BAA fallback.
+        Any failure → raw transcript, nothing lost.
   GET  /health
 
 Never logs bodies. Logs only sizes, engines, and error class names.
@@ -49,7 +49,6 @@ PACE = float(os.environ.get("AWS_STREAM_PACE", "2.0"))  # x realtime when sendin
 BEDROCK_TOKEN = (os.environ.get("AWS_BEARER_TOKEN_BEDROCK") or "").strip()
 BEDROCK_REGION = os.environ.get("BEDROCK_REGION") or REGION
 BEDROCK_MODEL = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-pro-v1:0")
-ALLOW_NONBAA = (os.environ.get("DESK_DRAFT_ALLOW_NONBAA") or "").strip() in ("1", "true", "yes")
 AWS_OFF = (os.environ.get("SCRIBE_AWS_DISABLE") or "").strip() in ("1", "true", "yes")
 CHUNK = 3200  # 100 ms of 16 kHz s16 mono
 
@@ -347,16 +346,6 @@ def _bedrock_fields(transcript: str) -> dict[str, str]:
     return note_format.parse(text)
 
 
-def _desk_draft_fields(transcript: str, minutes: int) -> dict[str, str]:
-    out = _post(
-        DRAFT_URL,
-        json.dumps({"transcript": transcript, "duration": str(minutes)}).encode(),
-        {"Content-Type": "application/json", "X-Staff-Secret": STAFF_SECRET},
-        timeout=110,
-    )
-    return out.get("fields") or {} if out.get("ok") else {}
-
-
 def do_note(payload: dict[str, Any]) -> dict[str, Any]:
     transcript = str(payload.get("transcript") or "").strip()
     minutes = int(payload.get("duration_minutes") or 0)
@@ -366,8 +355,6 @@ def do_note(payload: dict[str, Any]) -> dict[str, Any]:
         writers.append(("bedrock-" + BEDROCK_MODEL.split(":")[0], lambda: _bedrock_fields(transcript)))
     else:
         errs.append("bedrock:no_token")
-    if ALLOW_NONBAA and STAFF_SECRET:
-        writers.append(("desk-draft-xai", lambda: _desk_draft_fields(transcript, minutes)))
     for name, fn in writers if transcript else []:
         try:
             fields = fn()
@@ -417,8 +404,7 @@ class H(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "service": "scribe-aws", "region": REGION,
                              "aws_creds": aws_creds(), "aws_disabled": AWS_OFF,
                              "specialty": SPECIALTY, "stt_mode": STT_MODE, "vocab": VOCAB, "bedrock": bool(BEDROCK_TOKEN),
-                             "bedrock_model": BEDROCK_MODEL, "style_pack": bool(_style_ctx()),
-                             "nonbaa_draft": ALLOW_NONBAA and bool(STAFF_SECRET)})
+                             "bedrock_model": BEDROCK_MODEL, "style_pack": bool(_style_ctx())})
         else:
             self._json(404, {"error": "not_found"})
 

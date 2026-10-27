@@ -1210,6 +1210,13 @@
       <button class="btn secondary" type="button" id="nt-draft">Draft from transcript</button>
       <button class="btn" type="button" id="nt-sign">Sign to Visit notes</button>
     </div>
+    <div id="nt-avs-share" hidden style="margin-top:0.6rem">
+      <p class="desk-meta" id="nt-avs-info"></p>
+      <div class="desk-actions">
+        <button class="btn" type="button" id="nt-avs-send">Send AVS to patient (email + text)</button>
+        <button class="btn secondary" type="button" id="nt-avs-revoke">Turn off link</button>
+      </div>
+    </div>
   </div>
 
   <div id="superbill-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Superbill">
@@ -2500,10 +2507,12 @@
       noteDosPrefill = dos || new Date().toISOString().slice(0, 10);
       $("nt-event").value = focusEventId || "";
       $("note-status").textContent = "";
+      avsShareShow(null);
       fillNoteTemplates().then(() => {
         renderNoteFields();
         const c = (homeCurrent && homeCurrent.client) || {};
         applyVaultToNoteFields(c);
+        applyLastAvs(c);
         fitSheet($("note-pop"));
       });
       const pop = $("note-pop");
@@ -3702,7 +3711,7 @@
       }
     }
     function noteFieldInput(sec, val) {
-      const typ = sec.type || "paragraph";
+      const typ = sec.id === "return_visit" ? "line" : (sec.type || "paragraph");
       if (typ === "date") {
         const i = document.createElement("input");
         i.type = "date";
@@ -3740,7 +3749,7 @@
         lab.textContent = sec.label || sec.id;
         let start = prev[sec.id] || "";
         if (sec.id === "dos" && !start) start = noteDosPrefill || today;
-        if (sec.type === "date" && !start) start = today;
+        if (sec.type === "date" && sec.id !== "return_visit" && !start) start = today;
         const inp = noteFieldInput(sec, start);
         inp.dataset.fid = sec.id;
         lab.appendChild(inp);
@@ -3926,8 +3935,9 @@
         status.textContent = "Failed: " + (data.detail || res.status);
         return;
       }
-      status.textContent = "Signed · " + (data.name || "saved");
+      status.textContent = "Signed · " + (data.name || "saved") + (data.shareable ? " · review, then Send AVS below" : "");
       msg("Note signed to Visit notes.", true);
+      if (data.note_id && data.shareable) avsShareShow({ id: data.note_id, shareable: true, dos: values.dos || "" }, null);
       if (window.PsychartsVault && PsychartsVault.ready()) {
         PsychartsVault.putNote(
           { id: c.id || "", email: c.email || "" },
@@ -4003,6 +4013,7 @@
           await openHome({ id: d.client_id || "", email: d.email || "", name: d.name || "" });
         } catch (e) {}
       }
+      window.__noteSkipPrefill = true;
       openNotePop("");
       await fillNoteTemplates();
       const sel = $("nt-template");
@@ -4018,7 +4029,7 @@
       if ($("nt-transcript") && d.transcript) $("nt-transcript").value = d.transcript;
       let fields = null;
       if (raw.length >= 20) {
-        msg("Shaping visit draft with style pack…", true);
+        msg("Reading visit draft…", true);  // scribe note parsed on the booker; no xAI
         try {
           const dr = await deskFetch("/api/desk/note/draft", {
             method: "POST",
@@ -4042,7 +4053,7 @@
       if (rec && !rec.value && raw && !anyFilled) rec.value = raw;
       await deskFetch("/api/desk/note/scribe-pending/" + encodeURIComponent(id) + "/ack", { method: "POST" });
       if ($("scribe-draft-banner")) $("scribe-draft-banner").hidden = true;
-      msg(fields ? "Visit draft shaped with style pack — edit, then Sign." : "Visit draft loaded — edit, then Sign.", true);
+      msg(fields ? "Visit draft filled from the scribe note — edit, then Sign." : "Visit draft loaded — edit, then Sign.", true);
       pollScribeDrafts();
     }
     if ($("scribe-draft-open")) {
@@ -4274,6 +4285,67 @@
         if (html) box.innerHTML = "<div class='home-note-fields'>" + html + "</div>";
       }).catch(() => {});
     }
+    // ---- last signed AVS: prefill next note + Send / re-send / turn off the 30-day link ----
+    let avsNoteId = "";
+    function avsShareShow(note, share) {
+      const box = $("nt-avs-share");
+      if (!box) return;
+      avsNoteId = (note && note.shareable && note.id) || "";
+      box.hidden = !avsNoteId;
+      if (!avsNoteId) return;
+      const when = note.dos ? " for " + note.dos : "";
+      const live = share && share.expires_at ? " · link live until " + new Date(share.expires_at * 1000).toLocaleDateString() + (share.hits ? " · opened " + share.hits + "×" : "") : " · not sent yet";
+      $("nt-avs-info").textContent = "Signed AVS" + when + live;
+      $("nt-avs-send").textContent = share ? "Re-send AVS (new link)" : "Send AVS to patient (email + text)";
+      $("nt-avs-revoke").hidden = !share;
+    }
+    async function applyLastAvs(c) {
+      const skipPrefill = !!window.__noteSkipPrefill;  // a scribe draft is filling this note
+      window.__noteSkipPrefill = false;
+      if (!c || !c.id) return;
+      try {
+        const res = await deskFetch("/api/desk/note/last-avs?client_id=" + encodeURIComponent(c.id));
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok || !data.note) return;
+        avsShareShow(data.note, data.share);
+        if (skipPrefill) return;
+        const pre = data.prefill || {};
+        let n = 0;
+        document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+          const k = el.dataset.fid;
+          if (!el.value && pre[k]) { el.value = pre[k]; n++; }
+        });
+        if (n) $("note-status").textContent = "Prefilled from the last signed AVS (" + data.note.dos + "). Edit before signing.";
+      } catch (e) {}
+    }
+    $("nt-avs-send").onclick = async () => {
+      if (!avsNoteId) return;
+      const c = (homeCurrent && homeCurrent.client) || {};
+      if (!confirm("Send the after-visit summary to " + (c.name || "this patient") + " by email and text? The link works for 30 days with no login.")) return;
+      const status = $("note-status");
+      status.textContent = "Sending…";
+      const res = await deskFetch("/api/desk/note/avs/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note_id: avsNoteId, send_email: true, send_sms: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) { status.textContent = "Send failed: " + (data.detail || res.status); return; }
+      const e = data.email || {}, t = data.sms || {};
+      status.textContent = "AVS link sent · email " + (e.sent ? "sent" : (e.detail || "not sent")) + " · text " + (t.sent ? "sent" : (t.detail || "not sent"));
+      avsShareShow({ id: avsNoteId, shareable: true }, { expires_at: Math.floor(Date.parse(data.expires_iso) / 1000), hits: 0 });
+    };
+    $("nt-avs-revoke").onclick = async () => {
+      if (!avsNoteId || !confirm("Turn off this patient's AVS link now?")) return;
+      const res = await deskFetch("/api/desk/note/avs/share/revoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note_id: avsNoteId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      $("note-status").textContent = res.ok && data.ok ? "AVS link turned off." : "Could not turn off: " + (data.detail || res.status);
+      if (res.ok && data.ok) avsShareShow({ id: avsNoteId, shareable: true }, null);
+    };
     function applyVaultToNoteFields(c) {
       if (!window.PsychartsVault || !PsychartsVault.ready()) return;
       PsychartsVault.getNote({ id: c.id || "", email: c.email || "" }).then((n) => {

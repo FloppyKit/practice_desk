@@ -403,7 +403,14 @@ class ShareError(Exception):
         self.message = message
 
 
-_DOMAIN = {"sb": b":superbill-share", "pay": b":pay-link"}
+_DOMAIN = {"sb": b":superbill-share", "pay": b":pay-link", "avs": b":avs-share"}
+# share_links.source marks the link kind for "pay" and "avs"; anything else is a superbill link.
+_SOURCE_KINDS = ("pay", "avs")
+
+
+def _row_kind(source: str | None) -> str:
+    s = source or ""
+    return s if s in _SOURCE_KINDS else "sb"
 
 
 def _sig(body: str, kind: str = "sb") -> str:
@@ -413,7 +420,9 @@ def _sig(body: str, kind: str = "sb") -> str:
 
 
 def _kind_sql(kind: str) -> str:
-    return "COALESCE(source, '') = 'pay'" if kind == "pay" else "COALESCE(source, '') != 'pay'"
+    if kind in _SOURCE_KINDS:
+        return f"COALESCE(source, '') = '{kind}'"
+    return "COALESCE(source, '') NOT IN ('pay', 'avs')"
 
 
 def mint_share(
@@ -426,11 +435,12 @@ def mint_share(
     ttl_seconds: int = SHARE_TTL_SECONDS,
     kind: str = "sb",
 ) -> dict[str, Any]:
-    """kind "sb": superbill PDF link. kind "pay": branded pay link; source "pay", path = Stripe invoice id."""
+    """kind "sb": superbill PDF link. kind "pay": branded pay link; source "pay", path = Stripe invoice id.
+    kind "avs": after-visit summary PDF; source "avs", billing_id = signed_notes id, path = Drive path."""
     from .tokens import _b64
 
-    if kind == "pay":
-        source = "pay"
+    if kind in _SOURCE_KINDS:
+        source = kind
 
     ttl = max(1, min(int(ttl_seconds), SHARE_TTL_SECONDS))
     sid = uuid.uuid4().hex[:16]
@@ -469,7 +479,7 @@ def verify_share(token: str, kind: str = "sb") -> dict[str, Any]:
     with clients_db.connect() as con:
         _ensure(con)
         r = con.execute("SELECT * FROM share_links WHERE id = ?", (payload["i"],)).fetchone()
-    if r is None or (r["source"] == "pay") != (kind == "pay"):
+    if r is None or _row_kind(r["source"]) != kind:
         raise ShareError(404, "This link is not valid.")
     row = {k: r[k] for k in r.keys()}
     if row.get("revoked_at"):
