@@ -79,6 +79,9 @@ async def _lifespan(_app: FastAPI):
     from . import gsync
 
     gsync.start(wait_for=seed)  # Google -> CalDAV re-sync at startup, then every 5 min
+    from . import onboarding
+
+    onboarding.start_sweeper(_onboarding_fx)  # new-client holds: reminder / confirm / release
     yield
 
 
@@ -582,6 +585,8 @@ def _send_booking_notices(
     timezone: str = "America/Chicago",
     ics_url: str = "",
     event_id: str = "",
+    hold_until_label: str = "",
+    intake_url: str = "",
 ) -> None:
     """Run after response — Proton can take 10–60s; do not block the thanks screen."""
     patient_confirm_email(
@@ -599,6 +604,8 @@ def _send_booking_notices(
         timezone=timezone,
         notes=notes,
         ics_url=ics_url,
+        hold_until_label=hold_until_label,
+        intake_url=intake_url,
     )
     patient_confirm_sms(
         phone=phone,
@@ -607,6 +614,8 @@ def _send_booking_notices(
         sms_consent=sms_consent,
         duration_minutes=duration_minutes,
         event_id=event_id,
+        hold_until_label=hold_until_label,
+        intake_url=intake_url,
     )
     staff_notify_email(
         name=name,
@@ -620,6 +629,71 @@ def _send_booking_notices(
         sms_consent=sms_consent,
         price_label=price_label,
         extra_notify=extra_notify,
+    )
+
+
+HOLD_EVENT_TYPE = "new-client"
+from .onboarding import HOLD_PREFIX  # noqa: E402
+
+
+def _plan_hold(req: "BookRequest", start: datetime, *, phone: bool) -> dict[str, Any] | None:
+    """None for existing clients (unchanged) or when the hold can't be set up (fail open)."""
+    from . import onboarding
+
+    try:
+        needed, _row = onboarding.needs_hold(str(req.email))
+        if not needed:
+            return None
+        row = onboarding.ensure_new_client(name=req.name, email=str(req.email), phone=req.phone or "")
+    except Exception as e:
+        print("hold_plan_fail", type(e).__name__, flush=True)
+        return None
+    try:
+        intake_url = _mint_intake_url(str(req.email), req.name)
+    except Exception as e:
+        print("hold_mint_fail", type(e).__name__, flush=True)
+        intake_url = f"{SITE_PUBLIC}/forms"
+    booked = datetime.now(start.tzinfo)
+    deadline = onboarding.deadline_for(booked, start)
+    return {
+        "client_id": row["id"],
+        "intake_url": intake_url,
+        "booked_at": booked,
+        "deadline": deadline,
+        "deadline_iso": deadline.isoformat(),
+        "deadline_label": onboarding.hold_phrase(booked, deadline),
+        "phone": phone,
+    }
+
+
+def _desk_intake_link(email: str) -> str:
+    """Desk-booked new client (no hold): still send the intake cascade link unless intake is done."""
+    from . import onboarding
+
+    try:
+        if onboarding.status(email=email)["complete"]:
+            return ""
+        return _mint_intake_url(email)
+    except Exception:
+        return ""
+
+
+def _onboarding_fx():
+    from . import onboarding
+    from .notify import default_staff_emails, send_email, send_sms
+
+    def staff(subject: str, body: str) -> None:
+        for to in default_staff_emails():
+            send_email(to, subject, body)
+
+    return onboarding.Effects(
+        get_event=get_event,
+        patch_event=patch_event,
+        delete_event=delete_event,
+        send_email=send_email,
+        send_sms=send_sms,
+        staff_email=staff,
+        rebook_url=f"{PUBLIC_BASE}/{HOLD_EVENT_TYPE}",
     )
 
 
@@ -703,6 +777,14 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
         # Occupancy with no cleartext shadow: detail must exist as a sealed blob.
         raise HTTPException(400, "cipher mode: sealed intake required (cipher_envelope_id)")
 
+    # New-client hold (web + phone): 'Held: paperwork due' until intake + consents + card on file.
+    hold: dict[str, Any] | None = None
+    desk_intake_url = ""
+    if req.event_type == HOLD_EVENT_TYPE and src != "desk" and not occ:
+        hold = _plan_hold(req, start, phone=_phone_channel(request) or src in ("voice", "chat", "agent"))
+    elif req.event_type == HOLD_EVENT_TYPE and src == "desk" and not occ:
+        desk_intake_url = _desk_intake_link(str(req.email))
+
     # Summary shows client visit length; calendar event span may be cal_dur (e.g. 120)
     if occ:
         summary = f"Visit · {event_id[:8]}"
@@ -739,6 +821,9 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
             desc_lines.append(f"Notes: {req.notes}")
         if extra_notify:
             desc_lines.append("Also notify: " + ", ".join(extra_notify))
+        if hold:
+            desc_lines.insert(1, f"HELD {hold['deadline_label']}: paperwork due (intake + consents + card on file). "
+                                 "Released automatically if not finished.")
 
     rebook_url = f"{PUBLIC_BASE}/{req.event_type}"
     token = mint_cancel_token(
@@ -791,6 +876,11 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
             "rem24": "0",
             "rem2": "0",
         }
+        if hold:
+            private_props["hold"] = "held"
+            private_props["hold_deadline"] = hold["deadline_iso"]
+    if hold:
+        summary = HOLD_PREFIX + summary
 
     try:
         created = create_event(
@@ -803,9 +893,24 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
             attendee_email=None,
             private_props=private_props,
             uid=event_id,
+            **({"status": "tentative"} if hold else {}),
         )
     except Exception as e:
         raise HTTPException(502, f"Calendar write failed: {e}") from e
+
+    if hold:
+        try:
+            from . import onboarding
+
+            onboarding.create_hold(
+                event_id=event_id, calendar_id=cal_id, client_id=hold["client_id"], email=str(req.email),
+                name=req.name, phone=req.phone or "", sms_consent=sms_consent, title=title,
+                when_label=when_label, event_type=req.event_type, start=start, booked_at=hold["booked_at"],
+                deadline=hold["deadline"], intake_url=hold["intake_url"], summary=summary, source=src,
+            )
+        except Exception as e:  # fail open: the visit stays booked, staff sees no hold
+            print("hold_record_fail", type(e).__name__, flush=True)
+            hold = None
 
     if cipher_on and dual:
         # Dual-write: cleartext client record in the on-box sqlite, as today.
@@ -835,9 +940,11 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
             timezone=str(cfg.get("timezone", "America/Chicago")),
             ics_url=ics_url,
             event_id=event_id,
+            hold_until_label=(hold or {}).get("deadline_label", ""),
+            intake_url=(hold or {}).get("intake_url", "") or desk_intake_url,
         )
 
-    return {
+    out = {
         "ok": True,
         "event_id": event_id,
         "html_link": created.get("htmlLink"),
@@ -856,6 +963,19 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
         "email": {"queued": bool(req.send_email)},
         "message": "You're booked. A confirmation email with a cancel link is on the way.",
     }
+    if hold:
+        out["held"] = True
+        out["hold_until"] = hold["deadline_iso"]
+        out["hold_until_label"] = hold["deadline_label"]
+        out["message"] = (
+            f"Your spot is held {hold['deadline_label']}. Please complete your intake paperwork "
+            "and add a card on file before your visit; the link is also in your email"
+            + (" and text." if sms_consent else ".")
+        )
+        if not hold["phone"]:
+            # Web booker goes straight into the intake screens with this personal link.
+            out["intake_url"] = hold["intake_url"]
+    return out
 
 
 @app.post("/api/reminders/run")
@@ -1629,6 +1749,7 @@ def _desk_week_payload(start: str = "", days: int = 7) -> dict[str, Any]:
             visits.append(fields)
     visits = [v for v in visits if v.get("event_id") or v.get("title")]
     visits.sort(key=lambda v: v.get("start_iso") or "")
+    _attach_intake(visits)
     return {
         "ok": True,
         "start": day0.date().isoformat(),
@@ -1644,6 +1765,24 @@ def _desk_week_payload(start: str = "", days: int = 7) -> dict[str, Any]:
             if v.get("enabled", True)
         },
     }
+
+
+def _attach_intake(visits: list[dict[str, Any]]) -> None:
+    """Calendar card: hold state + intake flags for new-client visits. Never raises."""
+    try:
+        from . import onboarding
+
+        holds = onboarding.holds_by_event([str(v.get("event_id") or "") for v in visits
+                                           if v.get("event_type") == HOLD_EVENT_TYPE])
+        for v in visits:
+            h = holds.get(str(v.get("event_id") or ""))
+            if not h:
+                continue
+            st = onboarding.status(client_id=h.get("client_id") or "", email=h.get("email") or "")
+            v["hold"] = {"status": h["status"], "deadline_at": h["deadline_at"]}
+            v["intake"] = {"flags": st["flags"], "complete": st["complete"], "missing": st["missing"]}
+    except Exception:
+        return
 
 
 @app.get("/api/desk/week")
@@ -1683,6 +1822,171 @@ def api_desk_clients(
     }
 
 
+class InternalIntakeRequest(BaseModel):
+    form: str
+    fields: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+INTAKE_FORMS = ("personal", "consents", "card-auth", "roi")
+
+
+def _chart_for(row: dict[str, Any]) -> str:
+    from .drive_paths import LIVING_ROOT, person_folder_name, paths_from_row, resolve_client_paths
+
+    chart = paths_from_row(row).get("chart") or ""
+    if not chart:
+        try:
+            chart = resolve_client_paths(row, _drive_list).get("chart") or ""
+        except Exception:
+            chart = ""
+    if not chart:
+        dest = person_folder_name(row)
+        if dest:
+            chart = f"{LIVING_ROOT}/{dest}/Chart"
+    return chart
+
+
+def _file_intake_pdf(sub_id: str, client_id: str, form: str, fields: dict[str, Any], meta: dict[str, Any],
+                     received_at: str) -> dict[str, Any]:
+    """Render the signed submission and save it to the client's Chart/Consents (created if missing)."""
+    import base64
+
+    from . import onboarding
+    from .intake_pdf import intake_pdf
+
+    row = client_by_id(client_id) if client_id else None
+    if not row:
+        onboarding.set_pdf(sub_id, status="no client")
+        return {"ok": False, "detail": "no client"}
+    try:
+        tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+        when = datetime.fromisoformat(received_at).astimezone(tz)
+        link = meta.get("linkAuth") or {}
+        pdf = intake_pdf(
+            form=form, fields=fields, received_at=when.strftime("%Y-%m-%d %I:%M:%S %p CT"),
+            ip=str(meta.get("ip") or ""), user_agent=str(meta.get("userAgent") or ""),
+            link_verified=bool(link.get("verified")), link_email=str(link.get("email") or ""),
+            client_name=row.get("name") or "",
+        )
+        chart = _chart_for(row)
+        if not chart:
+            raise HTTPException(400, "no chart folder for this client")
+        folder = _ensure_visit_notes(chart, "Consents")
+        given = (row.get("given_name") or "").strip()
+        family = (row.get("family_name") or "").strip()
+        ini = ((given[:1] + family[:1]).upper()) if given and family else ""
+        stem = f"{when.date().isoformat()} {ini} {form}" if ini else f"{when.date().isoformat()} {form}"
+        dest = folder + "/" + _unique_pdf_name(folder, stem)
+        code, saved = _notify_post("/drive/save", {"path": dest, "b64": base64.b64encode(pdf).decode("ascii")})
+        if code >= 400 or not saved.get("ok"):
+            raise HTTPException(502, "drive save failed")
+        onboarding.set_pdf(sub_id, path=dest, status="saved")
+        return {"ok": True, "path": dest}
+    except Exception as e:
+        detail = e.detail if isinstance(e, HTTPException) else type(e).__name__
+        onboarding.set_pdf(sub_id, status=f"failed: {str(detail)[:80]}")
+        print("intake_pdf_fail", form, str(detail)[:80], flush=True)
+        return {"ok": False, "detail": str(detail)[:80]}
+
+
+@app.post("/api/internal/intake/submitted")
+def api_internal_intake_submitted(req: InternalIntakeRequest, request: Request, background_tasks: BackgroundTasks,
+                                  secret: str = Query(default="")):
+    """Site intake form landed (already emailed to the practice). Record the completion flag, file the
+    signed PDF under Chart/Consents, and confirm any held new-client visit once intake is complete."""
+    from . import onboarding
+
+    _require_staff(secret, request)
+    form = (req.form or "").strip()
+    if form not in INTAKE_FORMS:
+        raise HTTPException(400, "unknown form")
+    link = req.meta.get("linkAuth") or {}
+    email = str((link.get("email") if link.get("verified") else "") or req.fields.get("email") or "").strip().lower()
+    rec = onboarding.record_submission(form=form, email=email, link_verified=bool(link.get("verified")))
+    background_tasks.add_task(_file_intake_pdf, rec["id"], rec["client_id"], form, dict(req.fields),
+                              dict(req.meta), rec["received_at"])
+    confirmed: list[str] = []
+    if rec["client_id"]:
+        try:
+            confirmed = onboarding.check_client(_onboarding_fx(), client_id=rec["client_id"])
+        except Exception as e:
+            print("hold_check_fail", type(e).__name__, flush=True)
+    st = onboarding.status(client_id=rec["client_id"]) if rec["client_id"] else None
+    return {"ok": True, "linked": bool(rec["client_id"]), "flags": (st or {}).get("flags"),
+            "complete": bool(st and st["complete"]), "confirmed_holds": confirmed}
+
+
+@app.get("/api/internal/intake/progress")
+def api_internal_intake_progress(request: Request, email: str = "", secret: str = Query(default="")):
+    """Site cascade: which steps are done for the emailed-link session (resume at first incomplete),
+    plus name/phone to prefill. Staff secret (site server only)."""
+    from . import onboarding
+
+    _require_staff(secret, request)
+    row = onboarding.find_client(email)
+    st = onboarding.status(email=email)
+    holds = onboarding.holds_for_client(st["client_id"]) if st["client_id"] else []
+    h = holds[0] if holds else None
+    return {
+        "ok": True,
+        "flags": st["flags"],
+        "complete": st["complete"],
+        "missing": st["missing"],
+        "client": {
+            "name": (row or {}).get("display_name") or "",
+            "given_name": (row or {}).get("given_name") or "",
+            "family_name": (row or {}).get("family_name") or "",
+            "phone": (row or {}).get("phone_e164") or "",
+            "dob": (row or {}).get("dob") or "",
+        } if row else None,
+        "hold": {"status": h["status"], "when_label": h["when_label"],
+                 "deadline_label": onboarding.label(datetime.fromisoformat(h["deadline_at"]))} if h else None,
+    }
+
+
+class HoldTimesRequest(BaseModel):
+    deadline_minutes: float
+    remind_minutes: float | None = None
+
+
+@app.post("/api/desk/onboarding/hold/{event_id}/times")
+def api_desk_hold_times(event_id: str, req: HoldTimesRequest, request: Request, secret: str = Query(default="")):
+    """Staff/test only: move ONE hold's deadline (minutes from now). The 48h policy is unchanged."""
+    from datetime import timezone as _tz
+
+    from . import onboarding
+
+    _require_staff(secret, request)
+    now = datetime.now(_tz.utc)
+    dl = now + timedelta(minutes=req.deadline_minutes)
+    rm = now + timedelta(minutes=req.remind_minutes if req.remind_minutes is not None else req.deadline_minutes / 2)
+    h = onboarding.set_times(event_id, deadline=dl, remind_at=rm)
+    if not h:
+        raise HTTPException(404, "no hold")
+    return {"ok": True, "hold": {k: h[k] for k in ("event_id", "status", "deadline_at", "remind_at")}}
+
+
+@app.post("/api/desk/onboarding/sweep")
+def api_desk_hold_sweep(request: Request, secret: str = Query(default="")):
+    from . import onboarding
+
+    _require_staff(secret, request)
+    return {"ok": True, **onboarding.sweep(_onboarding_fx())}
+
+
+@app.get("/api/desk/onboarding/status")
+def api_desk_onboarding_status(request: Request, secret: str = Query(default=""), client_id: str = "",
+                               email: str = ""):
+    from . import onboarding
+
+    _require_staff(secret, request)
+    st = onboarding.status(client_id=client_id, email=email)
+    holds = onboarding.holds_for_client(st["client_id"]) if st["client_id"] else []
+    return {"ok": True, **st, "holds": [{k: h[k] for k in ("event_id", "status", "when_label", "deadline_at",
+                                                          "reminded_at", "resolved_at")} for h in holds]}
+
+
 class InternalCardRequest(BaseModel):
     email: str = ""
     customer_id: str = ""
@@ -1694,12 +1998,12 @@ class InternalCardRequest(BaseModel):
 
 
 @app.post("/api/internal/client/card")
-def api_internal_client_card(req: InternalCardRequest, secret: str = Query(default="")):
+def api_internal_client_card(req: InternalCardRequest, request: Request, secret: str = Query(default="")):
     """Site pay form writes Stripe pointers. Staff secret. No PAN. No new row."""
     from .patients import record_card_on_file
 
-    _require_staff(secret)
-    return record_card_on_file(
+    _require_staff(secret, request)
+    out = record_card_on_file(
         email=req.email,
         customer_id=req.customer_id,
         payment_method_id=req.payment_method_id,
@@ -1708,6 +2012,43 @@ def api_internal_client_card(req: InternalCardRequest, secret: str = Query(defau
         exp_month=req.exp_month,
         exp_year=req.exp_year,
     )
+    try:
+        from . import onboarding
+
+        out["confirmed_holds"] = onboarding.check_client(_onboarding_fx(), email=req.email)
+    except Exception as e:
+        print("hold_check_fail", type(e).__name__, flush=True)
+    return out
+
+
+def _intake_summary(row: dict[str, Any]) -> dict[str, Any]:
+    """Per-client intake flags for the desk card. Never raises."""
+    try:
+        from . import onboarding
+
+        if not (row.get("id") or row.get("email")):
+            return {}
+        st = onboarding.status(client_id=str(row.get("id") or ""), email=str(row.get("email") or ""))
+        holds = onboarding.holds_for_client(st["client_id"]) if st["client_id"] else []
+        open_hold = next((h for h in holds if h["status"] == "held"), None)
+        return {
+            "flags": st["flags"],
+            "complete": st["complete"],
+            "missing": st["missing"],
+            "forms": st["forms"],
+            "hold": {k: open_hold[k] for k in ("event_id", "when_label", "deadline_at", "reminded_at")}
+            if open_hold
+            else None,
+        }
+    except Exception:
+        return {}
+
+
+def _form_status(intake: dict[str, Any], form: str) -> str:
+    f = ((intake or {}).get("forms") or {}).get(form) if form else None
+    if not intake or not form:
+        return "unknown"
+    return "done" if f and f.get("done") else "not yet"
 
 
 def _desk_cal_ids() -> set[str]:
@@ -1813,11 +2154,13 @@ def api_desk_client(
     pay_url = f"{SITE_PUBLIC}/pay"
     if row.get("email"):
         pay_url += "?" + urlencode({"email": row["email"], "name": row.get("name") or ""})
+    intake = _intake_summary(row)
+    done_by_item = {"personal": "personal", "consents": "consents", "card": "card-auth", "roi": "roi"}
     forms = [
         {
             "id": sid,
             "label": spec.get("label") or sid,
-            "status": "unknown",
+            "status": _form_status(intake, done_by_item.get(sid, "")),
             "url": spec.get("url") or f"{SITE_PUBLIC}/forms",
         }
         for sid, spec in SEND_ITEMS.items()
@@ -1852,6 +2195,7 @@ def api_desk_client(
         },
         "visits": {"upcoming": upcoming[:12], "past": past[:16]},
         "forms": forms,
+        "intake": intake,
         "last_note": last_note,
         "books": books,
         "plan": {"ok": False, "status": "none", "hint": "Light treatment plan comes after notes."},
@@ -1886,7 +2230,7 @@ class DeskFeeRequest(BaseModel):
     kind: str = "visit"
     note: str = ""
     event_id: str = ""
-    charge: bool = True
+    charge: bool = False  # charges only when the desk click says so explicitly
     duration_minutes: int | None = None
     notify: bool = True
 
@@ -3815,12 +4159,13 @@ def _folder_names(path: str) -> dict[str, str] | None:
             for i in (data.get("items") or []) if (i.get("type") or "") == "folder" and i.get("name")}
 
 
-def _ensure_visit_notes(chart: str) -> str:
-    """Chart/Visit Notes path for signing. Creates what is missing, never duplicates an existing folder:
+def _ensure_visit_notes(chart: str, sub: str = "") -> str:
+    """Chart/Visit Notes path for signing (or Chart/<sub>, e.g. Consents). Creates what is missing, never duplicates an existing folder:
     a missing living client folder gets the real-client tree (Billing + Chart/Consents, Labs, Letters,
     Orders, Visit Notes); an existing chart only gets Visit Notes if it has none (case-insensitive)."""
     from .drive_paths import BILLING_CHILD, CHART_SUBFOLDERS, LIVING_ROOT, VISIT_NOTES_FOLDER
 
+    want = sub or VISIT_NOTES_FOLDER
     chart = chart.rstrip("/")
     client_dir, _ = chart.rsplit("/", 1)
     kids = _folder_names(chart)
@@ -3833,14 +4178,16 @@ def _ensure_visit_notes(chart: str) -> str:
             _drive_mkdir(client_dir)
             _drive_mkdir(client_dir + "/" + BILLING_CHILD)
         _drive_mkdir(chart)
-        for sub in CHART_SUBFOLDERS:
-            _drive_mkdir(chart + "/" + sub)
-        return chart + "/" + VISIT_NOTES_FOLDER
-    have = kids.get(VISIT_NOTES_FOLDER.lower())
+        for kid in CHART_SUBFOLDERS:
+            _drive_mkdir(chart + "/" + kid)
+        if want not in CHART_SUBFOLDERS:
+            _drive_mkdir(chart + "/" + want)
+        return chart + "/" + want
+    have = kids.get(want.lower())
     if have:
         return chart + "/" + have
-    _drive_mkdir(chart + "/" + VISIT_NOTES_FOLDER)
-    return chart + "/" + VISIT_NOTES_FOLDER
+    _drive_mkdir(chart + "/" + want)
+    return chart + "/" + want
 
 
 def _unique_pdf_name(folder: str, stem: str) -> str:

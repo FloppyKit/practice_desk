@@ -1,0 +1,1080 @@
+diff -ruN site.orig/src/app/api/intake/progress/route.ts site/src/app/api/intake/progress/route.ts
+--- site.orig/src/app/api/intake/progress/route.ts	1969-12-31 18:00:00
++++ site/src/app/api/intake/progress/route.ts	2026-10-27 16:55:47
+@@ -0,0 +1,36 @@
++import { cookies } from "next/headers";
++import { NextResponse } from "next/server";
++import { intakeCookieName, verifyIntakeToken } from "@/lib/intake-link";
++
++export const runtime = "nodejs";
++
++const BOOKER = (process.env.BOOKER_INTERNAL_URL?.trim() || "http://127.0.0.1:8090").replace(/\/$/, "");
++
++/** Cascade progress for the personal-link session: done steps + prefill. Never trusts a client email. */
++export async function GET() {
++  const jar = await cookies();
++  const t = jar.get(intakeCookieName())?.value;
++  if (!t) return NextResponse.json({ ok: false, authenticated: false });
++  let email = "";
++  let name = "";
++  try {
++    const p = verifyIntakeToken(t);
++    email = p.email;
++    name = p.name || "";
++  } catch {
++    return NextResponse.json({ ok: false, authenticated: false });
++  }
++  const secret = process.env.BOOKER_STAFF_SECRET?.trim() || "";
++  let data: Record<string, unknown> = {};
++  try {
++    const res = await fetch(`${BOOKER}/api/internal/intake/progress?email=${encodeURIComponent(email)}`, {
++      headers: { "X-Staff-Secret": secret },
++      cache: "no-store",
++      signal: AbortSignal.timeout(10_000),
++    });
++    if (res.ok) data = (await res.json()) as Record<string, unknown>;
++  } catch {
++    /* progress unknown: start at step 1 */
++  }
++  return NextResponse.json({ ok: true, authenticated: true, email, name, ...data });
++}
+diff -ruN site.orig/src/app/api/intake/route.ts site/src/app/api/intake/route.ts
+--- site.orig/src/app/api/intake/route.ts	2026-08-12 00:59:58
++++ site/src/app/api/intake/route.ts	2026-10-27 16:12:30
+@@ -2,6 +2,7 @@
+ import { NextResponse } from "next/server";
+ import { intakeCookieName, verifyIntakeToken } from "@/lib/intake-link";
+ import { emailIntakeSubmission } from "@/lib/intake-notify";
++import { postToBooker } from "@/lib/booker-intake";
+ 
+ export const runtime = "nodejs";
+ 
+@@ -101,8 +102,21 @@
+     );
+   }
+ 
++  // Practice email above is unchanged. Also record completion + file the signed PDF (booker).
++  let complete = false;
++  if (form !== "intake-link") {
++    const b = await postToBooker("/api/internal/intake/submitted", {
++      form,
++      fields: body.fields,
++      meta: { ip, userAgent, linkAuth },
++    });
++    if (!b.ok) console.warn("[intake] booker record failed:", b.detail);
++    complete = Boolean((b.data as { complete?: boolean } | undefined)?.complete);
++  }
++
+   return NextResponse.json({
+     ok: true,
+     linkVerified: linkAuth.verified,
++    complete,
+   });
+ }
+diff -ruN site.orig/src/app/api/pay/confirm/route.ts site/src/app/api/pay/confirm/route.ts
+--- site.orig/src/app/api/pay/confirm/route.ts	2026-08-12 22:30:01
++++ site/src/app/api/pay/confirm/route.ts	2026-10-27 16:12:30
+@@ -2,6 +2,7 @@
+ import { emailCardOnFile } from "@/lib/pay-notify";
+ import { getStripe, stripeReady, summarizePm } from "@/lib/stripe";
+ import { recordCardOnFile } from "@/lib/stripe-store";
++import { postToBooker } from "@/lib/booker-intake";
+ 
+ export async function POST(req: Request) {
+   if (!stripeReady()) {
+@@ -54,6 +55,17 @@
+       name,
+       ...summary,
+     });
++    // Booker phone book is the desk's source of truth (card flag + held new-client visits).
++    const b = await postToBooker("/api/internal/client/card", {
++      email,
++      customer_id: customerId,
++      payment_method_id: summary.paymentMethodId || "",
++      brand: summary.brand || "",
++      last4: summary.last4 || "",
++      exp_month: summary.expMonth,
++      exp_year: summary.expYear,
++    });
++    if (!b.ok) console.warn("[pay/confirm] booker card record failed:", b.detail);
+     await emailCardOnFile({
+       email,
+       name,
+diff -ruN site.orig/src/app/forms/page.tsx site/src/app/forms/page.tsx
+--- site.orig/src/app/forms/page.tsx	2026-08-12 22:44:05
++++ site/src/app/forms/page.tsx	2026-10-27 16:56:51
+@@ -1,154 +1,7 @@
+-import type { Metadata } from "next";
+-import Link from "next/link";
+-import { PageShell } from "@/components/PageShell";
+-import { IntakeSessionBanner } from "@/components/forms/IntakeSessionBanner";
+-import { site } from "@/lib/content";
++import { redirect } from "next/navigation";
+ 
+-export const metadata: Metadata = {
+-  title: `Intake forms | ${site.name}`,
+-  description:
+-    "Online intake for Dr. Matt Brown — personal info, consents, policies, and payment authorization. Handouts available as PDF.",
+-};
+-
+-const WEB_FORMS = [
+-  {
+-    href: "/forms/personal",
+-    title: "Personal information",
+-    blurb: "Contact, address, pharmacy, emergency contact.",
+-    required: true,
+-  },
+-  {
+-    href: "/forms/consents",
+-    title: "Consents & policies",
+-    blurb: "Informed consent, telehealth, practice policies, privacy acknowledgment + draw signature.",
+-    required: true,
+-  },
+-  {
+-    href: "/forms/card",
+-    title: "Payment authorization",
+-    blurb: "Payment-on-file terms + signature, then save a card or ACH on Stripe.",
+-    required: true,
+-  },
+-  {
+-    href: "/forms/roi",
+-    title: "Release of information",
+-    blurb: "Optional — share records with another provider + draw signature.",
+-    required: false,
+-  },
+-] as const;
+-
+-const HANDOUTS = [
+-  {
+-    href: "/forms/handouts/privacy-notice.pdf",
+-    title: "Notice of Privacy Practices (PDF)",
+-    blurb: "Printable handout — full NPP text for your records.",
+-  },
+-  {
+-    href: "/forms/handouts/practice-policies.pdf",
+-    title: "Practice policies (PDF)",
+-    blurb: "Printable copy of policies for your files.",
+-  },
+-] as const;
+-
+-export default async function FormsPage({
+-  searchParams,
+-}: {
+-  searchParams: Promise<{ link?: string }>;
+-}) {
+-  const sp = await searchParams;
+-  const linkParam = sp.link ?? null;
+-
+-  return (
+-    <PageShell
+-      crumbs={[
+-        { href: "/", label: "Home" },
+-        { label: "Forms" },
+-      ]}
+-      title="Intake"
+-      intro={
+-        <>
+-          Complete the web forms below when you can. Submissions go to the
+-          practice over encrypted email for review — this site is a handoff, not
+-          your chart. Book first if you haven’t:{" "}
+-          <a
+-            href={site.links.newClientVisit}
+-            className="font-medium text-foreground underline-offset-4 hover:underline"
+-          >
+-            new patient
+-          </a>
+-          {" · "}
+-          <a
+-            href={site.links.followUp}
+-            className="font-medium text-foreground underline-offset-4 hover:underline"
+-          >
+-            follow-up
+-          </a>
+-          .
+-        </>
+-      }
+-    >
+-      <IntakeSessionBanner linkParam={linkParam} />
+-
+-      <h2 className="mb-3 text-left text-xs font-medium uppercase tracking-wider text-muted">
+-        Web forms
+-      </h2>
+-      <ul className="divide-y divide-border rounded-2xl border border-border bg-surface">
+-        {WEB_FORMS.map((f) => (
+-          <li
+-            key={f.href}
+-            className="flex flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+-          >
+-            <div className="min-w-0 text-left">
+-              <p className="font-medium text-foreground">
+-                {f.title}
+-                <span className="ml-2 text-xs font-normal text-muted">
+-                  {f.required ? "required" : "optional"}
+-                </span>
+-              </p>
+-              <p className="mt-0.5 text-sm text-muted">{f.blurb}</p>
+-            </div>
+-            <Link
+-              href={f.href}
+-              className="inline-flex shrink-0 items-center justify-center rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background"
+-            >
+-              Open form
+-            </Link>
+-          </li>
+-        ))}
+-      </ul>
+-
+-      <h2 className="mb-3 mt-10 text-left text-xs font-medium uppercase tracking-wider text-muted">
+-        PDF handouts
+-      </h2>
+-      <ul className="divide-y divide-border rounded-2xl border border-border bg-surface">
+-        {HANDOUTS.map((f) => (
+-          <li
+-            key={f.href}
+-            className="flex flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+-          >
+-            <div className="min-w-0 text-left">
+-              <p className="font-medium text-foreground">{f.title}</p>
+-              <p className="mt-0.5 text-sm text-muted">{f.blurb}</p>
+-            </div>
+-            <a
+-              href={f.href}
+-              target="_blank"
+-              rel="noopener noreferrer"
+-              className="inline-flex shrink-0 items-center justify-center rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground"
+-            >
+-              PDF
+-            </a>
+-          </li>
+-        ))}
+-      </ul>
+-
+-      <p className="mt-8 text-left text-sm text-muted">
+-        Card and bank details are never typed into intake forms — they go through{" "}
+-        <Link href="/pay" className="text-foreground underline-offset-4 hover:underline">
+-          payment on file
+-        </Link>
+-        . Consent forms use a finger/stylus signature plus typed legal name.
+-      </p>
+-    </PageShell>
+-  );
++/** The per-form hub is replaced by the guided cascade (/intake). Individual /forms/* pages still work. */
++export default async function FormsPage({ searchParams }: { searchParams: Promise<{ link?: string }> }) {
++  await searchParams;
++  redirect("/intake");
+ }
+diff -ruN site.orig/src/app/intake/open/route.ts site/src/app/intake/open/route.ts
+--- site.orig/src/app/intake/open/route.ts	2026-08-12 02:22:57
++++ site/src/app/intake/open/route.ts	2026-10-27 16:55:47
+@@ -24,7 +24,13 @@
+ 
+   try {
+     const payload = verifyIntakeToken(t);
+-    const res = NextResponse.redirect(`${base}/forms?link=ok`);
++    // Optional in-flow next step (booker -> intake screens). Same-site form paths only.
++    const next = url.searchParams.get("next") || "";
++    const safeNext = /^\/(intake|forms\/(personal|consents|card|roi)|pay)(\?[A-Za-z0-9=&%._-]*)?$/.test(next)
++      ? next
++      : "";
++    // Default: the guided intake cascade (resumes at the first unfinished step).
++    const res = NextResponse.redirect(safeNext ? `${base}${safeNext}` : `${base}/intake`);
+     res.cookies.set(intakeCookieName(), t, {
+       httpOnly: true,
+       secure: process.env.NODE_ENV === "production",
+diff -ruN site.orig/src/app/intake/page.tsx site/src/app/intake/page.tsx
+--- site.orig/src/app/intake/page.tsx	1969-12-31 18:00:00
++++ site/src/app/intake/page.tsx	2026-10-27 16:56:51
+@@ -0,0 +1,17 @@
++import type { Metadata } from "next";
++import { PageShell } from "@/components/PageShell";
++import { IntakeCascade } from "@/components/intake/IntakeCascade";
++import { site } from "@/lib/content";
++
++export const metadata: Metadata = {
++  title: `Intake | ${site.name}`,
++  description: "Guided new-client intake: card on file, personal info, consents.",
++};
++
++export default function IntakePage() {
++  return (
++    <PageShell crumbs={[{ href: "/", label: "Home" }, { label: "Intake" }]} title="Your intake">
++      <IntakeCascade />
++    </PageShell>
++  );
++}
+diff -ruN site.orig/src/app/pay/page.tsx site/src/app/pay/page.tsx
+--- site.orig/src/app/pay/page.tsx	2026-08-12 22:43:55
++++ site/src/app/pay/page.tsx	2026-10-27 16:12:38
+@@ -2,6 +2,7 @@
+ import Link from "next/link";
+ import { PageShell } from "@/components/PageShell";
+ import { SaveCardForm } from "@/components/pay/SaveCardForm";
++import { KioskSteps } from "@/components/IntakeFormShell";
+ import { site } from "@/lib/content";
+ 
+ export const metadata: Metadata = {
+@@ -20,6 +21,7 @@
+       title="Payment on file"
+       intro="Save a card or bank account (ACH) for visits and late cancellations. Nothing is charged when you save."
+     >
++      <KioskSteps />
+       <SaveCardForm />
+       <p className="mt-8 text-left text-sm leading-relaxed text-muted">
+         Bitcoin is for a specific visit, not a stored method — there is no “charge later”
+diff -ruN site.orig/src/components/IntakeFormShell.tsx site/src/components/IntakeFormShell.tsx
+--- site.orig/src/components/IntakeFormShell.tsx	2026-10-08 23:16:42
++++ site/src/components/IntakeFormShell.tsx	2026-10-27 16:12:30
+@@ -3,12 +3,18 @@
+ import Link from "next/link";
+ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+ 
++// In-flow intake after booking: personal -> consents -> payment authorization -> save card (/pay).
+ const KIOSK_STEPS = [
+   "/forms/personal",
+   "/forms/consents",
+   "/forms/card",
+-  "/forms/roi",
++  "/pay",
+ ];
++const STEP_LABELS: Record<string, string> = {
++  "/forms/consents": "Next: consents & policies",
++  "/forms/card": "Next: payment authorization",
++  "/pay": "Next: add a card on file (no charge)",
++};
+ 
+ function kioskQuery(): string {
+   if (typeof window === "undefined") return "";
+@@ -26,20 +32,77 @@
+     const i = KIOSK_STEPS.indexOf(here);
+     const next = i >= 0 ? KIOSK_STEPS[i + 1] : "";
+     setHref(next ? `${next}?${q}` : "");
++    // Keep the flow moving: go to the next screen after a short beat.
++    if (next) {
++      const t = window.setTimeout(() => window.location.assign(`${next}?${q}`), 1500);
++      return () => window.clearTimeout(t);
++    }
+   }, [formId]);
+   if (!href) return null;
++  const nextPath = href.split("?")[0];
+   return (
+     <p className="mt-6 text-sm">
+-      <Link href={href} className="text-foreground underline-offset-4 hover:underline">
+-        Next form
++      <Link
++        href={href}
++        className="inline-flex rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background"
++      >
++        {STEP_LABELS[nextPath] || "Next form"} →
+       </Link>
+     </p>
+   );
+ }
+ 
++/** Step x of 4 + hold note while in the post-booking flow. */
++export function KioskSteps() {
++  const [info, setInfo] = useState<{ step: number; held: boolean } | null>(null);
++  useEffect(() => {
++    if (!kioskQuery()) return;
++    const here = window.location.pathname.replace(/\/$/, "");
++    const i = KIOSK_STEPS.indexOf(here);
++    if (i < 0) return;
++    const held = new URLSearchParams(window.location.search).get("held") === "1";
++    setInfo({ step: i + 1, held });
++  }, []);
++  if (!info) return null;
++  return (
++    <div className="mb-6 rounded-2xl border border-border bg-surface px-4 py-3 text-left text-sm text-muted">
++      <p className="font-medium text-foreground">Step {info.step} of {KIOSK_STEPS.length}</p>
++      {info.held ? (
++        <p className="mt-1">
++          Your time is held for 48 hours while you finish. Completing these steps confirms your visit.
++          If you need to stop, the link in your email or text lets you pick up where you left off.
++        </p>
++      ) : null}
++    </div>
++  );
++}
++
+ function prefillFromBooking(form: HTMLFormElement) {
+   const q = new URLSearchParams(window.location.search);
+   if (q.get("kiosk") !== "1") return;
++  if (!q.get("name") && !q.get("email")) {
++    // Post-booking flow: name/email come from the personal-link session, not the URL.
++    fetch("/api/intake/session", { cache: "no-store" })
++      .then((r) => r.json())
++      .then((d: { authenticated?: boolean; email?: string; name?: string | null }) => {
++        if (!d.authenticated) return;
++        const n = (d.name || "").trim();
++        const [f, ...r] = n.split(/\s+/);
++        const vals: Record<string, string> = {
++          firstName: f || "",
++          lastName: r.join(" "),
++          fullName: n,
++          email: d.email || "",
++        };
++        for (const [key, value] of Object.entries(vals)) {
++          if (!value) continue;
++          const el = form.elements.namedItem(key) as HTMLInputElement | null;
++          if (el && "value" in el && !el.value) el.value = value;
++        }
++      })
++      .catch(() => {});
++    return;
++  }
+   const name = (q.get("name") || "").trim();
+   const [first, ...rest] = name.split(/\s+/);
+   const values: Record<string, string> = {
+@@ -135,6 +198,7 @@
+       }}
+       className="space-y-6 text-left"
+     >
++      <KioskSteps />
+       <p className="text-xs font-medium uppercase tracking-wider text-muted">
+         {title}
+       </p>
+diff -ruN site.orig/src/components/forms/CardAuthForm.tsx site/src/components/forms/CardAuthForm.tsx
+--- site.orig/src/components/forms/CardAuthForm.tsx	2026-08-12 22:44:05
++++ site/src/components/forms/CardAuthForm.tsx	2026-10-27 16:12:30
+@@ -10,6 +10,21 @@
+ import { SignaturePad } from "@/components/SignaturePad";
+ import { cardAuthText } from "@/lib/intake-content";
+ 
++/** Outside the post-booking flow: plain link. In the flow, KioskNext shows the next step. */
++function PayNextLink() {
++  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("kiosk") === "1") {
++    return null;
++  }
++  return (
++    <Link
++      href="/pay"
++      className="inline-flex rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background"
++    >
++      Save payment next →
++    </Link>
++  );
++}
++
+ export function CardAuthForm() {
+   return (
+     <IntakeFormShell
+@@ -17,14 +32,7 @@
+       title="Payment authorization"
+       collect={formToFields}
+       successNote="Authorization recorded. Next: save a card or bank account on the secure payment page — no charge today."
+-      successExtra={
+-        <Link
+-          href="/pay"
+-          className="inline-flex rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background"
+-        >
+-          Save payment next →
+-        </Link>
+-      }
++      successExtra={<PayNextLink />}
+     >
+       <div className="max-h-64 overflow-y-auto rounded-2xl border border-border bg-surface p-4 text-sm leading-relaxed text-muted whitespace-pre-wrap">
+         {cardAuthText}
+diff -ruN site.orig/src/components/intake/IntakeCascade.tsx site/src/components/intake/IntakeCascade.tsx
+--- site.orig/src/components/intake/IntakeCascade.tsx	1969-12-31 18:00:00
++++ site/src/components/intake/IntakeCascade.tsx	2026-10-27 16:56:59
+@@ -0,0 +1,499 @@
++"use client";
++
++/**
++ * One guided intake: card on file -> personal info -> consents -> release of information (optional) -> done.
++ * Resumes at the first unfinished step (server progress from the booker). Each step still posts to
++ * /api/intake, so the practice-inbox email and the signed Chart/Consents PDF are unchanged.
++ */
++import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
++import { Check, Field, TextArea, formToFields } from "@/components/IntakeFormShell";
++import { SignaturePad } from "@/components/SignaturePad";
++import { SaveCardForm } from "@/components/pay/SaveCardForm";
++import {
++  cardAuthText,
++  informedConsentSections,
++  practicePoliciesSections,
++  privacyNoticeSummary,
++  telehealthConsentSections,
++} from "@/lib/intake-content";
++
++type StepId = "card" | "personal" | "consents" | "roi" | "done";
++type Flags = { card?: boolean; card_auth?: boolean; personal?: boolean; consents?: boolean; roi?: boolean };
++type Progress = {
++  authenticated?: boolean;
++  email?: string;
++  name?: string;
++  flags?: Flags;
++  client?: { name?: string; given_name?: string; family_name?: string; phone?: string; dob?: string } | null;
++  hold?: { status?: string; when_label?: string; deadline_label?: string } | null;
++};
++
++const STEPS: { id: Exclude<StepId, "done">; label: string; optional?: boolean }[] = [
++  { id: "card", label: "Card on file" },
++  { id: "personal", label: "Personal info" },
++  { id: "consents", label: "Consents" },
++  { id: "roi", label: "Release of info", optional: true },
++];
++
++const today = () => new Date().toISOString().slice(0, 10);
++
++function stepDone(id: StepId, f: Flags, skipped: Set<string>): boolean {
++  if (id === "card") return Boolean(f.card && f.card_auth);
++  if (id === "roi") return Boolean(f.roi) || skipped.has("roi");
++  return Boolean(f[id as keyof Flags]);
++}
++
++function Block({ title, sections }: { title: string; sections: readonly { heading: string; body: string }[] }) {
++  return (
++    <details className="rounded-2xl border border-border bg-surface p-4">
++      <summary className="cursor-pointer text-sm font-semibold text-foreground">{title} — read</summary>
++      <div className="mt-3 max-h-56 space-y-3 overflow-y-auto pr-1 text-sm leading-relaxed text-muted">
++        {sections.map((s) => (
++          <div key={s.heading}>
++            <p className="font-medium text-foreground">{s.heading}</p>
++            <p className="mt-1 whitespace-pre-wrap">{s.body}</p>
++          </div>
++        ))}
++      </div>
++    </details>
++  );
++}
++
++function ProgressBar({ step, flags, skipped }: { step: StepId; flags: Flags; skipped: Set<string> }) {
++  return (
++    <ol className="mb-6 grid grid-cols-4 gap-2 text-left text-xs" aria-label="Intake progress">
++      {STEPS.map((s, i) => {
++        const done = stepDone(s.id, flags, skipped);
++        const here = s.id === step;
++        return (
++          <li
++            key={s.id}
++            aria-current={here ? "step" : undefined}
++            className={`rounded-xl border px-2 py-2 ${here ? "border-foreground" : "border-border"} ${done ? "bg-surface" : ""}`}
++          >
++            <span className={`block font-medium ${done ? "text-foreground" : here ? "text-foreground" : "text-muted"}`}>
++              {done ? "✓" : `${i + 1}.`} {s.label}
++            </span>
++            <span className="text-muted">{done ? (skipped.has(s.id) ? "skipped" : "done") : here ? "now" : s.optional ? "optional" : "to do"}</span>
++          </li>
++        );
++      })}
++    </ol>
++  );
++}
++
++/** One signature, captured once, adopted per document with an explicit checkbox + date (ESIGN-style). */
++function SignHere({ sig, fullName, doc }: { sig: string; fullName: string; doc: string }) {
++  if (!sig) {
++    return (
++      <>
++        <SignaturePad name="signature" label="Draw your signature (used for your intake documents)" required />
++        <p className="text-xs text-muted">Signing as {fullName || "you"}. You’ll only draw this once.</p>
++      </>
++    );
++  }
++  return (
++    <div className="rounded-2xl border border-border bg-surface p-3 text-sm">
++      <input type="hidden" name="signature" value={sig} readOnly />
++      {/* eslint-disable-next-line @next/next/no-img-element */}
++      <img src={sig} alt="Your signature" className="h-16 w-auto" />
++      <Check name="adoptSignature" required>
++        I, {fullName || "the signer"}, apply my signature above to the {doc}.
++      </Check>
++    </div>
++  );
++}
++
++function StepForm({
++  formId,
++  onDone,
++  children,
++  submitLabel,
++  extra,
++  draftKey,
++}: {
++  formId: string;
++  onDone: (sig: string) => void;
++  children: ReactNode;
++  submitLabel: string;
++  extra?: ReactNode;
++  draftKey: string;
++}) {
++  const [busy, setBusy] = useState(false);
++  const [err, setErr] = useState("");
++  const [saved, setSaved] = useState(false);
++  const ref = useRef<HTMLFormElement>(null);
++
++  // Restore an unfinished draft from this device ("Save and finish later").
++  useEffect(() => {
++    const raw = typeof window !== "undefined" ? window.localStorage.getItem(draftKey) : null;
++    if (!raw || !ref.current) return;
++    try {
++      const vals = JSON.parse(raw) as Record<string, string | boolean>;
++      for (const [k, v] of Object.entries(vals)) {
++        const el = ref.current.elements.namedItem(k) as HTMLInputElement | null;
++        if (!el || k === "signature") continue;
++        if (el.type === "checkbox") el.checked = Boolean(v);
++        else if (!el.value) el.value = String(v);
++      }
++    } catch {
++      /* ignore */
++    }
++  }, [draftKey]);
++
++  function saveLater() {
++    if (!ref.current) return;
++    const vals = formToFields(ref.current);
++    delete vals.signature;
++    window.localStorage.setItem(draftKey, JSON.stringify(vals));
++    setSaved(true);
++  }
++
++  async function submit(e: FormEvent<HTMLFormElement>) {
++    e.preventDefault();
++    const form = e.currentTarget;
++    if (!form.reportValidity()) return;
++    setBusy(true);
++    setErr("");
++    const fields = formToFields(form);
++    try {
++      const res = await fetch("/api/intake", {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify({ form: formId, fields }),
++      });
++      const data = (await res.json()) as { error?: string };
++      if (!res.ok) {
++        setErr(data.error || "Submit failed — try again.");
++        return;
++      }
++      window.localStorage.removeItem(draftKey);
++      onDone(typeof fields.signature === "string" ? fields.signature : "");
++    } catch {
++      setErr("Network error — try again or call the practice.");
++    } finally {
++      setBusy(false);
++    }
++  }
++
++  return (
++    <form ref={ref} onSubmit={submit} className="space-y-5 text-left">
++      {children}
++      {err ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-800">{err}</p> : null}
++      <div className="flex flex-wrap items-center gap-3">
++        <button
++          type="submit"
++          disabled={busy}
++          className="rounded-full bg-foreground px-5 py-3 text-sm font-medium text-background disabled:opacity-50"
++        >
++          {busy ? "Saving…" : submitLabel}
++        </button>
++        {extra}
++        <button type="button" onClick={saveLater} className="text-sm text-muted underline underline-offset-4">
++          Save and finish later
++        </button>
++      </div>
++      {saved ? (
++        <p className="text-sm text-muted">
++          Saved on this device. Finished steps are already with the practice — reopen the link in your
++          email or text any time and you’ll pick up right here.
++        </p>
++      ) : null}
++    </form>
++  );
++}
++
++export function IntakeCascade() {
++  const [prog, setProg] = useState<Progress | null>(null);
++  const [flags, setFlags] = useState<Flags>({});
++  const [step, setStep] = useState<StepId | null>(null);
++  const [sig, setSig] = useState("");
++  const [skipped, setSkipped] = useState<Set<string>>(new Set());
++  const [held, setHeld] = useState(false);
++
++  const load = useCallback(async () => {
++    const r = await fetch("/api/intake/progress", { cache: "no-store" }).then((x) => x.json()).catch(() => ({}));
++    setProg(r as Progress);
++    setFlags((r as Progress).flags || {});
++    return r as Progress;
++  }, []);
++
++  useEffect(() => {
++    setHeld(new URLSearchParams(window.location.search).get("held") === "1");
++    const s = window.sessionStorage.getItem("intake_sig");
++    if (s) setSig(s);
++    const sk = window.localStorage.getItem("intake_skipped");
++    const skip = new Set<string>(sk ? (JSON.parse(sk) as string[]) : []);
++    setSkipped(skip);
++    load().then((p) => {
++      const f = p.flags || {};
++      const first = STEPS.find((x) => !stepDone(x.id, f, skip));
++      setStep(first ? first.id : "done");
++    });
++  }, [load]);
++
++  const fullName = useMemo(() => {
++    const c = prog?.client;
++    return (c?.name || [c?.given_name, c?.family_name].filter(Boolean).join(" ") || prog?.name || "").trim();
++  }, [prog]);
++  const email = prog?.email || "";
++  const first = prog?.client?.given_name || fullName.split(/\s+/)[0] || "";
++  const last = prog?.client?.family_name || fullName.split(/\s+/).slice(1).join(" ");
++  const phone = prog?.client?.phone || "";
++
++  const advance = useCallback(
++    (from: StepId, patch: Flags, newSig?: string) => {
++      if (newSig) {
++        setSig(newSig);
++        window.sessionStorage.setItem("intake_sig", newSig);
++      }
++      const f = { ...flags, ...patch };
++      setFlags(f);
++      const order = STEPS.map((s) => s.id);
++      const next = order.slice(order.indexOf(from as Exclude<StepId, "done">) + 1).find((id) => !stepDone(id, f, skipped));
++      const any = STEPS.find((s) => !stepDone(s.id, f, skipped));
++      setStep(next || (any ? any.id : "done"));
++      window.scrollTo({ top: 0, behavior: "smooth" });
++    },
++    [flags, skipped],
++  );
++
++  if (!prog || !step) return <p className="text-sm text-muted">Loading your intake…</p>;
++  if (!prog.authenticated) {
++    return (
++      <div className="rounded-2xl border border-border bg-surface px-5 py-6 text-left text-sm text-muted">
++        <p className="font-medium text-foreground">Open your personal intake link</p>
++        <p className="mt-2">
++          Please use the “Complete intake paperwork” link in your booking email or text. It keeps your
++          progress and signs you in to this form. Need a new link? Call 773-312-3858.
++        </p>
++      </div>
++    );
++  }
++
++  const holdNote =
++    prog.hold?.status === "held" || held ? (
++      <p className="mb-4 rounded-2xl border border-border bg-surface px-4 py-3 text-left text-sm text-muted">
++        Your visit{prog.hold?.when_label ? ` on ${prog.hold.when_label} CT` : ""} is held
++        {prog.hold?.deadline_label ? ` until ${prog.hold.deadline_label}` : " for 48 hours"}. Finishing these steps
++        confirms it. About 5–10 minutes.
++      </p>
++    ) : null;
++  const signingAs = (
++    <p className="text-sm text-muted">
++      Signing as <span className="font-medium text-foreground">{fullName || email}</span> · {email}
++    </p>
++  );
++  const idFields = (
++    <>
++      <input type="hidden" name="fullName" value={fullName} readOnly />
++      <input type="hidden" name="email" value={email} readOnly />
++      <input type="hidden" name="signedDate" value={today()} readOnly />
++    </>
++  );
++
++  return (
++    <div className="text-left">
++      {holdNote}
++      <ProgressBar step={step} flags={flags} skipped={skipped} />
++
++      {step === "card" ? (
++        <section className="space-y-5">
++          <h2 className="text-lg font-semibold text-foreground">1. Card on file</h2>
++          <p className="text-sm text-muted">Nothing is charged today. Stripe stores the card; we never see the number.</p>
++          {!flags.card_auth ? (
++            <StepForm
++              formId="card-auth"
++              draftKey={`intake_draft_card_${email}`}
++              submitLabel="Agree and add card"
++              onDone={(s) => {
++                if (flags.card) {
++                  advance("card", { card_auth: true }, s);
++                  return;
++                }
++                if (s) {
++                  setSig(s);
++                  window.sessionStorage.setItem("intake_sig", s);
++                }
++                setFlags({ ...flags, card_auth: true }); // stay here: add the card next
++              }}
++            >
++              {signingAs}
++              {idFields}
++              <div className="max-h-40 overflow-y-auto rounded-2xl border border-border bg-surface p-4 text-sm leading-relaxed text-muted whitespace-pre-wrap">
++                {cardAuthText}
++              </div>
++              <Check name="authorizeCharges" required>
++                I authorize the practice to charge the payment method I place on file for services and for late
++                cancellations (less than 24 hours’ notice).
++              </Check>
++              <Check name="authorizedUser" required>
++                I am an authorized user of that payment method.
++              </Check>
++              <SignHere sig={sig} fullName={fullName} doc="payment authorization" />
++            </StepForm>
++          ) : (
++            <SaveCardForm
++              initialEmail={email}
++              initialName={fullName}
++              compact
++              onSaved={() => advance("card", { card: true })}
++            />
++          )}
++        </section>
++      ) : null}
++
++      {step === "personal" ? (
++        <section className="space-y-5">
++          <h2 className="text-lg font-semibold text-foreground">2. Personal information</h2>
++          <StepForm
++            formId="personal"
++            draftKey={`intake_draft_personal_${email}`}
++            submitLabel="Save and continue"
++            onDone={() => advance("personal", { personal: true })}
++          >
++            <input type="hidden" name="email" value={email} readOnly />
++            <input type="hidden" name="fullName" value={fullName} readOnly />
++            <div className="grid gap-4 sm:grid-cols-2">
++              <PrefField label="First name" name="firstName" value={first} required />
++              <PrefField label="Last name" name="lastName" value={last} required />
++            </div>
++            <div className="grid gap-4 sm:grid-cols-2">
++              <Field label="Date of birth" name="dob" type="date" required autoComplete="bday" />
++              <PrefField label="Phone" name="phone" value={phone} type="tel" required />
++            </div>
++            <Field label="Street address" name="address1" required autoComplete="street-address" />
++            <div className="grid gap-4 sm:grid-cols-3">
++              <Field label="City" name="city" required autoComplete="address-level2" />
++              <label className="block text-sm">
++                <span className="font-medium text-foreground">State for visits *</span>
++                <select
++                  name="visitState"
++                  required
++                  defaultValue=""
++                  className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-foreground"
++                >
++                  <option value="" disabled>Select</option>
++                  <option value="IL">Illinois</option>
++                  <option value="KS">Kansas</option>
++                  <option value="MO">Missouri</option>
++                </select>
++              </label>
++              <Field label="ZIP" name="zip" required autoComplete="postal-code" />
++            </div>
++            <Field label="Preferred pharmacy (optional)" name="pharmacy" />
++            <div className="grid gap-4 sm:grid-cols-2">
++              <Field label="Emergency contact name" name="emergencyName" />
++              <Field label="Emergency contact phone" name="emergencyPhone" type="tel" />
++            </div>
++            <TextArea label="Anything we should know before the first visit? (optional)" name="notes" rows={2} />
++          </StepForm>
++        </section>
++      ) : null}
++
++      {step === "consents" ? (
++        <section className="space-y-4">
++          <h2 className="text-lg font-semibold text-foreground">3. Consents & policies</h2>
++          <StepForm
++            formId="consents"
++            draftKey={`intake_draft_consents_${email}`}
++            submitLabel="Sign and continue"
++            onDone={(s) => advance("consents", { consents: true }, s)}
++          >
++            {signingAs}
++            {idFields}
++            <Block title="Informed consent (therapy & medication)" sections={informedConsentSections} />
++            <Check name="agreeInformed" required>I agree to the informed consent for psychotherapy and medication management.</Check>
++            <Block title="Telehealth consent" sections={telehealthConsentSections} />
++            <Check name="agreeTelehealth" required>I agree to telehealth (video) care; it is not for emergencies (call 911).</Check>
++            <Block title="Practice policies" sections={practicePoliciesSections} />
++            <Check name="agreePolicies" required>I agree to the practice policies (24-hour cancellation, out-of-network payment).</Check>
++            <Block title="Notice of privacy practices (summary)" sections={privacyNoticeSummary} />
++            <Check name="ackPrivacy" required>
++              I acknowledge I was offered the Notice of Privacy Practices (
++              <a href="/forms/handouts/privacy-notice.pdf" target="_blank" rel="noreferrer" className="underline">PDF</a>).
++            </Check>
++            <SignHere sig={sig} fullName={fullName} doc="consents and policies above" />
++          </StepForm>
++        </section>
++      ) : null}
++
++      {step === "roi" ? (
++        <section className="space-y-4">
++          <h2 className="text-lg font-semibold text-foreground">4. Release of information (optional)</h2>
++          <p className="text-sm text-muted">
++            Only if you want us to share records with another clinician, clinic, or school. Most people skip this.
++          </p>
++          <StepForm
++            formId="roi"
++            draftKey={`intake_draft_roi_${email}`}
++            submitLabel="Sign and finish"
++            onDone={(s) => advance("roi", { roi: true }, s)}
++            extra={
++              <button
++                type="button"
++                onClick={() => {
++                  const sk = new Set(skipped);
++                  sk.add("roi");
++                  setSkipped(sk);
++                  window.localStorage.setItem("intake_skipped", JSON.stringify([...sk]));
++                  const any = STEPS.find((s) => s.id !== "roi" && !stepDone(s.id, flags, sk));
++                  setStep(any ? any.id : "done");
++                }}
++                className="rounded-full border border-border px-5 py-3 text-sm font-medium text-foreground"
++              >
++                Skip — not needed
++              </button>
++            }
++          >
++            {signingAs}
++            {idFields}
++            <input type="hidden" name="firstName" value={first} readOnly />
++            <input type="hidden" name="lastName" value={last} readOnly />
++            <div className="flex flex-wrap gap-4 text-sm">
++              <label className="flex items-center gap-2"><input type="checkbox" name="canSend" value="yes" className="h-4 w-4" />Send information</label>
++              <label className="flex items-center gap-2"><input type="checkbox" name="canReceive" value="yes" className="h-4 w-4" />Receive information</label>
++            </div>
++            <Field label="Other provider / organization" name="otherParty" required />
++            <div className="grid gap-4 sm:grid-cols-2">
++              <Field label="Their phone" name="otherPhone" type="tel" />
++              <Field label="Their email" name="otherEmail" type="email" />
++            </div>
++            <input type="hidden" name="relationship" value="Self" readOnly />
++            <TextArea label="Purpose / what may be shared" name="purpose" required rows={2} />
++            <Check name="understandRoi" required>
++              I understand this authorization is voluntary, may be revoked in writing, and that redisclosure by a
++              recipient who is not a covered provider may not be protected.
++            </Check>
++            <SignHere sig={sig} fullName={fullName} doc="release of information" />
++          </StepForm>
++        </section>
++      ) : null}
++
++      {step === "done" ? (
++        <section className="rounded-2xl border border-border bg-surface px-5 py-8 text-center">
++          <p className="text-lg font-medium text-foreground">You’re all set — thank you</p>
++          <p className="mt-2 text-sm text-muted">
++            Card on file, personal info and consents are with the practice.
++            {prog.hold ? " Your visit is confirmed; a confirmation email is on the way." : ""} You can close this page.
++          </p>
++        </section>
++      ) : null}
++    </div>
++  );
++}
++
++function PrefField({ label, name, value, type = "text", required }: { label: string; name: string; value: string; type?: string; required?: boolean }) {
++  return (
++    <label className="block text-sm">
++      <span className="font-medium text-foreground">{label}{required ? " *" : ""}</span>
++      <input
++        name={name}
++        type={type}
++        required={required}
++        defaultValue={value}
++        className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-foreground"
++      />
++    </label>
++  );
++}
+diff -ruN site.orig/src/components/pay/SaveCardForm.tsx site/src/components/pay/SaveCardForm.tsx
+--- site.orig/src/components/pay/SaveCardForm.tsx	2026-10-08 22:40:35
++++ site/src/components/pay/SaveCardForm.tsx	2026-10-27 16:55:47
+@@ -110,9 +110,15 @@
+ export function SaveCardForm({
+   initialEmail = "",
+   initialName = "",
++  onSaved,
++  compact = false,
+ }: {
+   initialEmail?: string;
+   initialName?: string;
++  /** Intake cascade: advance once Stripe + the practice copy are saved. */
++  onSaved?: (c: OnFile) => void;
++  /** Hide the email/name inputs when the cascade already knows them. */
++  compact?: boolean;
+ }) {
+   const [config, setConfig] = useState<Config | null>(null);
+   const [email, setEmail] = useState(initialEmail);
+@@ -231,6 +237,13 @@
+           per practice policy. When it expires or you want a different method,
+           come back to this page.
+         </p>
++        {typeof window !== "undefined" &&
++        new URLSearchParams(window.location.search).get("kiosk") === "1" ? (
++          <p className="mt-4 text-sm font-medium text-foreground">
++            That&apos;s everything — thank you. Once your personal info and consents are in,
++            your visit is confirmed and we&apos;ll email you. You can close this page.
++          </p>
++        ) : null}
+       </div>
+     );
+   }
+@@ -242,7 +255,7 @@
+         the full number or routing details. Nothing is charged until a visit or
+         a late cancel. ACH takes a few days to settle.
+       </p>
+-      <div className="grid gap-3 sm:grid-cols-2">
++      <div className={compact && initialEmail ? "hidden" : "grid gap-3 sm:grid-cols-2"}>
+         <label className="block text-sm">
+           <span className="mb-1 block text-muted">Email on file</span>
+           <input
+@@ -279,7 +292,9 @@
+             ? "Starting…"
+             : config.checkoutOnly
+               ? "Continue to secure card page"
+-              : "Continue"}
++              : compact
++                ? "Add a card or bank account"
++                : "Continue"}
+         </button>
+       ) : (
+         <>
+@@ -297,7 +312,13 @@
+             stripe={stripePromise}
+             options={{ clientSecret, appearance, loader: "auto" }}
+           >
+-            <CardInner email={email} onDone={setSaved} />
++            <CardInner
++              email={email}
++              onDone={(c) => {
++                setSaved(c);
++                onSaved?.(c);
++              }}
++            />
+           </Elements>
+         </>
+       )}
+diff -ruN site.orig/src/lib/booker-intake.ts site/src/lib/booker-intake.ts
+--- site.orig/src/lib/booker-intake.ts	1969-12-31 18:00:00
++++ site/src/lib/booker-intake.ts	2026-10-27 16:12:30
+@@ -0,0 +1,30 @@
++/** Server-only: tell the booker an intake form / card landed (completion flags, Chart/Consents PDF, hold). */
++const BOOKER = (process.env.BOOKER_INTERNAL_URL?.trim() || "http://127.0.0.1:8090").replace(/\/$/, "");
++
++export async function postToBooker(
++  path: string,
++  body: unknown,
++): Promise<{ ok: boolean; detail?: string; data?: unknown }> {
++  const secret = process.env.BOOKER_STAFF_SECRET?.trim() || "";
++  if (!secret) return { ok: false, detail: "no booker secret" };
++  try {
++    const res = await fetch(`${BOOKER}${path}`, {
++      method: "POST",
++      headers: { "Content-Type": "application/json", "X-Staff-Secret": secret },
++      body: JSON.stringify(body),
++      cache: "no-store",
++      signal: AbortSignal.timeout(15_000),
++    });
++    const text = await res.text();
++    if (!res.ok) return { ok: false, detail: `booker ${res.status}` };
++    let data: unknown = {};
++    try {
++      data = text ? JSON.parse(text) : {};
++    } catch {
++      /* keep */
++    }
++    return { ok: true, data };
++  } catch (e) {
++    return { ok: false, detail: String(e).slice(0, 120) };
++  }
++}

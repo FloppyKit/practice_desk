@@ -18,6 +18,7 @@ from tests import (  # noqa: E402
     test_demo_store,
     test_desk_mobile,
     test_modejson,
+    test_onboarding,
     test_oss_hygiene,
     test_public_portal,
     test_slots,
@@ -34,6 +35,7 @@ def main() -> int:
     ran = 0
     for mod in (
         test_avs,
+        test_onboarding,
     test_desk_agent,
         test_billing,
         test_chat_threads,

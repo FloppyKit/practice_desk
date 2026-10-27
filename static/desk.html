@@ -525,6 +525,9 @@
     .home-chip { display:inline-block; font-size:0.75rem; border:1px solid var(--border); border-radius:999px; padding:0.15rem 0.5rem; }
     .home-chip.ok { border-color:var(--ok,#166534); color:var(--ok,#166534); }
     .home-chip.owed { border-color:#a16207; color:#a16207; }
+    .home-chip.due { border-color:#a16207; color:#a16207; }
+    .grid-ev.held { background:repeating-linear-gradient(135deg, var(--surface,#fff) 0 6px, rgba(161,98,7,0.12) 6px 12px); color:var(--foreground); border:1px dashed #a16207; }
+    .grid-ev.held .desk-meta { color:#a16207; opacity:1; }
     .home-books-list li { display:flex; justify-content:space-between; gap:0.5rem; font-size:0.82rem; padding:0.3rem 0; }
     .home-list { list-style:none; margin:0.35rem 0 0; padding:0; }
     .home-list li { border-bottom:1px solid var(--border); }
@@ -3473,13 +3476,21 @@
         const top = minsFromOpen(start) * PX_PER_MIN;
         if (top + 4 < 0 || top > height) return;
         const ev = document.createElement("div");
-        ev.className = "grid-ev" + (v.event_type || v.email ? " booker" : "");
+        const held = v.hold && v.hold.status === "held";
+        ev.className = "grid-ev" + (v.event_type || v.email ? " booker" : "") + (held ? " held" : "");
         ev.style.top = Math.max(0, top) + "px";
         ev.style.height = Math.max(22, dur * PX_PER_MIN - 3) + "px";
         const time = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
         ev.innerHTML = "<strong>" + esc(v.name || v.title || "Busy") + "</strong>"
-          + "<span class='desk-meta'>" + esc(time) + (dur ? " · " + dur + "m" : "") + "</span>";
-        ev.title = (v.name || "") + " " + (v.email || "") + " " + (v.title || "");
+          + "<span class='desk-meta'>" + esc(time) + (dur ? " · " + dur + "m" : "") + "</span>"
+          + (v.intake && v.intake.flags
+            ? "<span class='desk-meta'>" + esc((held ? "Held · " : "") + "P" + (v.intake.flags.personal ? "✓" : "–")
+              + " C" + (v.intake.flags.consents ? "✓" : "–") + " $" + (v.intake.flags.card ? "✓" : "–")) + "</span>"
+            : "");
+        ev.title = (v.name || "") + " " + (v.email || "") + " " + (v.title || "")
+          + (v.intake && v.intake.flags ? " · intake: personal " + (v.intake.flags.personal ? "done" : "due")
+            + ", consents " + (v.intake.flags.consents ? "done" : "due") + ", card " + (v.intake.flags.card ? "on file" : "due")
+            + (held ? " · HELD until " + new Date(v.hold.deadline_at).toLocaleString() : "") : "");
         if (v.event_id) ev.dataset.eid = v.event_id;
         if (focusEventId && v.event_id === focusEventId) ev.classList.add("is-focus");
         ev.onclick = (e) => {
@@ -4365,6 +4376,19 @@
         });
       }).catch(() => {});
     }
+    // New-client intake flags (personal / consents / card on file) + open hold.
+    function intakeChips(intake) {
+      if (!intake || !intake.flags) return "";
+      const f = intake.flags;
+      const chip = (ok, label) => "<span class='home-chip" + (ok ? " ok" : " due") + "'>" + esc(label + (ok ? " ✓" : " due")) + "</span>";
+      let html = chip(f.personal, "Personal info") + chip(f.consents, "Consents") + chip(f.card, "Card on file");
+      if (intake.hold && intake.hold.deadline_at) {
+        const dl = new Date(intake.hold.deadline_at).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        html += "<span class='home-chip due'>" + esc("Held: paperwork due by " + dl + " CT") + "</span>";
+      }
+      return html;
+    }
+
     function renderHome(data) {
       const c = data.client || {};
       const card = data.card || {};
@@ -4410,6 +4434,7 @@
           <p class="home-kv">${esc(bits.join(" · "))}</p>
           <div class="home-chips">
             <span class="home-chip${cardOk ? " ok" : ""}">${esc(cardLabel)}</span>
+            ${intakeChips(data.intake)}
             ${window.DeskBooks ? DeskBooks.chip(data.books) : ""}
           </div>
         </div>

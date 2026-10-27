@@ -89,7 +89,8 @@
           <span>I agree to receive SMS texts from Brown Psychiatric Services at this number for appointment reminders, scheduling, and care coordination. Message frequency varies. Message and data rates may apply. Reply STOP to cancel, HELP for help. Consent is not a condition of care. <a href="https://privacy.drmattbrown.com" target="_blank" rel="noopener">Privacy</a> · <a href="https://terms.drmattbrown.com" target="_blank" rel="noopener">Terms</a></span>
         </label>
 <label>Notes<textarea name="notes" rows="4" placeholder="Optional — non-clinical only"></textarea></label>
-        <button class="btn" id="submit" type="submit" disabled>Confirm booking</button>
+        <p class="hint" style="margin:0.25rem 0 0.75rem;font-size:0.9rem;opacity:0.8">Next you'll add a card on file (nothing is charged), then your personal info and consents — about 5–10 minutes. Your spot is held for 48 hours while you finish.</p>
+        <button class="btn" id="submit" type="submit" disabled>Hold this time</button>
       </form>
     </div>
   </main>
@@ -168,7 +169,7 @@
   <script src="/static/js/cipher-envelope.js?v=1"></script>
   <script src="/static/js/cipher-booker.js?v=1"></script>
   <script type="module">
-    import { initBooker } from "/static/js/booker.js?v=prefill1";
+    import { initBooker } from "/static/js/booker.js?v=hold2";
     initBooker({ type: "new-client", title: "New client visit", defaultDuration: 90, price: "$600", location: "Video · live.psycharts.org/guest" });
   </script>
 </body>
