@@ -474,26 +474,17 @@ def mail_download_attachment(message_id: str, att_id: str) -> tuple[bytes, str, 
 
 
 def drive_upload_bytes(fpath: str, data: bytes, suffix: str = ".bin") -> None:
-    dest = None
-    try:
-        fd, dest = tempfile.mkstemp(prefix="pdrive-up-", dir=SHM, suffix=suffix)
-        os.write(fd, data)
-        os.close(fd)
-        r = subprocess.run(
-            [PROTON, "--no-input", "drive", "items", "upload", dest, fpath],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=_proton_env(),
-        )
-        if r.returncode != 0:
-            raise RuntimeError((r.stderr or r.stdout or "upload")[:240])
-    finally:
-        if dest:
-            try:
-                os.unlink(dest)
-            except OSError:
-                pass
+    # proton-cli 2.x: a file SRC treats DEST as the target *folder* (so a full file path fails);
+    # SRC "-" (stdin) lets DEST name the file. Bytes never touch disk.
+    r = subprocess.run(
+        [PROTON, "--no-input", "drive", "items", "upload", "-", fpath],
+        input=data,
+        capture_output=True,
+        timeout=120,
+        env=_proton_env(),
+    )
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or b"upload").decode("utf-8", "replace")[:240])
 
 
 def load_token() -> str:
