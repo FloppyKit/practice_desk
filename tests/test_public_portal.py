@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks, HTTPException, Request
 
 ROOT = Path(__file__).resolve().parents[1]
 _ENV_KEYS = ("BOOKER_LOG_DIR", "VERIFY_CODE_SECRET", "CANCEL_SECRET_FILE")
@@ -368,7 +368,10 @@ def test_voice_follow_up_needs_contact_on_file() -> None:
                 source="voice",
                 **kw,
             )
-            return _status(main.api_book, req, BackgroundTasks())
+            # api_book now takes the raw Request (phone line marks itself with x-desk-channel: voice)
+            http = Request({"type": "http", "method": "POST", "path": "/api/book", "query_string": b"",
+                            "headers": [(b"x-desk-channel", b"voice")]})
+            return _status(main.api_book, req, BackgroundTasks(), http)
 
         assert book(email="stranger@example.com") == 401
         assert book(email="jane@example.com", verify_token="bad.token") == 401

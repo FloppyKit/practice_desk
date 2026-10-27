@@ -77,8 +77,30 @@ def _avs_desk():
 
         from urllib.parse import unquote
 
+        folders = {"/", "/Clients", "/Clients/Patient, Unit", "/Clients/Patient, Unit/Chart",
+                   "/Clients/Patient, Unit/Chart/Visit Notes"}
+        mkdirs: list[str] = []
+
+        def notify_get(path):
+            target = unquote(path.split("path=", 1)[1])
+            if not path.startswith("/drive/list"):
+                return 200, drive.get(target, b""), "application/pdf"
+            if target not in folders:
+                return 502, b'{"ok": false}', "application/json"
+            pre = target.rstrip("/") + "/"
+            items = [{"name": f[len(pre):], "type": "folder"} for f in folders if f.startswith(pre) and "/" not in f[len(pre):]]
+            items += [{"name": f[len(pre):], "type": "file"} for f in drive if f.startswith(pre) and "/" not in f[len(pre):]]
+            return 200, json.dumps({"ok": True, "items": items}).encode(), "application/json"
+
+        def mkdir(path):
+            assert path not in folders, "mkdir of an existing folder: " + path
+            assert path.rsplit("/", 1)[0] in folders, "parent missing: " + path
+            folders.add(path)
+            mkdirs.append(path)
+
         main.urlopen, main._bill_send = urlopen, bill_send
-        main._notify_get = lambda path: (200, drive.get(unquote(path.split("path=", 1)[1]), b""), "application/pdf")
+        main._notify_get, main._drive_mkdir = notify_get, mkdir
+        main._test_folders, main._test_mkdirs = folders, mkdirs
         try:
             yield main, drive, calls, sends
         finally:
@@ -171,3 +193,67 @@ def test_draft_never_calls_xai() -> None:
         assert calls == []  # structured scribe note: no model call at all
         got = main.api_desk_note_draft(main.DeskNoteDraftRequest(transcript="doctor: how is sleep? patient: better on lexapro."))
         assert got["engine"].startswith("bedrock") and calls == [main.SCRIBE_NOTE_URL]
+
+
+def _set_chart(path: str) -> None:
+    from app import clients_db
+
+    row = clients_db.get_by_id("c-unit")
+    row["drive_folder_path"] = path
+    clients_db.upsert(row)
+
+
+def test_sign_creates_missing_client_tree() -> None:
+    with _avs_desk() as (main, drive, calls, sends):
+        _set_chart("/Clients/New, Person/Chart")
+        out = _sign(main)
+        assert main._test_mkdirs == [
+            "/Clients/New, Person", "/Clients/New, Person/Billing", "/Clients/New, Person/Chart",
+            "/Clients/New, Person/Chart/Consents", "/Clients/New, Person/Chart/Labs",
+            "/Clients/New, Person/Chart/Letters", "/Clients/New, Person/Chart/Orders",
+            "/Clients/New, Person/Chart/Visit Notes"]
+        assert out["path"].startswith("/Clients/New, Person/Chart/Visit Notes/2026-10-26 ")
+
+
+def test_sign_existing_chart_adds_nothing_and_matches_case() -> None:
+    with _avs_desk() as (main, drive, calls, sends):
+        main._test_folders.discard("/Clients/Patient, Unit/Chart/Visit Notes")
+        main._test_folders.add("/Clients/Patient, Unit/Chart/visit NOTES")
+        out = _sign(main)
+        assert main._test_mkdirs == []  # existing chart: no Consents etc. added, no duplicate visit folder
+        assert out["path"].startswith("/Clients/Patient, Unit/Chart/visit NOTES/")
+
+
+def test_sign_existing_chart_without_visit_notes_gets_only_that() -> None:
+    with _avs_desk() as (main, drive, calls, sends):
+        main._test_folders.discard("/Clients/Patient, Unit/Chart/Visit Notes")
+        _sign(main)
+        assert main._test_mkdirs == ["/Clients/Patient, Unit/Chart/Visit Notes"]
+
+
+def test_same_day_resign_never_overwrites() -> None:
+    with _avs_desk() as (main, drive, calls, sends):
+        a, b, c = _sign(main), _sign(main), _sign(main)
+        assert a["path"].endswith(" avs.pdf") and b["path"].endswith(" avs-2.pdf") and c["path"].endswith(" avs-3.pdf")
+        assert b["chart_path"].endswith(" avs-2 chart.pdf")
+        assert len({a["path"], b["path"], c["path"], a["chart_path"], b["chart_path"], c["chart_path"]}) == 6
+
+
+def test_sign_never_creates_archive_or_when_drive_down() -> None:
+    from fastapi import HTTPException
+
+    with _avs_desk() as (main, drive, calls, sends):
+        _set_chart("/Client files/Gone, Person/Chart")
+        try:
+            _sign(main)
+            raise AssertionError("expected 400")
+        except HTTPException as e:
+            assert e.status_code == 400
+        _set_chart("/Clients/New, Person/Chart")
+        main._test_folders.clear()
+        try:
+            _sign(main)
+            raise AssertionError("expected 502")
+        except HTTPException as e:
+            assert e.status_code == 502
+        assert main._test_mkdirs == []

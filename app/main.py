@@ -2272,8 +2272,7 @@ def api_desk_note_sign(
             chart = f"{LIVING_ROOT}/{dest}/Chart"
     if not chart:
         raise HTTPException(400, "no chart folder for this client")
-    vn = chart.rstrip("/") + "/" + VISIT_NOTES_FOLDER
-    _drive_mkdir(vn)
+    vn = _ensure_visit_notes(chart)
     dos = (req.dos or "").strip()[:10]
     if len(dos) != 10:
         dos = datetime.now().date().isoformat()
@@ -2284,7 +2283,7 @@ def api_desk_note_sign(
     if not get_template(tid):
         tid = "avs"
     slug = "avs" if tid == "avs" else tid
-    fname = f"{dos} {ini} {slug}.pdf" if ini else f"{dos} {slug}.pdf"
+    fname = _unique_pdf_name(vn, f"{dos} {ini} {slug}" if ini else f"{dos} {slug}")
     dest = vn + "/" + fname
     fields = {
         "name": req.name or row.get("name") or "",
@@ -3805,6 +3804,54 @@ def _drive_mkdir(path: str) -> None:
             json.loads(resp.read().decode() or "{}")
     except HTTPError as e:
         raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+
+
+def _folder_names(path: str) -> dict[str, str] | None:
+    """{lowercase name: real name} of child folders, or None when the folder is missing/unreadable."""
+    data = _drive_list(path)
+    if not data.get("ok"):
+        return None
+    return {str(i.get("name") or "").lower(): str(i.get("name") or "")
+            for i in (data.get("items") or []) if (i.get("type") or "") == "folder" and i.get("name")}
+
+
+def _ensure_visit_notes(chart: str) -> str:
+    """Chart/Visit Notes path for signing. Creates what is missing, never duplicates an existing folder:
+    a missing living client folder gets the real-client tree (Billing + Chart/Consents, Labs, Letters,
+    Orders, Visit Notes); an existing chart only gets Visit Notes if it has none (case-insensitive)."""
+    from .drive_paths import BILLING_CHILD, CHART_SUBFOLDERS, LIVING_ROOT, VISIT_NOTES_FOLDER
+
+    chart = chart.rstrip("/")
+    client_dir, _ = chart.rsplit("/", 1)
+    kids = _folder_names(chart)
+    if kids is None:
+        if not client_dir.startswith(LIVING_ROOT + "/"):
+            raise HTTPException(400, "chart folder not found (archive tree is never created)")
+        if _folder_names(client_dir) is None:
+            if _folder_names(LIVING_ROOT) is None:
+                raise HTTPException(502, "Drive is not reachable right now; nothing was created")
+            _drive_mkdir(client_dir)
+            _drive_mkdir(client_dir + "/" + BILLING_CHILD)
+        _drive_mkdir(chart)
+        for sub in CHART_SUBFOLDERS:
+            _drive_mkdir(chart + "/" + sub)
+        return chart + "/" + VISIT_NOTES_FOLDER
+    have = kids.get(VISIT_NOTES_FOLDER.lower())
+    if have:
+        return chart + "/" + have
+    _drive_mkdir(chart + "/" + VISIT_NOTES_FOLDER)
+    return chart + "/" + VISIT_NOTES_FOLDER
+
+
+def _unique_pdf_name(folder: str, stem: str) -> str:
+    """`stem.pdf`, or `stem-2.pdf`, `stem-3.pdf`… when a same-day note is already there (never overwrite)."""
+    data = _drive_list(folder)
+    names = {str(i.get("name") or "").lower() for i in (data.get("items") or [])}
+    taken = lambda n: n.lower() in names or n[:-4].lower() + " chart.pdf" in names  # noqa: E731
+    name, k = f"{stem}.pdf", 2
+    while taken(name):
+        name, k = f"{stem}-{k}.pdf", k + 1
+    return name
 
 
 def _drive_list(path: str) -> dict[str, Any]:
