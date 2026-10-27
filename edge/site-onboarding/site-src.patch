@@ -323,7 +323,7 @@ diff -ruN site.orig/src/app/pay/page.tsx site/src/app/pay/page.tsx
          Bitcoin is for a specific visit, not a stored method — there is no “charge later”
 diff -ruN site.orig/src/components/IntakeFormShell.tsx site/src/components/IntakeFormShell.tsx
 --- site.orig/src/components/IntakeFormShell.tsx	2026-10-08 23:16:42
-+++ site/src/components/IntakeFormShell.tsx	2026-10-27 16:12:30
++++ site/src/components/IntakeFormShell.tsx	2026-10-27 17:18:37
 @@ -3,12 +3,18 @@
  import Link from "next/link";
  import { useEffect, useState, type FormEvent, type ReactNode } from "react";
@@ -432,6 +432,28 @@ diff -ruN site.orig/src/components/IntakeFormShell.tsx site/src/components/Intak
        <p className="text-xs font-medium uppercase tracking-wider text-muted">
          {title}
        </p>
+@@ -197,11 +261,13 @@
+   name,
+   required,
+   rows = 3,
++  defaultValue,
+ }: {
+   label: string;
+   name: string;
+   required?: boolean;
+   rows?: number;
++  defaultValue?: string;
+ }) {
+   return (
+     <label className="block text-sm">
+@@ -213,6 +279,7 @@
+         name={name}
+         required={required}
+         rows={rows}
++        defaultValue={defaultValue}
+         className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-foreground"
+       />
+     </label>
 diff -ruN site.orig/src/components/forms/CardAuthForm.tsx site/src/components/forms/CardAuthForm.tsx
 --- site.orig/src/components/forms/CardAuthForm.tsx	2026-08-12 22:44:05
 +++ site/src/components/forms/CardAuthForm.tsx	2026-10-27 16:12:30
@@ -475,8 +497,8 @@ diff -ruN site.orig/src/components/forms/CardAuthForm.tsx site/src/components/fo
          {cardAuthText}
 diff -ruN site.orig/src/components/intake/IntakeCascade.tsx site/src/components/intake/IntakeCascade.tsx
 --- site.orig/src/components/intake/IntakeCascade.tsx	1969-12-31 18:00:00
-+++ site/src/components/intake/IntakeCascade.tsx	2026-10-27 16:56:59
-@@ -0,0 +1,499 @@
++++ site/src/components/intake/IntakeCascade.tsx	2026-10-27 17:24:19
+@@ -0,0 +1,536 @@
 +"use client";
 +
 +/**
@@ -511,10 +533,10 @@ diff -ruN site.orig/src/components/intake/IntakeCascade.tsx site/src/components/
 +  { id: "card", label: "Card on file" },
 +  { id: "personal", label: "Personal info" },
 +  { id: "consents", label: "Consents" },
-+  { id: "roi", label: "Release of info", optional: true },
++  { id: "roi", label: "Care team", optional: true },
 +];
 +
-+const today = () => new Date().toISOString().slice(0, 10);
++const today = () => new Date().toLocaleDateString("en-CA"); // local YYYY-MM-DD
 +
 +function stepDone(id: StepId, f: Flags, skipped: Set<string>): boolean {
 +  if (id === "card") return Boolean(f.card && f.card_auth);
@@ -688,6 +710,7 @@ diff -ruN site.orig/src/components/intake/IntakeCascade.tsx site/src/components/
 +  const [step, setStep] = useState<StepId | null>(null);
 +  const [sig, setSig] = useState("");
 +  const [skipped, setSkipped] = useState<Set<string>>(new Set());
++  const [roiOpen, setRoiOpen] = useState(false);
 +  const [held, setHeld] = useState(false);
 +
 +  const load = useCallback(async () => {
@@ -763,6 +786,14 @@ diff -ruN site.orig/src/components/intake/IntakeCascade.tsx site/src/components/
 +      Signing as <span className="font-medium text-foreground">{fullName || email}</span> · {email}
 +    </p>
 +  );
++  const skipRoi = () => {
++    const sk = new Set(skipped);
++    sk.add("roi");
++    setSkipped(sk);
++    window.localStorage.setItem("intake_skipped", JSON.stringify([...sk]));
++    const any = STEPS.find((s) => s.id !== "roi" && !stepDone(s.id, flags, sk));
++    setStep(any ? any.id : "done");
++  };
 +  const idFields = (
 +    <>
 +      <input type="hidden" name="fullName" value={fullName} readOnly />
@@ -899,53 +930,81 @@ diff -ruN site.orig/src/components/intake/IntakeCascade.tsx site/src/components/
 +
 +      {step === "roi" ? (
 +        <section className="space-y-4">
-+          <h2 className="text-lg font-semibold text-foreground">4. Release of information (optional)</h2>
-+          <p className="text-sm text-muted">
-+            Only if you want us to share records with another clinician, clinic, or school. Most people skip this.
-+          </p>
-+          <StepForm
-+            formId="roi"
-+            draftKey={`intake_draft_roi_${email}`}
-+            submitLabel="Sign and finish"
-+            onDone={(s) => advance("roi", { roi: true }, s)}
-+            extra={
-+              <button
-+                type="button"
-+                onClick={() => {
-+                  const sk = new Set(skipped);
-+                  sk.add("roi");
-+                  setSkipped(sk);
-+                  window.localStorage.setItem("intake_skipped", JSON.stringify([...sk]));
-+                  const any = STEPS.find((s) => s.id !== "roi" && !stepDone(s.id, flags, sk));
-+                  setStep(any ? any.id : "done");
-+                }}
-+                className="rounded-full border border-border px-5 py-3 text-sm font-medium text-foreground"
-+              >
-+                Skip — not needed
-+              </button>
-+            }
-+          >
-+            {signingAs}
-+            {idFields}
-+            <input type="hidden" name="firstName" value={first} readOnly />
-+            <input type="hidden" name="lastName" value={last} readOnly />
-+            <div className="flex flex-wrap gap-4 text-sm">
-+              <label className="flex items-center gap-2"><input type="checkbox" name="canSend" value="yes" className="h-4 w-4" />Send information</label>
-+              <label className="flex items-center gap-2"><input type="checkbox" name="canReceive" value="yes" className="h-4 w-4" />Receive information</label>
++          <h2 className="text-lg font-semibold text-foreground">4. Connect your care team</h2>
++          {!roiOpen ? (
++            <div className="space-y-4 rounded-2xl border border-border bg-surface p-5">
++              <p className="text-base font-medium text-foreground">
++                Want us to stay in touch with your primary care doctor or therapist?
++              </p>
++              <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted">
++                <li>Your doctors stay on the same page about medications, so nothing conflicts.</li>
++                <li>We can request past records instead of asking you to repeat your history.</li>
++                <li>You choose who, and what is shared. You can change your mind anytime, in writing.</li>
++              </ul>
++              <p className="text-xs text-muted">Optional. It takes about a minute, and it doesn’t affect your visit.</p>
++              <div className="flex flex-wrap items-center gap-4">
++                <button
++                  type="button"
++                  onClick={() => setRoiOpen(true)}
++                  className="rounded-full bg-foreground px-6 py-3 text-sm font-medium text-background"
++                >
++                  Add my provider
++                </button>
++                <button type="button" onClick={skipRoi} className="text-sm text-muted underline underline-offset-4">
++                  Skip for now
++                </button>
++              </div>
 +            </div>
-+            <Field label="Other provider / organization" name="otherParty" required />
-+            <div className="grid gap-4 sm:grid-cols-2">
-+              <Field label="Their phone" name="otherPhone" type="tel" />
-+              <Field label="Their email" name="otherEmail" type="email" />
-+            </div>
-+            <input type="hidden" name="relationship" value="Self" readOnly />
-+            <TextArea label="Purpose / what may be shared" name="purpose" required rows={2} />
-+            <Check name="understandRoi" required>
-+              I understand this authorization is voluntary, may be revoked in writing, and that redisclosure by a
-+              recipient who is not a covered provider may not be protected.
-+            </Check>
-+            <SignHere sig={sig} fullName={fullName} doc="release of information" />
-+          </StepForm>
++          ) : (
++            <StepForm
++              formId="roi"
++              draftKey={`intake_draft_roi_${email}`}
++              submitLabel="Sign this authorization"
++              onDone={(s) => advance("roi", { roi: true }, s)}
++              extra={
++                <button type="button" onClick={skipRoi} className="text-sm text-muted underline underline-offset-4">
++                  Skip for now
++                </button>
++              }
++            >
++              {signingAs}
++              {idFields}
++              <input type="hidden" name="firstName" value={first} readOnly />
++              <input type="hidden" name="lastName" value={last} readOnly />
++              <input type="hidden" name="relationship" value="Self" readOnly />
++              <Field label="Provider or clinic name (e.g. your primary care doctor or therapist)" name="otherParty" required />
++              <div className="grid gap-4 sm:grid-cols-2">
++                <Field label="Their phone" name="otherPhone" type="tel" />
++                <Field label="Their email or fax" name="otherEmail" />
++              </div>
++              <div className="flex flex-wrap gap-4 text-sm">
++                <label className="flex items-center gap-2"><input type="checkbox" name="canSend" value="yes" defaultChecked className="h-4 w-4" />We may send them information</label>
++                <label className="flex items-center gap-2"><input type="checkbox" name="canReceive" value="yes" defaultChecked className="h-4 w-4" />They may send us information</label>
++              </div>
++              <TextArea
++                label="What may be shared, and why"
++                name="purpose"
++                required
++                rows={2}
++                defaultValue="Diagnoses, medications, and treatment summaries, to coordinate my care."
++              />
++              <label className="block text-sm">
++                <span className="font-medium text-foreground">This authorization ends *</span>
++                <select name="expires" required defaultValue="1 year from the date signed" className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-foreground">
++                  <option>1 year from the date signed</option>
++                  <option>When my treatment with this practice ends</option>
++                </select>
++              </label>
++              <Check name="understandRoi" required>
++                I understand this authorization is voluntary; my treatment, payment and eligibility do not depend on
++                signing it; I may revoke it in writing at any time (except for information already shared); and
++                information shared with a recipient who is not covered by HIPAA may be re-disclosed and no longer
++                protected. I may request a copy of this signed form.
++              </Check>
++              <p className="text-sm text-muted">Date signed: {today()}</p>
++              <SignHere sig={sig} fullName={fullName} doc="authorization to release information (dated today)" />
++            </StepForm>
++          )}
 +        </section>
 +      ) : null}
 +

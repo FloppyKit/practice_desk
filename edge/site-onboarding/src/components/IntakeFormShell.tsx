@@ -261,11 +261,13 @@ export function TextArea({
   name,
   required,
   rows = 3,
+  defaultValue,
 }: {
   label: string;
   name: string;
   required?: boolean;
   rows?: number;
+  defaultValue?: string;
 }) {
   return (
     <label className="block text-sm">
@@ -277,6 +279,7 @@ export function TextArea({
         name={name}
         required={required}
         rows={rows}
+        defaultValue={defaultValue}
         className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2.5 text-foreground"
       />
     </label>
