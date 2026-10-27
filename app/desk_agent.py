@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -226,6 +227,9 @@ TOOLS = [
 ]
 
 
+_THINK = re.compile(r"<thinking>.*?</thinking>", re.S)  # Nova narrates tool use; staff only see the answer
+
+
 def _tool_config() -> dict[str, Any]:
     specs = []
     for t in TOOLS:
@@ -369,7 +373,7 @@ def run_desk_agent(
         msg = (data.get("output") or {}).get("message") or {}
         blocks = [b for b in (msg.get("content") or []) if isinstance(b, dict)]
         calls = [b["toolUse"] for b in blocks if isinstance(b.get("toolUse"), dict)]
-        text = "".join(str(b.get("text") or "") for b in blocks).strip()
+        text = _THINK.sub("", "".join(str(b.get("text") or "") for b in blocks)).strip()
         if not calls:
             out = {"ok": True, "reply": text or "(no reply)", "model": "bedrock-" + BEDROCK_MODEL, "tools": used}
             if action:

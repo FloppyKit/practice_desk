@@ -25,7 +25,7 @@ def test_desk_agent_bedrock_tool_round_trip_no_xai() -> None:
     replies = [
         {"output": {"message": {"role": "assistant", "content": [
             {"toolUse": {"toolUseId": "t1", "name": "list_note_templates", "input": {}}}]}}},
-        {"output": {"message": {"role": "assistant", "content": [{"text": "You have the SOAP and AVS templates."}]}}},
+        {"output": {"message": {"role": "assistant", "content": [{"text": "<thinking>I listed them.</thinking> You have the SOAP and AVS templates."}]}}},
     ]
 
     def urlopen(req, timeout=0):
