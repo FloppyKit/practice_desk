@@ -98,7 +98,7 @@ def _env():
             os.environ["BOOKER_LOG_DIR"] = raw
             os.environ["CANCEL_SECRET_FILE"] = str(sec)
             clients_db.DB_PATH = Path(raw) / "clients.sqlite"
-            config.CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "event-types.yaml"
+            config.CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "event-types.example.yaml"
             main.create_event = cal.create
             main.get_event = cal.get
             main.patch_event = cal.patch
@@ -248,7 +248,7 @@ def test_existing_client_and_other_types_unchanged() -> None:
         out, notice = _book(main, start=start, email="old@example.com")
         assert "held" not in out and cal.events[out["event_id"]]["status"] == "confirmed"
         assert not notice.get("hold_until_label")
-        out2, _ = _book(main, start=start, email="brand.new@example.com", event_type="intro-15", duration=15)
+        out2, _ = _book(main, start=start, email="brand.new@example.com", event_type="follow-up", duration=30)
         assert "held" not in out2
 
 
