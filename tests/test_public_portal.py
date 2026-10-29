@@ -421,3 +421,13 @@ def test_new_client_page_uses_hold_wording_only_for_new_client() -> None:
     # Default copy stays for every other type.
     assert "We’ll email a confirmation with a cancel link." in html
     assert ">Confirm booking</button>" in html
+
+
+def test_booker_polish_contrast_and_single_length_label() -> None:
+    css = (ROOT / "static" / "css" / "booker.css").read_text()
+    html = (ROOT / "static" / "book.html").read_text()
+    assert "--muted: #595959;" in css
+    assert ".cal-day:disabled {\n  color: var(--muted);" in css
+    assert "font-size: 0.875rem;\n  line-height: 1.4;\n  color: var(--muted, #666);" in css
+    assert '"Visit length: " + durs[0] + " min"' in html
+    assert 'duration-bar").hidden = true' not in html

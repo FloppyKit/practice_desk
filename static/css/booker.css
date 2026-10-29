@@ -3,7 +3,7 @@
 :root {
   --background: #f6f6f7;
   --foreground: #111111;
-  --muted: #71717a;
+  --muted: #595959;
   --border: #e4e4e7;
   --accent: #111111;
   --surface: #ffffff;
@@ -558,7 +558,7 @@ a:hover {
 
 .cal-day.is-muted,
 .cal-day:disabled {
-  color: color-mix(in srgb, var(--muted) 40%, transparent);
+  color: var(--muted);
   cursor: default;
   font-weight: 400;
 }
@@ -1238,7 +1238,7 @@ label.check {
   display: flex;
   gap: 0.65rem;
   align-items: flex-start;
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   line-height: 1.4;
   color: var(--muted, #666);
   cursor: pointer;
