@@ -26,6 +26,9 @@ class T(unittest.TestCase):
     def test_different_number(self):
         self.book(phone="(816) 555-0100", sms_consent="yes")
         self.assertEqual(self.sent[-1]["phone"], "(816) 555-0100"); self.assertIs(self.sent[-1]["sms_consent"], True)
+    def test_this_number_text(self):  # model passed the words instead of digits (Oct 28 call)
+        self.book(phone="this number", sms_consent="true")
+        self.assertEqual(self.sent[-1]["phone"], "+19133918760"); self.assertIs(self.sent[-1]["sms_consent"], True)
     def test_texts_declined(self):
         r = self.book(sms_consent="false")
         self.assertIs(self.sent[-1]["sms_consent"], False); self.assertFalse(r["texts"])

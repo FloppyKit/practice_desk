@@ -189,6 +189,7 @@ def verify_patient(a, ctx):
 def create_visit(a, ctx):
     vt = _clean(a.get("visit_type"))
     start, name, email, phone = _clean(a.get("start")), _clean(a.get("name")), _norm_email(a.get("email")), _clean(a.get("phone")) or _clean(ctx.get("caller"))
+    if len(_norm_phone(phone)) < 10: phone = _clean(ctx.get("caller"))   # e.g. "this number"
     sms_ok = _clean(a.get("sms_consent")).lower() in ("true", "yes", "1")
     for k, v in (("start", start), ("name", name), ("email", email)):
         if not v: return {"ok": False, "error": f"{k} required"}
