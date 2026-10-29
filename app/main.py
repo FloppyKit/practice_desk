@@ -787,6 +787,12 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
         hold = _plan_hold(req, start, phone=_phone_channel(request) or src in ("voice", "chat", "agent"))
     elif req.event_type == HOLD_EVENT_TYPE and src == "desk" and not occ:
         desk_intake_url = _desk_intake_link(str(req.email))
+    elif req.event_type != HOLD_EVENT_TYPE and _phone_channel(request) and not occ:
+        # Existing client booking by phone with intake unfinished: send the cascade link, no hold.
+        from . import onboarding
+
+        if onboarding.find_client(str(req.email)):
+            desk_intake_url = _desk_intake_link(str(req.email))
 
     # Summary shows client visit length; calendar event span may be cal_dur (e.g. 120)
     if occ:
@@ -966,6 +972,8 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
         "email": {"queued": bool(req.send_email)},
         "message": "You're booked. A confirmation email with a cancel link is on the way.",
     }
+    if desk_intake_url and not hold and _phone_channel(request):
+        out["intake_link_sent"] = True
     if hold:
         out["held"] = True
         out["hold_until"] = hold["deadline_iso"]

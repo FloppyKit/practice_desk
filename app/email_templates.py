@@ -692,6 +692,12 @@ def confirm_sms(
             f"Please complete your intake paperwork and add a card on file before your visit: "
             f"{intake_url or FORMS_URL} Reply STOP to opt out, HELP for help."
         )
+    if intake_url:
+        return (
+            f"Dr. Matt Brown: Confirmed {heading} on {when_label} CT. "
+            f"Please finish your paperwork and add a card on file before your visit: {intake_url} "
+            f"Join: {MEET_HOST} Reply STOP to opt out, HELP for help."
+        )
     return (
         f"Dr. Matt Brown: Confirmed {heading} on {when_label} CT. "
         f"Join: {MEET_HOST} Reply STOP to opt out, HELP for help. "

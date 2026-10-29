@@ -237,6 +237,11 @@ def create_visit(a, ctx):
         return {"ok": True, "held": True, "when": d.get("when_label") or _label(start),
                 "hold_until": d.get("hold_until_label", ""), "texts": bool(d.get("sms_consent")),
                 "message": d.get("message", "")}
+    if d.get("intake_link_sent"):   # existing client, intake unfinished: link sent, no hold
+        return {"ok": True, "intake_link_sent": True, "when": d.get("when_label") or _label(start),
+                "texts": bool(d.get("sms_consent")),
+                "message": "Booked. A link to finish paperwork and add a card on file was emailed"
+                           + (" and texted." if d.get("sms_consent") else ".")}
     return {"ok": True, "when": d.get("when_label") or _label(start),
             "message": "Booked. Confirmation email is on the way. Join at meet.drmattbrown.com."}
 

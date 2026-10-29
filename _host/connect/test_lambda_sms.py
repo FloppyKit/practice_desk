@@ -12,8 +12,8 @@ class T(unittest.TestCase):
         L._http = http
         L._caller_said_yes_after = lambda ctx, since: True
     def book(self, **extra):
-        a = dict(visit_type="new-client", start="2027-01-27T14:00:00-06:00", name="Phone Test, Synth",
-                 email="psycharts@mail.grokbot.com", **extra)
+        a = dict(start="2027-01-27T14:00:00-06:00", name="Phone Test, Synth",
+                 email="psycharts@mail.grokbot.com", **{"visit_type": "new-client", **extra})
         ev = lambda args: {"Details": {"Parameters": dict(tool="create_visit", **args),
                "ContactData": {"ContactId": "c1", "CustomerEndpoint": {"Address": "+19133918760"}}}}
         r1 = json.loads(L.lambda_handler(ev(a), None)["result"]); self.assertTrue(r1["needs_confirmation"])
@@ -35,4 +35,12 @@ class T(unittest.TestCase):
     def test_unconfirmed_never_books(self):
         L._caller_said_yes_after = lambda ctx, since: False
         r = self.book(sms_consent="true"); self.assertFalse(r["ok"]); self.assertEqual(self.sent, [])
+    def test_existing_client_intake_link(self):
+        def http(m, p, body=None, extra=None):
+            self.sent.append(body)
+            return 200, {"when_label": "Wed", "intake_link_sent": True, "sms_consent": body["sms_consent"]}
+        L._http = http
+        r = self.book(visit_type="new-client", sms_consent="false")
+        self.assertTrue(r["intake_link_sent"]); self.assertFalse(r["texts"]); self.assertNotIn("held", r)
+        self.assertIn("emailed.", r["message"])
 unittest.main()

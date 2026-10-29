@@ -431,3 +431,48 @@ def test_booker_polish_contrast_and_single_length_label() -> None:
     assert "font-size: 0.875rem;\n  line-height: 1.4;\n  color: var(--muted, #666);" in css
     assert '"Visit length: " + durs[0] + " min"' in html
     assert 'duration-bar").hidden = true' not in html
+
+
+def test_voice_booking_existing_client_unfinished_intake_gets_link_no_hold() -> None:
+    from app import onboarding
+
+    with _portal() as (main, _fake):
+        start = "2026-10-20T10:00:00-05:00"
+        saved = {k: getattr(main, k) for k in ("_phone_slots", "create_event", "_mint_intake_url")}
+        saved_status = onboarding.status
+        main._phone_slots = lambda *a, **k: [{"start": start}]
+        main.generate_slots = lambda *a, **k: [{"start": start}]
+        main.create_event = lambda **k: {"htmlLink": ""}
+        main._mint_intake_url = lambda email, *a, **k: "https://site.example/intake#tok"
+        try:
+            def book(channel: bytes, email: str = "jane@example.com"):
+                req = main.BookRequest(event_type="follow-up", start=start, duration_minutes=30, name="Jane Demo",
+                                       email=email, phone="555-555-0100", sms_consent=True, source="voice",
+                                       verify_token=_token())
+                hdrs = [(b"x-desk-channel", channel)] if channel else []
+                http = Request({"type": "http", "method": "POST", "path": "/api/book", "query_string": b"",
+                                "headers": hdrs})
+                bt = BackgroundTasks()
+                out = main.api_book(req, bt, http)
+                return out, (bt.tasks[0].kwargs.get("intake_url") if bt.tasks else None)
+
+            out, url = book(b"voice")
+            assert out.get("intake_link_sent") is True and not out.get("held")
+            assert url == "https://site.example/intake#tok"
+            out, url = book(b"")  # web: unchanged
+            assert "intake_link_sent" not in out and not url
+            onboarding.status = lambda **k: {"complete": True}
+            out, url = book(b"voice")  # intake complete: unchanged
+            assert "intake_link_sent" not in out and not url
+        finally:
+            onboarding.status = saved_status
+            for k, v in saved.items():
+                setattr(main, k, v)
+
+
+def test_confirm_sms_carries_intake_link_when_given() -> None:
+    from app.email_templates import confirm_sms
+
+    s = confirm_sms(title="Follow-up", when_label="Tue Oct 20 · 10:00 AM", intake_url="https://x/intake")
+    assert "https://x/intake" in s and "card on file" in s
+    assert "intake" not in confirm_sms(title="Follow-up", when_label="Tue Oct 20 · 10:00 AM")
