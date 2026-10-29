@@ -411,3 +411,13 @@ fetchJSON("/api/book", {}).then(() => { console.log("no-throw"); process.exit(1)
 """
     out = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_new_client_page_uses_hold_wording_only_for_new_client() -> None:
+    html = (Path(__file__).resolve().parents[1] / "static" / "book.html").read_text()
+    assert 'if (slug === "new-client")' in html
+    assert "Next you'll add a card to confirm. Nothing is charged today." in html
+    assert "Hold this time" in html
+    # Default copy stays for every other type.
+    assert "We’ll email a confirmation with a cancel link." in html
+    assert ">Confirm booking</button>" in html
