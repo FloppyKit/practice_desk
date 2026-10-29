@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from functools import lru_cache
+import threading
 from typing import Any
 
 from google.oauth2 import service_account
@@ -12,12 +12,20 @@ from .config import SA_PATH
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
-@lru_cache(maxsize=1)
+_local = threading.local()
+
+
 def calendar_service():
-    creds = service_account.Credentials.from_service_account_file(
-        str(SA_PATH), scopes=SCOPES
-    )
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    """One client per thread: httplib2 is not thread-safe, and the mirror, gsync and hold-sweep
+    threads share this module (a shared client failed a mirror delete with 'NoneType ... close')."""
+    svc = getattr(_local, "svc", None)
+    if svc is None:
+        creds = service_account.Credentials.from_service_account_file(
+            str(SA_PATH), scopes=SCOPES
+        )
+        svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        _local.svc = svc
+    return svc
 
 
 def freebusy(
@@ -63,6 +71,7 @@ def create_event(
     attendee_email: str | None = None,
     private_props: dict[str, str] | None = None,
     uid: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     svc = calendar_service()
     body: dict[str, Any] = {
@@ -73,6 +82,8 @@ def create_event(
     }
     if uid:
         body["id"] = uid
+    if status:
+        body["status"] = status
     if attendee_email:
         body["attendees"] = [{"email": attendee_email}]
     if private_props:
@@ -94,11 +105,17 @@ def patch_event(
     *,
     description: str | None = None,
     private_props: dict[str, str] | None = None,
+    summary: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     svc = calendar_service()
     body: dict[str, Any] = {}
     if description is not None:
         body["description"] = description
+    if summary is not None:
+        body["summary"] = summary
+    if status is not None:
+        body["status"] = status
     if private_props is not None:
         body["extendedProperties"] = {
             "private": {str(k): str(v) for k, v in private_props.items()}

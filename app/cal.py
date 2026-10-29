@@ -87,8 +87,10 @@ def create_event(
     attendee_email: str | None = None,
     private_props: dict[str, str] | None = None,
     uid: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     uid = uid or _new_uid()
+    extra: dict[str, Any] = {"status": status} if status else {}
     if using_demo():
         return demo_store.create_event(
             calendar_id=calendar_id,
@@ -100,6 +102,7 @@ def create_event(
             attendee_email=attendee_email,
             private_props=private_props,
             uid=uid,
+            **extra,
         )
     local: dict[str, Any] | None = None
     if using_caldav():
@@ -113,6 +116,7 @@ def create_event(
             attendee_email=attendee_email,
             private_props=private_props,
             uid=uid,
+            **extra,
         )
     if _write_google():
         kwargs = dict(
@@ -125,6 +129,7 @@ def create_event(
             attendee_email=attendee_email,
             private_props=private_props,
             uid=uid,
+            **extra,
         )
         if local is not None:
             _mirror("create", gcal.create_event, **kwargs)
@@ -182,13 +187,21 @@ def patch_event(
     *,
     description: str | None = None,
     private_props: dict[str, str] | None = None,
+    summary: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+    if summary is not None:
+        extra["summary"] = summary
+    if status is not None:
+        extra["status"] = status
     if using_demo():
         return demo_store.patch_event(
             calendar_id,
             event_id,
             description=description,
             private_props=private_props,
+            **extra,
         )
     out: dict[str, Any] = {}
     if using_caldav():
@@ -198,6 +211,7 @@ def patch_event(
                 event_id,
                 description=description,
                 private_props=private_props,
+                **extra,
             )
         except Exception as e:
             log.warning("caldav patch: %s", e)
@@ -210,6 +224,7 @@ def patch_event(
                 event_id,
                 description=description,
                 private_props=private_props,
+                **extra,
             )
             return out
         out = gcal.patch_event(
@@ -217,6 +232,7 @@ def patch_event(
             event_id,
             description=description,
             private_props=private_props,
+            **extra,
         )
     return out
 

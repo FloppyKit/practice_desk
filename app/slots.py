@@ -91,10 +91,15 @@ def generate_slots(
     duration_minutes: int,
     range_start: datetime | None = None,
     days: int | None = None,
+    min_notice_minutes: int | None = None,
 ) -> list[dict[str, str]]:
     tz = ZoneInfo(config.get("timezone", "America/Chicago"))
     now = datetime.now(tz)
-    min_notice = int(event_type.get("minimum_notice_minutes", 120))
+    min_notice = int(
+        min_notice_minutes
+        if min_notice_minutes is not None
+        else event_type.get("minimum_notice_minutes", 120)
+    )
     window_days = int(days or event_type.get("booking_window_days", 30))
     interval = int(event_type.get("slot_interval_minutes", 15))
     buf_before = int(event_type.get("buffer_before_minutes", 0))

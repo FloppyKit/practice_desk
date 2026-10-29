@@ -37,6 +37,10 @@ COLUMNS = (
     "drive_folder_path",
     "billing_folder_path",
     "carepatron_contact_id",
+    "standing_dx",
+    "sms_consent",
+    "sms_consent_at",
+    "sms_consent_source",
     "created_at",
     "updated_at",
 )
@@ -95,11 +99,20 @@ def _init(con: sqlite3.Connection) -> None:
           drive_folder_path TEXT,
           billing_folder_path TEXT,
           carepatron_contact_id TEXT,
+          standing_dx TEXT,
           created_at TEXT,
           updated_at TEXT
         )
         """
     )
+    cols = {r[1] for r in con.execute("PRAGMA table_info(clients)").fetchall()}
+    if "standing_dx" not in cols:
+        # Standing ICD-10 codes (JSON list) that default the Bill visit sheet.
+        con.execute("ALTER TABLE clients ADD COLUMN standing_dx TEXT")
+    for col, typ in (("sms_consent", "INTEGER"), ("sms_consent_at", "TEXT"), ("sms_consent_source", "TEXT")):
+        if col not in cols:
+            # Text consent on file: NULL unknown, 1 yes, 0 no (when and where it was given).
+            con.execute(f"ALTER TABLE clients ADD COLUMN {col} {typ}")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_email ON clients(email)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone_e164)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(display_name)")
@@ -201,6 +214,20 @@ def search(q: str, limit: int = 12) -> list[dict[str, Any]]:
                 if len(out) >= limit:
                     return out
     return out
+
+
+def sms_consent_state(row: dict[str, Any] | None) -> str:
+    v = (row or {}).get("sms_consent")
+    return "unknown" if v is None or v == "" else ("yes" if int(v) else "no")
+
+
+def set_sms_consent(client_id: str, yes: bool, source: str) -> None:
+    with connect() as con:
+        con.execute(
+            "UPDATE clients SET sms_consent=?, sms_consent_at=?, sms_consent_source=?, updated_at=? WHERE id=?",
+            (1 if yes else 0, _now(), source[:20], _now(), client_id),
+        )
+        con.commit()
 
 
 def upsert(fields: dict[str, Any]) -> dict[str, Any]:

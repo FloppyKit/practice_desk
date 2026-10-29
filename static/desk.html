@@ -525,6 +525,9 @@
     .home-chip { display:inline-block; font-size:0.75rem; border:1px solid var(--border); border-radius:999px; padding:0.15rem 0.5rem; }
     .home-chip.ok { border-color:var(--ok,#166534); color:var(--ok,#166534); }
     .home-chip.owed { border-color:#a16207; color:#a16207; }
+    .home-chip.due { border-color:#a16207; color:#a16207; }
+    .grid-ev.held { background:repeating-linear-gradient(135deg, var(--surface,#fff) 0 6px, rgba(161,98,7,0.12) 6px 12px); color:var(--foreground); border:1px dashed #a16207; }
+    .grid-ev.held .desk-meta { color:#a16207; opacity:1; }
     .home-books-list li { display:flex; justify-content:space-between; gap:0.5rem; font-size:0.82rem; padding:0.3rem 0; }
     .home-list { list-style:none; margin:0.35rem 0 0; padding:0; }
     .home-list li { border-bottom:1px solid var(--border); }
@@ -537,6 +540,10 @@
       border-radius:0.4rem; padding:0.2rem 0.4rem; cursor:pointer;
     }
     .home-noshow.is-on { border-color:#a16207; color:#a16207; cursor:default; }
+    .home-bill { flex:0 0 auto; font:inherit; font-size:0.72rem; border:1px solid var(--border); background:var(--background); color:var(--foreground); border-radius:999px; padding:0.2rem 0.55rem; cursor:pointer; }
+    #bill-pop { width:min(28rem, calc(100vw - 1.25rem)); max-width:calc(100vw - 1.25rem); box-sizing:border-box; }
+    #bill-pop .bl-warn { color:#a16207; }
+    #bill-pop .bl-row { display:flex; gap:0.45rem; align-items:center; margin:0 0 0.4rem; font-size:0.86rem; }
     .home-visit {
       display:flex; justify-content:space-between; align-items:baseline; gap:0.5rem;
       width:100%; text-align:left; border:0; background:none; color:inherit;
@@ -1206,6 +1213,13 @@
       <button class="btn secondary" type="button" id="nt-draft">Draft from transcript</button>
       <button class="btn" type="button" id="nt-sign">Sign to Visit notes</button>
     </div>
+    <div id="nt-avs-share" hidden style="margin-top:0.6rem">
+      <p class="desk-meta" id="nt-avs-info"></p>
+      <div class="desk-actions">
+        <button class="btn" type="button" id="nt-avs-send">Send AVS to patient (email + text)</button>
+        <button class="btn secondary" type="button" id="nt-avs-revoke">Turn off link</button>
+      </div>
+    </div>
   </div>
 
   <div id="superbill-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Superbill">
@@ -1234,6 +1248,41 @@
     <p class="desk-meta" id="superbill-status"></p>
     <div class="desk-actions" style="margin-top:0.4rem">
       <button class="btn" type="button" id="sb-save">Save to Billing</button>
+    </div>
+  </div>
+
+  <div id="bill-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Bill visit">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">Billing</div>
+        <p class="book-pop-time">Bill visit</p>
+      </div>
+      <button type="button" class="book-pop-close" id="bill-close" aria-label="Close">×</button>
+    </div>
+    <p class="desk-meta" id="bl-who"></p>
+    <label class="field">Date of service <input id="bl-dos" type="date" /></label>
+    <p class="desk-meta">Visit code (check it)</p>
+    <div class="seg-mini" id="bl-codes" role="group"></div>
+    <div class="desk-meta" id="bl-lines"></div>
+    <label class="field">Diagnoses (ICD-10, one per line) <textarea id="bl-dx" rows="3" placeholder="F41.1 Generalized anxiety disorder"></textarea></label>
+    <label class="bl-row"><input type="checkbox" id="bl-dx-save" /> Save as this client's standing diagnoses</label>
+    <p class="desk-meta">Payment</p>
+    <label class="bl-row"><input type="radio" name="bl-pay" value="link" checked /> Send payment link</label>
+    <label class="bl-row"><input type="radio" name="bl-pay" value="card" id="bl-pay-card" /> <span id="bl-card-label">Charge card on file</span></label>
+    <label class="bl-row" id="bl-charge-row" hidden><input type="checkbox" id="bl-charge-ok" /> <span id="bl-charge-text">Yes, charge the card now</span></label>
+    <p class="desk-meta">Send by</p>
+    <label class="bl-row"><input type="checkbox" id="bl-email" checked /> Email</label>
+    <label class="bl-row"><input type="checkbox" id="bl-sms" /> <span id="bl-sms-label">SMS</span></label>
+    <label class="bl-row"><input type="checkbox" id="bl-share" checked /> Superbill link (30 days)</label>
+    <label class="bl-row"><input type="checkbox" id="bl-dry" checked /> <span id="bl-dry-label">Dry run (nothing charged, saved to Drive, or sent)</span></label>
+    <p class="desk-meta bl-warn" id="bl-warn"></p>
+    <p class="desk-meta" id="bill-status"></p>
+    <div class="desk-actions" id="bl-share-actions" hidden style="margin:0 0 0.4rem">
+      <button class="btn secondary" type="button" id="bl-rotate">New link</button>
+      <button class="btn secondary" type="button" id="bl-revoke">Turn off link</button>
+    </div>
+    <div class="desk-actions" style="margin-top:0.4rem">
+      <button class="btn" type="button" id="bl-confirm">Confirm</button>
     </div>
   </div>
 
@@ -1344,12 +1393,12 @@
     }
 
     function sheetOpen() {
-      return ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"]
+      return ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop"]
         .some((id) => $(id) && !$(id).hidden);
     }
     function syncSheetLock() {
       document.documentElement.classList.toggle("desk-sheet-open", sheetOpen());
-      const open = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"]
+      const open = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop"]
         .map((id) => $(id)).find((el) => el && !el.hidden);
       if (open) trapFocus(open);
       else releaseFocus();
@@ -2302,6 +2351,10 @@
       $("superbill-pop").hidden = true;
       syncSheetLock();
     }
+    function closeBill() {
+      $("bill-pop").hidden = true;
+      syncSheetLock();
+    }
     function closeBooks() {
       booksOn = false;
       if ($("books-pop")) $("books-pop").hidden = true;
@@ -2457,10 +2510,12 @@
       noteDosPrefill = dos || new Date().toISOString().slice(0, 10);
       $("nt-event").value = focusEventId || "";
       $("note-status").textContent = "";
+      avsShareShow(null);
       fillNoteTemplates().then(() => {
         renderNoteFields();
         const c = (homeCurrent && homeCurrent.client) || {};
         applyVaultToNoteFields(c);
+        applyLastAvs(c);
         fitSheet($("note-pop"));
       });
       const pop = $("note-pop");
@@ -2475,6 +2530,7 @@
       if (e.key !== "Escape") return;
       if ($("books-pop") && !$("books-pop").hidden) closeBooks();
       else if (!$("superbill-pop").hidden) closeSuperbill();
+      else if (!$("bill-pop").hidden) closeBill();
       else if (!$("note-pop").hidden) closeNote();
       else if (!$("send-pop").hidden) closeSend();
       else if (!$("book-pop").hidden) closePop();
@@ -2878,6 +2934,137 @@
       status.textContent = "Saved · " + (data.name || "superbill") + (data.statement ? " · #" + data.statement : "");
       msg("Superbill saved to Billing.", true);
     };
+    // ---- Bill visit (confirm sheet). Nothing is charged or sent until Confirm. ----
+    let billCtx = null;
+    function billDx() {
+      return $("bl-dx").value.split("\n").map((ln) => ln.trim()).filter(Boolean).map((ln) => {
+        const sp = ln.search(/\s/);
+        return sp < 0 ? { code: ln, label: "" } : { code: ln.slice(0, sp), label: ln.slice(sp + 1).trim() };
+      });
+    }
+    function billPaint() {
+      if (!billCtx) return;
+      const d = billCtx.data;
+      const spec = (d.codes || []).find((x) => x.id === billCtx.code);
+      const box = $("bl-codes");
+      box.innerHTML = "";
+      (d.codes || []).forEach((x) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = x.invoice_code + " · $" + (x.price_cents / 100);
+        if (x.id === billCtx.code) b.className = "active";
+        b.onclick = () => { billCtx.code = x.id; billPaint(); };
+        box.appendChild(b);
+      });
+      $("bl-lines").innerHTML = spec
+        ? esc(spec.label) + " · POS " + esc(d.pos) + "<br>" + spec.lines.map((l) => esc(l.code + "-" + l.modifier + "  $" + (l.fee_cents / 100))).join(" + ")
+        : "Pick the visit code.";
+      const card = $("bl-pay-card").checked;
+      $("bl-charge-row").hidden = !card;
+      $("bl-charge-text").textContent = spec ? "Yes, charge $" + (spec.price_cents / 100) + " to the card on file now" : "Yes, charge the card now";
+      $("bl-confirm").textContent = spec ? "Confirm " + spec.invoice_code + " · $" + (spec.price_cents / 100) : "Confirm";
+      $("bl-confirm").disabled = !spec;
+    }
+    async function openBill(c, v) {
+      closeHomeDrawer();
+      closePop(); closeSend(); closeNote(); closePractice(); closeSuperbill();
+      $("files-pop").hidden = true;
+      const pop = $("bill-pop");
+      $("bill-status").textContent = "Loading…";
+      $("bl-warn").textContent = "";
+      $("bl-share-actions").hidden = true;
+      pop.hidden = false;
+      syncSheetLock();
+      fitSheet(pop);
+      const dos = v && v.start_iso ? String(v.start_iso).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const q = new URLSearchParams({ client_id: c.id || "", event_id: (v && v.event_id) || "", dos,
+        event_type: (v && v.event_type) || "", duration_minutes: String((v && v.duration_minutes) || "") });
+      if (!(v && v.duration_minutes)) q.delete("duration_minutes");
+      const res = await deskFetch("/api/desk/bill?" + q.toString());
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.ok) { $("bill-status").textContent = "Failed: " + (d.detail || res.status); return; }
+      billCtx = { data: d, code: d.guess || "", event_id: d.event_id || "", billing: d.existing };
+      $("bl-who").textContent = (d.client.name || d.client.email || "Client") + (d.client.dob ? " · DOB " + d.client.dob : "");
+      $("bl-dos").value = d.dos;
+      $("bl-dx").value = (d.standing_dx || []).map((x) => (x.code + " " + (x.label || "")).trim()).join("\n");
+      $("bl-dx-save").checked = false;
+      document.querySelector("input[name=bl-pay][value=link]").checked = true;
+      $("bl-pay-card").disabled = !d.card.on_file;
+      $("bl-card-label").textContent = d.card.on_file
+        ? "Charge card on file" + (d.card.last4 ? " (" + (d.card.brand || "card") + " •••• " + d.card.last4 + ")" : "")
+        : "Charge card on file (none on file)";
+      $("bl-charge-ok").checked = false;
+      $("bl-email").checked = !!d.client.email;
+      $("bl-sms").checked = false;
+      $("bl-sms").disabled = !d.sms || !d.client.has_phone;
+      $("bl-sms-label").textContent = d.sms ? "SMS (Spruce)" : "SMS (off)";
+      $("bl-share").checked = true;
+      $("bl-dry").checked = true;
+      $("bl-dry").disabled = !d.live;
+      $("bl-dry-label").textContent = d.live
+        ? "Dry run (nothing charged, saved to Drive, or sent)"
+        : "Dry run only — live billing is off on this desk";
+      const warn = [];
+      if (d.letterhead_message) warn.push(d.letterhead_message);
+      if (d.existing) warn.push("Already billed" + (d.existing.dry_run ? " (dry run)" : "") + ": "
+        + ((d.existing.invoice || {}).invoice_code || "") + " · superbill " + (d.existing.superbill.status || "")
+        + (d.existing.superbill.detail ? " — " + d.existing.superbill.detail : ""));
+      $("bl-warn").textContent = warn.join(" ");
+      $("bl-share-actions").hidden = !(d.existing && d.existing.superbill.status === "saved");
+      $("bill-status").textContent = d.guess ? "" : "Pick the visit code.";
+      billPaint();
+    }
+    $("bill-close").onclick = closeBill;
+    document.querySelectorAll("input[name=bl-pay]").forEach((r) => { r.onchange = billPaint; });
+    $("bl-confirm").onclick = async () => {
+      if (!billCtx || !billCtx.code) return;
+      const d = billCtx.data;
+      const payment = $("bl-pay-card").checked ? "card" : "link";
+      const status = $("bill-status");
+      if (payment === "card" && !$("bl-charge-ok").checked) { status.textContent = "Tick the charge confirmation first."; return; }
+      $("bl-confirm").disabled = true;
+      status.textContent = "Working…";
+      const res = await deskFetch("/api/desk/bill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: d.client.id, event_id: billCtx.event_id, dos: $("bl-dos").value,
+          visit_code: billCtx.code, confirm_code: billCtx.code,
+          diagnoses: billDx(), save_dx: $("bl-dx-save").checked,
+          payment, confirm_charge: payment === "card" && $("bl-charge-ok").checked,
+          send_email: $("bl-email").checked, send_sms: $("bl-sms").checked,
+          share_superbill: $("bl-share").checked, dry_run: $("bl-dry").checked || !d.live,
+        }),
+      });
+      const out = await res.json().catch(() => ({}));
+      $("bl-confirm").disabled = false;
+      if (!res.ok || !out.ok) { status.textContent = "Failed: " + (out.detail || res.status); return; }
+      billCtx.billing = out.billing;
+      if (!out.created) { status.textContent = out.detail || "Already billed."; return; }
+      const bits = [(out.dry_run ? "Dry run · " : "") + out.invoice.invoice_code + " " + out.invoice.amount_pretty];
+      bits.push(out.payment.charged ? "card charged" : (out.payment.detail || (out.payment.pay_url ? "pay link " + out.payment.pay_url : "")));
+      bits.push(out.superbill.ok ? "superbill saved" : (out.superbill.detail || "superbill not built"));
+      if (out.share && out.share.url) bits.push("link until " + String(out.share.expires_iso).slice(0, 10));
+      status.textContent = bits.filter(Boolean).join(" · ");
+      $("bl-share-actions").hidden = !(out.superbill && out.superbill.ok);
+      msg(out.dry_run ? "Dry run done. Nothing charged or sent." : "Visit billed.", true);
+    };
+    $("bl-rotate").onclick = async () => {
+      const b = billCtx && billCtx.billing;
+      if (!b) return;
+      const res = await deskFetch("/api/desk/bill/share", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ billing_id: b.id, send_email: $("bl-email").checked, send_sms: $("bl-sms").checked }) });
+      const out = await res.json().catch(() => ({}));
+      $("bill-status").textContent = res.ok && out.ok ? "New link until " + String(out.expires_iso).slice(0, 10) + " (old link off)." : "Failed: " + (out.detail || res.status);
+    };
+    $("bl-revoke").onclick = async () => {
+      const b = billCtx && billCtx.billing;
+      if (!b) return;
+      const res = await deskFetch("/api/desk/bill/share/revoke", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ billing_id: b.id }) });
+      const out = await res.json().catch(() => ({}));
+      $("bill-status").textContent = res.ok && out.ok ? "Link turned off." : "Failed: " + (out.detail || res.status);
+    };
     if ($("open-send")) $("open-send").onclick = () => {
       closePop();
       closeSend();
@@ -3020,7 +3207,7 @@
         applyFloatRect({ left: fr.left, top: fr.top, width: fr.width, height: fr.height });
       }
       sizeWeekTile();
-      const ids = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "files-pop"];
+      const ids = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop"];
       ids.forEach((id) => {
         const el = $(id);
         if (!el || el.hidden) return;
@@ -3289,13 +3476,21 @@
         const top = minsFromOpen(start) * PX_PER_MIN;
         if (top + 4 < 0 || top > height) return;
         const ev = document.createElement("div");
-        ev.className = "grid-ev" + (v.event_type || v.email ? " booker" : "");
+        const held = v.hold && v.hold.status === "held";
+        ev.className = "grid-ev" + (v.event_type || v.email ? " booker" : "") + (held ? " held" : "");
         ev.style.top = Math.max(0, top) + "px";
         ev.style.height = Math.max(22, dur * PX_PER_MIN - 3) + "px";
         const time = start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
         ev.innerHTML = "<strong>" + esc(v.name || v.title || "Busy") + "</strong>"
-          + "<span class='desk-meta'>" + esc(time) + (dur ? " · " + dur + "m" : "") + "</span>";
-        ev.title = (v.name || "") + " " + (v.email || "") + " " + (v.title || "");
+          + "<span class='desk-meta'>" + esc(time) + (dur ? " · " + dur + "m" : "") + "</span>"
+          + (v.intake && v.intake.flags
+            ? "<span class='desk-meta'>" + esc((held ? "Held · " : "") + "P" + (v.intake.flags.personal ? "✓" : "–")
+              + " C" + (v.intake.flags.consents ? "✓" : "–") + " $" + (v.intake.flags.card ? "✓" : "–")) + "</span>"
+            : "");
+        ev.title = (v.name || "") + " " + (v.email || "") + " " + (v.title || "")
+          + (v.intake && v.intake.flags ? " · intake: personal " + (v.intake.flags.personal ? "done" : "due")
+            + ", consents " + (v.intake.flags.consents ? "done" : "due") + ", card " + (v.intake.flags.card ? "on file" : "due")
+            + (held ? " · HELD until " + new Date(v.hold.deadline_at).toLocaleString() : "") : "");
         if (v.event_id) ev.dataset.eid = v.event_id;
         if (focusEventId && v.event_id === focusEventId) ev.classList.add("is-focus");
         ev.onclick = (e) => {
@@ -3527,7 +3722,7 @@
       }
     }
     function noteFieldInput(sec, val) {
-      const typ = sec.type || "paragraph";
+      const typ = sec.id === "return_visit" ? "line" : (sec.type || "paragraph");
       if (typ === "date") {
         const i = document.createElement("input");
         i.type = "date";
@@ -3565,7 +3760,7 @@
         lab.textContent = sec.label || sec.id;
         let start = prev[sec.id] || "";
         if (sec.id === "dos" && !start) start = noteDosPrefill || today;
-        if (sec.type === "date" && !start) start = today;
+        if (sec.type === "date" && sec.id !== "return_visit" && !start) start = today;
         const inp = noteFieldInput(sec, start);
         inp.dataset.fid = sec.id;
         lab.appendChild(inp);
@@ -3751,8 +3946,9 @@
         status.textContent = "Failed: " + (data.detail || res.status);
         return;
       }
-      status.textContent = "Signed · " + (data.name || "saved");
+      status.textContent = "Signed · " + (data.name || "saved") + (data.shareable ? " · review, then Send AVS below" : "");
       msg("Note signed to Visit notes.", true);
+      if (data.note_id && data.shareable) avsShareShow({ id: data.note_id, shareable: true, dos: values.dos || "" }, null);
       if (window.PsychartsVault && PsychartsVault.ready()) {
         PsychartsVault.putNote(
           { id: c.id || "", email: c.email || "" },
@@ -3828,6 +4024,7 @@
           await openHome({ id: d.client_id || "", email: d.email || "", name: d.name || "" });
         } catch (e) {}
       }
+      window.__noteSkipPrefill = true;
       openNotePop("");
       await fillNoteTemplates();
       const sel = $("nt-template");
@@ -3843,7 +4040,7 @@
       if ($("nt-transcript") && d.transcript) $("nt-transcript").value = d.transcript;
       let fields = null;
       if (raw.length >= 20) {
-        msg("Shaping visit draft with style pack…", true);
+        msg("Reading visit draft…", true);  // scribe note parsed on the booker; no xAI
         try {
           const dr = await deskFetch("/api/desk/note/draft", {
             method: "POST",
@@ -3867,7 +4064,7 @@
       if (rec && !rec.value && raw && !anyFilled) rec.value = raw;
       await deskFetch("/api/desk/note/scribe-pending/" + encodeURIComponent(id) + "/ack", { method: "POST" });
       if ($("scribe-draft-banner")) $("scribe-draft-banner").hidden = true;
-      msg(fields ? "Visit draft shaped with style pack — edit, then Sign." : "Visit draft loaded — edit, then Sign.", true);
+      msg(fields ? "Visit draft filled from the scribe note — edit, then Sign." : "Visit draft loaded — edit, then Sign.", true);
       pollScribeDrafts();
     }
     if ($("scribe-draft-open")) {
@@ -4046,6 +4243,12 @@
             + "' data-dur='" + esc(String(v.duration_minutes || ""))
             + "'>No-show</button>";
       }
+      if (opts.allowBill && v.event_id && !v.upcoming) {
+        extra += "<button type='button' class='home-bill' data-eid='" + esc(v.event_id || "")
+          + "' data-start='" + esc(v.start_iso || "")
+          + "' data-dur='" + esc(String(v.duration_minutes || ""))
+          + "' data-type='" + esc(v.event_type || "") + "'>Bill</button>";
+      }
       return "<li class='home-visit-row'><button type='button' class='home-visit' data-eid='" + esc(v.event_id || "")
         + "' data-start='" + esc(v.start_iso || "") + "'><span>"
         + esc(v.when_label || v.start_iso || "") + " · "
@@ -4093,6 +4296,67 @@
         if (html) box.innerHTML = "<div class='home-note-fields'>" + html + "</div>";
       }).catch(() => {});
     }
+    // ---- last signed AVS: prefill next note + Send / re-send / turn off the 30-day link ----
+    let avsNoteId = "";
+    function avsShareShow(note, share) {
+      const box = $("nt-avs-share");
+      if (!box) return;
+      avsNoteId = (note && note.shareable && note.id) || "";
+      box.hidden = !avsNoteId;
+      if (!avsNoteId) return;
+      const when = note.dos ? " for " + note.dos : "";
+      const live = share && share.expires_at ? " · link live until " + new Date(share.expires_at * 1000).toLocaleDateString() + (share.hits ? " · opened " + share.hits + "×" : "") : " · not sent yet";
+      $("nt-avs-info").textContent = "Signed AVS" + when + live;
+      $("nt-avs-send").textContent = share ? "Re-send AVS (new link)" : "Send AVS to patient (email + text)";
+      $("nt-avs-revoke").hidden = !share;
+    }
+    async function applyLastAvs(c) {
+      const skipPrefill = !!window.__noteSkipPrefill;  // a scribe draft is filling this note
+      window.__noteSkipPrefill = false;
+      if (!c || !c.id) return;
+      try {
+        const res = await deskFetch("/api/desk/note/last-avs?client_id=" + encodeURIComponent(c.id));
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok || !data.note) return;
+        avsShareShow(data.note, data.share);
+        if (skipPrefill) return;
+        const pre = data.prefill || {};
+        let n = 0;
+        document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+          const k = el.dataset.fid;
+          if (!el.value && pre[k]) { el.value = pre[k]; n++; }
+        });
+        if (n) $("note-status").textContent = "Prefilled from the last signed AVS (" + data.note.dos + "). Edit before signing.";
+      } catch (e) {}
+    }
+    $("nt-avs-send").onclick = async () => {
+      if (!avsNoteId) return;
+      const c = (homeCurrent && homeCurrent.client) || {};
+      if (!confirm("Send the after-visit summary to " + (c.name || "this patient") + " by email and text? The link works for 30 days with no login.")) return;
+      const status = $("note-status");
+      status.textContent = "Sending…";
+      const res = await deskFetch("/api/desk/note/avs/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note_id: avsNoteId, send_email: true, send_sms: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) { status.textContent = "Send failed: " + (data.detail || res.status); return; }
+      const e = data.email || {}, t = data.sms || {};
+      status.textContent = "AVS link sent · email " + (e.sent ? "sent" : (e.detail || "not sent")) + " · text " + (t.sent ? "sent" : (t.detail || "not sent"));
+      avsShareShow({ id: avsNoteId, shareable: true }, { expires_at: Math.floor(Date.parse(data.expires_iso) / 1000), hits: 0 });
+    };
+    $("nt-avs-revoke").onclick = async () => {
+      if (!avsNoteId || !confirm("Turn off this patient's AVS link now?")) return;
+      const res = await deskFetch("/api/desk/note/avs/share/revoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note_id: avsNoteId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      $("note-status").textContent = res.ok && data.ok ? "AVS link turned off." : "Could not turn off: " + (data.detail || res.status);
+      if (res.ok && data.ok) avsShareShow({ id: avsNoteId, shareable: true }, null);
+    };
     function applyVaultToNoteFields(c) {
       if (!window.PsychartsVault || !PsychartsVault.ready()) return;
       PsychartsVault.getNote({ id: c.id || "", email: c.email || "" }).then((n) => {
@@ -4112,6 +4376,24 @@
         });
       }).catch(() => {});
     }
+    // New-client intake flags (personal / consents / card on file) + open hold.
+    function intakeChips(intake) {
+      if (!intake || !intake.flags) return "";
+      const f = intake.flags;
+      const chip = (ok, label) => "<span class='home-chip" + (ok ? " ok" : " due") + "'>" + esc(label + (ok ? " ✓" : " due")) + "</span>";
+      let html = chip(f.personal, "Personal info") + chip(f.consents, "Consents") + chip(f.card, "Card on file");
+      if (intake.copies && intake.copies.sent_at) {
+        const d = new Date(intake.copies.sent_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        html += "<span class='home-chip ok' title='Client was emailed/texted a 30-day link to their signed copies + privacy notice'>" +
+          esc("Copies sent " + d + " CT" + (intake.copies.opened ? " · opened" : "")) + "</span>";
+      }
+      if (intake.hold && intake.hold.deadline_at) {
+        const dl = new Date(intake.hold.deadline_at).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        html += "<span class='home-chip due'>" + esc("Held: paperwork due by " + dl + " CT") + "</span>";
+      }
+      return html;
+    }
+
     function renderHome(data) {
       const c = data.client || {};
       const card = data.card || {};
@@ -4121,7 +4403,7 @@
       const last = past[0] || null;
       const older = past.slice(1);
       const noShowIds = ((data.books && data.books.no_show_event_ids) || []);
-      const pastOpts = { allowNoShow: !!c.id, noShowIds };
+      const pastOpts = { allowNoShow: !!c.id, allowBill: !!c.id, noShowIds };
       const note = data.last_note || {};
       const plan = data.plan || {};
       const files = data.files || {};
@@ -4157,12 +4439,14 @@
           <p class="home-kv">${esc(bits.join(" · "))}</p>
           <div class="home-chips">
             <span class="home-chip${cardOk ? " ok" : ""}">${esc(cardLabel)}</span>
+            ${intakeChips(data.intake)}
             ${window.DeskBooks ? DeskBooks.chip(data.books) : ""}
           </div>
         </div>
         ${layoutMode === "office" ? `<div class="home-join" id="hm-join-box"><p class="desk-meta">Office is on this tablet. Notes stay on the other device.</p><button class="btn" type="button" id="hm-join">Join office</button></div>` : ""}
         <div class="home-actions">
           <button class="btn" type="button" id="hm-send">Send forms</button>
+          ${c.id ? '<button class="btn" type="button" id="hm-bill">Bill visit</button>' : ""}
           ${c.id ? '<button class="btn secondary" type="button" id="hm-charge">Charge</button>' : ""}
           ${c.phone ? '<button class="btn secondary" type="button" id="hm-call">Call</button>' : ""}
           <button class="btn secondary" type="button" id="hm-book">Book next</button>
@@ -4285,6 +4569,17 @@
       if ($("hm-join")) $("hm-join").onclick = () => joinOfficePlaceholder();
       if ($("hm-note")) $("hm-note").onclick = () => openNotePop("");
       $("hm-superbill").onclick = () => openSuperbill();
+      if ($("hm-bill")) $("hm-bill").onclick = () => {
+        const hit = past.find((v) => v.event_id && v.event_id === focusEventId) || last || {};
+        openBill(c, hit);
+      };
+      $("home-body").querySelectorAll("button.home-bill").forEach((b) => {
+        b.onclick = (ev) => {
+          ev.stopPropagation();
+          openBill(c, { event_id: b.dataset.eid || "", start_iso: b.dataset.start || "",
+            duration_minutes: b.dataset.dur ? Number(b.dataset.dur) : null, event_type: b.dataset.type || "" });
+        };
+      });
       $("hm-files").onclick = async () => {
         const row = $("hm-files-row");
         if (!row.hidden) { row.hidden = true; return; }

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/booker.css" />
+  <link rel="stylesheet" href="/static/css/booker.css?v=polish1" />
   <title>Book · Dr. Matt Brown</title>
 </head>
 <body>
@@ -72,7 +72,7 @@
         <h2 class="step-title" id="details-heading">Your details</h2>
         <button type="button" class="details-modal-close" id="details-modal-close" aria-label="Close">×</button>
       </div>
-      <p class="step-sub">We’ll email a confirmation with a cancel link.</p>
+      <p class="step-sub" id="details-sub">We’ll email a confirmation with a cancel link.</p>
       <div class="selection-chip" id="modal-selection-chip">
         <span class="chip-kicker">Selected</span>
         <span class="chip-main" id="modal-chip-main"></span>
@@ -175,7 +175,7 @@
   <script src="/static/js/cipher-envelope.js?v=1"></script>
   <script src="/static/js/cipher-booker.js?v=1"></script>
   <script type="module">
-    import { initBooker } from "/static/js/booker.js?v=prefill1";
+    import { initBooker } from "/static/js/booker.js?v=hold1";
     const slug = location.pathname.replace(/^\/+|\/+$/g, "") || "";
     const types = await fetch("/api/types").then((r) => r.json()).catch(() => ({ types: [] }));
     const t = (types.types || []).find((x) => x.slug === slug);
@@ -198,7 +198,16 @@
       return '<button type="button" data-duration="' + d + '" data-price="' + lab + '"' +
         (i === 0 ? ' class="active" aria-pressed="true"' : ' aria-pressed="false"') + ">" + d + " min</button>";
     }).join("");
-    if (durs.length < 2) document.querySelector(".duration-bar").hidden = true;
+    if (durs.length < 2) {
+      const lab = document.createElement("span");
+      lab.className = "duration-bar-label";
+      lab.textContent = "Visit length: " + durs[0] + " min";
+      document.querySelector(".duration-bar").replaceChildren(lab);
+    }
+    if (slug === "new-client") {
+      document.getElementById("details-sub").textContent = "Next you'll add a card to confirm. Nothing is charged today.";
+      document.getElementById("submit").textContent = "Hold this time";
+    }
     initBooker({ type: slug, title: t.title, defaultDuration: durs[0], prices: prices, location: t.location || "" });
   </script>
 </body>

@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks, HTTPException, Request
 
 ROOT = Path(__file__).resolve().parents[1]
 _ENV_KEYS = ("BOOKER_LOG_DIR", "VERIFY_CODE_SECRET", "CANCEL_SECRET_FILE")
@@ -329,11 +329,11 @@ def test_verify_routes_recognize_then_code_then_token() -> None:
     from app import verify_codes
 
     with _portal() as (main, _fake):
-        assert main.api_verify_patient(main.VerifyRequest())["reason"] == "need_email_or_phone"
-        named = main.api_verify_patient(main.VerifyRequest(phone="(555) 555-0100"))
-        assert named == {"ok": True, "level": "message", "name": "Jane Demo"}
-        assert main.api_verify_patient(main.VerifyRequest(email="nobody@example.com"))["ok"] is False
-        assert main.api_verify_patient(main.VerifyRequest(full_name="Jane Demo", dob="1990-01-02"))["ok"] is False
+        assert main.api_verify_patient(main.VerifyRequest(), _req(False))["reason"] == "need_email_or_phone"
+        named = main.api_verify_patient(main.VerifyRequest(phone="(555) 555-0100"), _req(False))
+        assert named == {"ok": True, "level": "message"}  # never the name before a code
+        assert main.api_verify_patient(main.VerifyRequest(email="nobody@example.com"), _req(False))["ok"] is False
+        assert main.api_verify_patient(main.VerifyRequest(full_name="Jane Demo", dob="1990-01-02"), _req(False))["ok"] is False
 
         sent: list[tuple[str, str, str]] = []
 
@@ -350,7 +350,7 @@ def test_verify_routes_recognize_then_code_then_token() -> None:
         if sent[0][2] != "000000":
             assert wrong == {"ok": False, "reason": "invalid_code"}
         good = main.api_verify_patient_code(main.VerifyCodeRequest(email="jane@example.com", code=sent[0][2]))
-        assert good["ok"] is True and good["level"] == "sensitive"
+        assert good["ok"] is True and good["level"] == "sensitive" and good["name"] == "Jane Demo"
         out = main.api_public_balance(main.PublicTokenRequest(verify_token=good["verify_token"]))
         assert out["ok"] is True
 
@@ -368,10 +368,163 @@ def test_voice_follow_up_needs_contact_on_file() -> None:
                 source="voice",
                 **kw,
             )
-            return _status(main.api_book, req, BackgroundTasks())
+            # api_book now takes the raw Request (phone line marks itself with x-desk-channel: voice)
+            http = Request({"type": "http", "method": "POST", "path": "/api/book", "query_string": b"",
+                            "headers": [(b"x-desk-channel", b"voice")]})
+            return _status(main.api_book, req, BackgroundTasks(), http)
 
         assert book(email="stranger@example.com") == 401
         assert book(email="jane@example.com", verify_token="bad.token") == 401
         assert book(email="other@example.com", phone="555-555-0100") == 401
         assert book(email="jane@example.com") == 409
         assert book(email="other@example.com", verify_token=_token()) == 409
+
+
+def test_slot_taken_is_a_clear_409() -> None:
+    with _portal() as (main, _fake):
+        main.generate_slots = lambda *a, **k: []
+        req = main.BookRequest(event_type="follow-up", start="2026-10-20T10:00:00-05:00", duration_minutes=30,
+                               name="Jane Demo", email="jane@example.com", source="web")
+        http = Request({"type": "http", "method": "POST", "path": "/api/book", "query_string": b"", "headers": []})
+        try:
+            main.api_book(req, BackgroundTasks(), http)
+        except HTTPException as e:
+            assert e.status_code == 409 and "no longer available" in str(e.detail)
+        else:
+            raise AssertionError("expected 409")
+
+
+def test_booker_page_keeps_slot_taken_message_after_refresh() -> None:
+    """Root cause: the submit catch set the error, then loadSlots() cleared it. Now: refresh, then message."""
+    import subprocess
+
+    js = (ROOT / "static" / "js" / "booker.js").read_text()
+    i = js.index("await loadSlots();\n        if (e && e.status === 409)")
+    assert js.index("SLOT_TAKEN_MSG, \"err\")", i) > i
+    assert 'const SLOT_TAKEN_MSG = "That time was just taken. Please pick another.";' in js
+    fetch_fn = js[js.index("async function fetchJSON"): js.index("function el(id)")]
+    harness = fetch_fn + """
+globalThis.fetch = async () => ({ ok: false, status: 409, statusText: "Conflict",
+  json: async () => ({ detail: "That slot is no longer available. Please pick another." }) });
+fetchJSON("/api/book", {}).then(() => { console.log("no-throw"); process.exit(1); },
+  (e) => { console.log(e.status); process.exit(e.status === 409 ? 0 : 1); });
+"""
+    out = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_new_client_page_uses_hold_wording_only_for_new_client() -> None:
+    html = (Path(__file__).resolve().parents[1] / "static" / "book.html").read_text()
+    assert 'if (slug === "new-client")' in html
+    assert "Next you'll add a card to confirm. Nothing is charged today." in html
+    assert "Hold this time" in html
+    # Default copy stays for every other type.
+    assert "We’ll email a confirmation with a cancel link." in html
+    assert ">Confirm booking</button>" in html
+
+
+def test_booker_polish_contrast_and_single_length_label() -> None:
+    css = (ROOT / "static" / "css" / "booker.css").read_text()
+    html = (ROOT / "static" / "book.html").read_text()
+    assert "--muted: #595959;" in css
+    assert ".cal-day:disabled {\n  color: var(--muted);" in css
+    assert "font-size: 0.875rem;\n  line-height: 1.4;\n  color: var(--muted, #666);" in css
+    assert '"Visit length: " + durs[0] + " min"' in html
+    assert 'duration-bar").hidden = true' not in html
+
+
+def test_voice_booking_existing_client_unfinished_intake_gets_link_no_hold() -> None:
+    from app import onboarding
+
+    with _portal() as (main, _fake):
+        start = "2026-10-20T10:00:00-05:00"
+        saved = {k: getattr(main, k) for k in ("_phone_slots", "create_event", "_mint_intake_url")}
+        saved_status = onboarding.status
+        main._phone_slots = lambda *a, **k: [{"start": start}]
+        main.generate_slots = lambda *a, **k: [{"start": start}]
+        main.create_event = lambda **k: {"htmlLink": ""}
+        main._mint_intake_url = lambda email, *a, **k: "https://site.example/intake#tok"
+        try:
+            def book(channel: bytes, email: str = "jane@example.com"):
+                req = main.BookRequest(event_type="follow-up", start=start, duration_minutes=30, name="Jane Demo",
+                                       email=email, phone="555-555-0100", sms_consent=True, source="voice",
+                                       verify_token=_token())
+                hdrs = [(b"x-desk-channel", channel)] if channel else []
+                http = Request({"type": "http", "method": "POST", "path": "/api/book", "query_string": b"",
+                                "headers": hdrs})
+                bt = BackgroundTasks()
+                out = main.api_book(req, bt, http)
+                return out, (bt.tasks[0].kwargs.get("intake_url") if bt.tasks else None)
+
+            out, url = book(b"voice")
+            assert out.get("intake_link_sent") is True and not out.get("held")
+            assert url == "https://site.example/intake#tok"
+            out, url = book(b"")  # web: unchanged
+            assert "intake_link_sent" not in out and not url
+            onboarding.status = lambda **k: {"complete": True}
+            out, url = book(b"voice")  # intake complete: unchanged
+            assert "intake_link_sent" not in out and not url
+        finally:
+            onboarding.status = saved_status
+            for k, v in saved.items():
+                setattr(main, k, v)
+
+
+def test_confirm_sms_carries_intake_link_when_given() -> None:
+    from app.email_templates import confirm_sms
+
+    s = confirm_sms(title="Follow-up", when_label="Tue Oct 20 · 10:00 AM", intake_url="https://x/intake")
+    assert "https://x/intake" in s and "card on file" in s
+    assert "intake" not in confirm_sms(title="Follow-up", when_label="Tue Oct 20 · 10:00 AM")
+
+
+def _req(voice: bool) -> Request:
+    hdrs = [(b"x-desk-channel", b"voice")] if voice else []
+    return Request({"type": "http", "method": "POST", "path": "/", "query_string": b"", "headers": hdrs})
+
+
+def test_voice_sms_consent_saved_once_and_reused() -> None:
+    from app import clients_db
+
+    with _portal() as (main, _fake):
+        V = main.VerifyRequest
+        web = main.api_verify_patient(V(email="jane@example.com"), _req(False))
+        assert "sms_consent" not in web  # web never learns consent
+        assert main.api_verify_patient(V(email="jane@example.com"), _req(True))["sms_consent"] == "unknown"
+        assert main.api_verify_patient(V(email="jane@example.com", sms_consent="yes"), _req(True))["sms_consent"] == "yes"
+        row = clients_db.get_by_id("c-jane")
+        assert row["sms_consent"] == 1 and row["sms_consent_source"] == "voice" and row["sms_consent_at"]
+        assert main.api_verify_patient(V(phone="555-555-0100"), _req(True))["sms_consent"] == "yes"
+        # Retraction, then opt back in.
+        assert main.api_verify_patient(V(email="jane@example.com", sms_consent="no"), _req(True))["sms_consent"] == "no"
+        assert main.api_verify_patient(V(email="jane@example.com", sms_consent="yes"), _req(True))["sms_consent"] == "yes"
+        assert main.api_verify_patient(V(email="nobody@example.com", sms_consent="yes"), _req(True)).get("ok") is False
+
+
+def test_voice_booking_uses_consent_on_file_and_saves_an_answer() -> None:
+    from app import clients_db
+
+    with _portal() as (main, _fake):
+        start = "2026-10-20T10:00:00-05:00"
+        saved = {k: getattr(main, k) for k in ("_phone_slots", "create_event", "_mint_intake_url")}
+        main._phone_slots = lambda *a, **k: [{"start": start}]
+        main.generate_slots = lambda *a, **k: [{"start": start}]
+        main.create_event = lambda **k: {"htmlLink": ""}
+        main._mint_intake_url = lambda *a, **k: ""
+        try:
+            def book(voice: bool, **kw):
+                req = main.BookRequest(event_type="follow-up", start=start, duration_minutes=30, name="Jane Demo",
+                                       email="jane@example.com", phone="555-555-0100", source="voice",
+                                       verify_token=_token(), **kw)
+                return main.api_book(req, BackgroundTasks(), _req(voice))["sms_consent"]
+
+            assert book(True) is False  # unknown on file, no answer: no texts
+            clients_db.set_sms_consent("c-jane", True, "voice")
+            assert book(True) is True  # yes on file, not asked again
+            assert book(True, sms_consent=False) is False  # caller retracts on the booking
+            assert clients_db.sms_consent_state(clients_db.get_by_id("c-jane")) == "no"
+            assert book(False, sms_consent=True) is True  # web checkbox unchanged, not saved
+            assert clients_db.sms_consent_state(clients_db.get_by_id("c-jane")) == "no"
+        finally:
+            for k, v in saved.items():
+                setattr(main, k, v)

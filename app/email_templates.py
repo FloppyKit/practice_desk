@@ -62,6 +62,8 @@ SUITE: dict[str, str] = {
     "payment_received": "Payment received",
     "document": "Visit summary ready",
     "superbill": "Superbill ready",
+    "avs": "After-visit summary ready",
+    "intake_copies": "Copies of signed intake forms",
     "cancel": "Visit cancelled",
     "reschedule": "Visit rescheduled",
     "no_show": "No-show close-out",
@@ -389,9 +391,14 @@ def render_visit_email(
     logo_src: str = LOGO_CID,
     meet_url: str = MEET_URL,
     ics_url: str = "",
+    hold_until_label: str = "",
+    intake_url: str = "",
 ) -> tuple[str, str, str]:
     heading = visit_heading(title, duration_minutes)
     subject, kicker, lede = _visit_copy(kind, heading)
+    held = kind == "confirm" and bool(hold_until_label)
+    if held:
+        subject, kicker, lede = hold_copy(heading, hold_until_label)
     date_line, time_line = format_when(
         start_iso=start_iso,
         duration_minutes=duration_minutes,
@@ -480,7 +487,23 @@ def render_visit_email(
             ghosts.append((cancel_url, "Cancel"))
         if rebook_url:
             ghosts.append((rebook_url, "Book a new time"))
-        if kind == "confirm":
+        if held:
+            held_txt = hold_until_label[4:] if hold_until_label.startswith("for ") else hold_until_label
+            rows.append(("Held", f'<div style="font-weight:600;">{_esc(held_txt)}</div>'
+                                 '<div style="font-size:14px;color:#52525b;padding-top:2px;">'
+                                 "Pending your intake paperwork.</div>"))
+        if kind == "confirm" and intake_url:
+            rows.append(
+                (
+                    "Paperwork",
+                    f'<a href="{_esc(intake_url)}" style="color:#111111;">Complete intake paperwork</a>'
+                    '<div style="font-size:14px;color:#52525b;padding-top:2px;">'
+                    "Card on file (nothing is charged today), personal information, and consents. About 5–10 minutes; you can save and finish later.</div>",
+                )
+            )
+            primary = (intake_url, "Complete intake paperwork")
+            ghosts.insert(0, (loc_url, "Join visit"))
+        elif kind == "confirm":
             forms_url = (
                 f"{FORMS_URL}/personal?kiosk=1"
                 f"&name={quote(name or '')}&email={quote(email or '')}&phone={quote(phone or '')}"
@@ -592,8 +615,89 @@ def reminder_sms(*, title: str, when_label: str, kind: str, duration_minutes: in
     )
 
 
-def confirm_sms(*, title: str, when_label: str, duration_minutes: int | None = None) -> str:
+def hold_copy(heading: str, hold_until_label: str) -> tuple[str, str, str]:
+    return (
+        f"Your spot is held: {heading}",
+        "Your time is held while you finish intake.",
+        f"We are holding this time for you {hold_until_label}. "
+        "Please complete your intake paperwork and add a card on file before your visit. "
+        "It takes about 10 minutes, nothing is charged today, and your visit is confirmed as soon as it is done.",
+    )
+
+
+def hold_notice(
+    *,
+    kind: str,
+    name: str,
+    heading: str,
+    when_label: str,
+    hold_until_label: str = "",
+    intake_url: str = "",
+    rebook_url: str = BOOK_URL,
+    logo_src: str = LOGO_CID,
+) -> tuple[str, str, str, str]:
+    """Hold reminder / released / confirmed. Returns subject, html, text, sms."""
+    who = first_name(name) if name else ""
+    hi = f"Hi {who}," if who and who != "there" else "Hi,"
+    if kind == "reminder":
+        subject = f"Reminder: finish your intake to keep {when_label}"
+        heading_txt, lede = "A quick reminder", f"Your spot on {when_label} CT is held until {hold_until_label}."
+        letter = (f"{hi}\n\nWe are still holding your time on {when_label} CT. "
+                  "Please complete your intake paperwork and add a card on file before your visit "
+                  f"(by {hold_until_label}). Nothing is charged today.\n\nThank you!")
+        primary = (intake_url, "Complete intake paperwork") if intake_url else None
+        sms = (f"Dr. Matt Brown: Friendly reminder - your {when_label} CT spot is held until "
+               f"{hold_until_label}. Please finish intake + card on file: {intake_url} Reply STOP to opt out.")
+    elif kind == "released":
+        subject = "Your held time was released"
+        heading_txt, lede = "We released the held time", f"The hold on {when_label} CT has ended."
+        letter = (f"{hi}\n\nWe held {when_label} CT for you, but the intake paperwork was not finished in time, "
+                  "so the time has been released for other clients. Nothing was charged.\n\n"
+                  "You are very welcome to book again whenever it suits you; we would be glad to see you.")
+        primary = (rebook_url, "Book a new time")
+        sms = (f"Dr. Matt Brown: The held time on {when_label} CT was released because intake wasn't finished. "
+               f"Nothing was charged. You're welcome to book again: {rebook_url} Reply STOP to opt out.")
+    else:
+        subject = f"Confirmed: {heading}"
+        heading_txt, lede = "You're all set", f"Your visit on {when_label} CT is confirmed."
+        letter = (f"{hi}\n\nThank you for completing your intake paperwork. "
+                  f"Your visit on {when_label} CT is confirmed. We look forward to meeting you.")
+        primary = (MEET_URL, "Join visit")
+        sms = (f"Dr. Matt Brown: Thank you - intake is complete and your visit on {when_label} CT is confirmed. "
+               f"Join: {MEET_HOST} Reply STOP to opt out.")
+    sub, html, text = render_card(
+        subject=subject,
+        kicker="A note from Dr. Matt Brown",
+        heading=heading_txt,
+        lede=lede,
+        letter=_esc(letter),
+        primary=primary,
+        logo_src=logo_src,
+    )
+    return sub, html, text, sms
+
+
+def confirm_sms(
+    *,
+    title: str,
+    when_label: str,
+    duration_minutes: int | None = None,
+    hold_until_label: str = "",
+    intake_url: str = "",
+) -> str:
     heading = visit_heading(title, duration_minutes)
+    if hold_until_label:
+        return (
+            f"Dr. Matt Brown: Your {heading} on {when_label} CT is held {hold_until_label} pending paperwork. "
+            f"Please complete your intake paperwork and add a card on file before your visit: "
+            f"{intake_url or FORMS_URL} Reply STOP to opt out, HELP for help."
+        )
+    if intake_url:
+        return (
+            f"Dr. Matt Brown: Confirmed {heading} on {when_label} CT. "
+            f"Please finish your paperwork and add a card on file before your visit: {intake_url} "
+            f"Join: {MEET_HOST} Reply STOP to opt out, HELP for help."
+        )
     return (
         f"Dr. Matt Brown: Confirmed {heading} on {when_label} CT. "
         f"Join: {MEET_HOST} Reply STOP to opt out, HELP for help. "
@@ -904,6 +1008,53 @@ def render_named(
             logo_src=logo,
         )
         return sub, html, text, ""
+
+    if kind == "intake_copies":
+        link = url
+        npp = _f(f, "npp_url")
+        letter = _esc(
+            f"Hi {first_name(name)},\n\n"
+            "Thank you for completing your paperwork. For your records, here are copies of the forms you signed, "
+            "along with our Notice of Privacy Practices. The link is private to you and works for 30 days; "
+            "you can save the PDFs to keep them."
+        )
+        rows = [("Includes", "Your signed forms (PDF) and the Notice of Privacy Practices")]
+        sub, html, text = render_card(
+            subject="Copies of your signed forms — Dr. Matt Brown",
+            kicker="For your records",
+            heading="Your signed forms",
+            lede="Open or save them anytime in the next 30 days. No login needed.",
+            letter=letter,
+            rows=rows,
+            primary=(link, "View my signed forms") if link else None,
+            ghosts=[(npp, "Notice of Privacy Practices")] if npp else None,
+            logo_src=logo,
+        )
+        sms = (f"Hi {first_name(name)}, copies of the forms you signed for Dr. Brown, plus our privacy notice "
+               f"(private link, good for 30 days): {link}") if link else ""
+        return sub, html, text, sms
+
+    if kind == "avs":
+        link = url
+        dos_label = _f(f, "dos_label")
+        rows = [("Visit", f'<div style="font-weight:600;">{_esc(dos_label or "Your visit")}</div>')]
+        letter = _esc(
+            f"Hi {first_name(name)},\n\n"
+            "Here are my notes from today's visit: medications, supplements, other recommendations, "
+            "and when we meet again. The link is private to you and works for 30 days."
+        )
+        sub, html, text = render_card(
+            subject="Your after-visit summary — Dr. Matt Brown",
+            kicker="After your visit",
+            heading="Your after-visit summary",
+            lede="Open it anytime in the next 30 days. No login needed.",
+            letter=letter,
+            rows=rows,
+            primary=(link, "Open after-visit summary") if link else None,
+            logo_src=logo,
+        )
+        sms = f"Hi {first_name(name)}, your after-visit summary from Dr. Brown (link good for 30 days): {link}" if link else ""
+        return sub, html, text, sms
 
     if kind == "no_show":
         visit = visit_heading(title, duration)

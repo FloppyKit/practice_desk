@@ -171,6 +171,7 @@ def create_event(
     attendee_email: str | None = None,
     private_props: dict[str, str] | None = None,
     uid: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     uid = uid or uuid.uuid4().hex
     tz = ZoneInfo(timezone or "America/Chicago")
@@ -182,7 +183,7 @@ def create_event(
     priv.setdefault("booker", "1")
     ev: dict[str, Any] = {
         "id": uid,
-        "status": "confirmed",
+        "status": status or "confirmed",
         "summary": summary or "Visit",
         "description": description or "",
         "start": {"dateTime": start.isoformat(), "timeZone": str(tz)},
@@ -201,12 +202,18 @@ def patch_event(
     *,
     description: str | None = None,
     private_props: dict[str, str] | None = None,
+    summary: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     ev = _MEMO.get(event_id)
     if ev is None:
         return {}
     if description is not None:
         ev["description"] = description
+    if summary is not None:
+        ev["summary"] = summary
+    if status is not None:
+        ev["status"] = status
     if private_props:
         priv = ev.setdefault("extendedProperties", {}).setdefault("private", {})
         priv.update({str(k): str(v) for k, v in private_props.items()})

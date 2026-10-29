@@ -93,6 +93,7 @@ def _ics(
     end: datetime,
     timezone: str,
     private_props: dict[str, str] | None,
+    status: str | None = None,
 ) -> bytes:
     from icalendar import Calendar, Event
 
@@ -113,6 +114,8 @@ def _ics(
     ev.add("dtstart", start)
     ev.add("dtend", end)
     ev.add("dtstamp", datetime.now(tz))
+    if status:
+        ev.add("status", status.upper())
     props = dict(private_props or {})
     props.setdefault("booker", "1")
     for k, v in props.items():
@@ -147,7 +150,7 @@ def _vevent_to_google(comp) -> dict[str, Any]:
         "id": uid,
         "summary": summary,
         "description": description,
-        "status": "confirmed",
+        "status": "tentative" if str(comp.get("status") or "").upper() == "TENTATIVE" else "confirmed",
         "start": {"dateTime": start.isoformat()} if start else {},
         "end": {"dateTime": end.isoformat()} if end else {},
         "extendedProperties": {"private": priv},
@@ -222,6 +225,7 @@ def create_event(
     attendee_email: str | None = None,
     private_props: dict[str, str] | None = None,
     uid: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     del calendar_id, attendee_email
     uid = uid or uuid.uuid4().hex
@@ -233,6 +237,7 @@ def create_event(
         end=end,
         timezone=timezone,
         private_props=private_props,
+        status=status,
     )
     cal = _calendar()
     cal.save_event(ics.decode() if isinstance(ics, bytes) else ics)
@@ -245,7 +250,7 @@ def create_event(
         "end": {"dateTime": end.isoformat()},
         "extendedProperties": {"private": dict(private_props or {})},
         "htmlLink": "",
-        "status": "confirmed",
+        "status": status or "confirmed",
     }
 
 
@@ -298,6 +303,8 @@ def patch_event(
     *,
     description: str | None = None,
     private_props: dict[str, str] | None = None,
+    summary: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any]:
     del calendar_id
     cal = _calendar()
@@ -306,6 +313,10 @@ def patch_event(
     for comp in ical.walk("VEVENT"):
         if description is not None:
             comp["description"] = description
+        if summary is not None:
+            comp["summary"] = summary
+        if status is not None:
+            comp["status"] = status.upper()
         if private_props:
             for k, v in private_props.items():
                 comp[_prop_key(k)] = str(v)

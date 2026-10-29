@@ -73,15 +73,11 @@ def _write(channel: str, destination: str, row: dict[str, Any]) -> None:
 
 
 def recognize_for_message(*, email: str = "", phone: str = "") -> dict[str, Any]:
-    """Phone or email on file can name a message. No token, no chart, no visit list."""
+    """Phone or email on file can file a message. Never returns the name (no identity before a code)."""
     found = _lookup(email, phone)
     if not found:
         return {"ok": False, "level": "none", "reason": "not_found"}
-    _channel, _destination, row = found
-    name = str(
-        row.get("preferred_name") or row.get("display_name") or row.get("given_name") or ""
-    ).strip()
-    return {"ok": True, "level": "message", "name": name[:80]}
+    return {"ok": True, "level": "message"}
 
 
 def _public_pending() -> dict[str, Any]:

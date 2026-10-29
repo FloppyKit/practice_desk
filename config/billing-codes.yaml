@@ -1,0 +1,26 @@
+# One-click billing: visit codes -> invoice code, price, and superbill CPT lines.
+# Invoice codes (FU30, FU60, NP) are ours and never print as CPT codes.
+# CPT fees must add up to the price (tests/test_billing.py checks this).
+# Every line is telehealth: POS 10, modifier 95.
+pos: "10"
+visit_types:
+  fu30:
+    label: "Follow-up, 30 min"
+    invoice_code: "FU30"
+    price: 265
+    cpt:
+      - { code: "99213", mod: "95", fee: 220, service: "Level 3 office visit, 30 min" }
+      - { code: "90833", mod: "95", fee: 45, service: "Psychotherapy add-on, 30 min" }
+  fu60:
+    label: "Follow-up, 60 min"
+    invoice_code: "FU60"
+    price: 420
+    cpt:
+      - { code: "99213", mod: "95", fee: 220, service: "Level 3 office visit" }
+      - { code: "90838", mod: "95", fee: 200, service: "Psychotherapy add-on, 53+ min" }
+  np:
+    label: "New patient evaluation"
+    invoice_code: "NP"
+    price: 600
+    cpt:
+      - { code: "90792", mod: "95", fee: 600, service: "Psychiatric diagnostic evaluation with medical services" }

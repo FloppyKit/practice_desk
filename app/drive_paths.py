@@ -11,7 +11,9 @@ LIVING_ROOT = "/Clients"
 CLIENT_FILES_ROOT = ARCHIVE_ROOT
 CHART_CHILD = "Chart"
 BILLING_CHILD = "Billing"
-VISIT_NOTES_FOLDER = "Visit notes"  # Matt: existing Chart child
+VISIT_NOTES_FOLDER = "Visit Notes"  # real /Clients and /Client files charts use "Visit Notes" (Proton paths are case-sensitive)
+# New client tree, copied from real /Clients/<Last, First> folders (2026-10-27): Billing + Chart/{...}.
+CHART_SUBFOLDERS = ("Consents", "Labs", "Letters", "Orders", VISIT_NOTES_FOLDER)
 _TTL = 300.0
 _cache: dict[str, Any] = {"at": 0.0, "items": []}
 

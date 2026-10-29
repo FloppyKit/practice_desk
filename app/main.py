@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 from contextvars import ContextVar
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -22,6 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
+from . import clients_db
 from .config import DEFAULT_CALENDAR, get_event_type, load_config
 from .cal import create_event, delete_event, get_event, list_booker_events, list_events, patch_event, using_caldav
 from .notify import (
@@ -70,10 +72,18 @@ def _seed_caldav_bg() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    seed = None
     if os.environ.get("CALDAV_SEED_GOOGLE", "1").strip().lower() in ("1", "true", "yes"):
         import threading
 
-        threading.Thread(target=_seed_caldav_bg, name="caldav-seed", daemon=True).start()
+        seed = threading.Thread(target=_seed_caldav_bg, name="caldav-seed", daemon=True)
+        seed.start()
+    from . import gsync
+
+    gsync.start(wait_for=seed)  # Google -> CalDAV re-sync at startup, then every 5 min
+    from . import onboarding
+
+    onboarding.start_sweeper(_onboarding_fx)  # new-client holds: reminder / confirm / release
     yield
 
 
@@ -212,7 +222,7 @@ class BookRequest(BaseModel):
     email: EmailStr
     phone: str = Field(default="", max_length=40)
     notes: str = Field(default="", max_length=500)
-    sms_consent: bool = False
+    sms_consent: bool | None = None  # None (phone line): use the answer on file
     # Optional extra people to notify (comma-separated emails)
     notify_emails: str = Field(default="", max_length=400)
     source: str = Field(default="web", max_length=20)
@@ -231,6 +241,7 @@ class VerifyRequest(BaseModel):
     last_name: str = ""
     dob: str = ""
     portal: bool = False
+    sms_consent: str = ""  # phone line only: "yes"/"no" saves the caller's text answer
 
 
 def _durations(et: dict[str, Any]) -> list[int]:
@@ -449,13 +460,22 @@ class VerifyCodeRequest(BaseModel):
 
 
 @app.post("/api/verify-patient")
-def api_verify_patient(req: VerifyRequest):
-    """Phone or email on file can name a message. No token. No chart."""
-    from .verify_codes import recognize_for_message
+def api_verify_patient(req: VerifyRequest, request: Request):
+    """Phone or email on file can file a message. No name, no token, no chart."""
+    from .verify_codes import _lookup, recognize_for_message
 
     if not (req.email or "").strip() and not (req.phone or "").strip():
         return {"ok": False, "level": "none", "reason": "need_email_or_phone"}
-    return recognize_for_message(email=req.email, phone=req.phone)
+    out = recognize_for_message(email=req.email, phone=req.phone)
+    if out.get("ok") and _phone_channel(request):
+        # Phone line only: text consent on file (yes/no/unknown); a yes/no from the caller is saved.
+        row = _lookup(req.email, req.phone)[2]
+        ans = (req.sms_consent or "").strip().lower()
+        if ans in ("yes", "no"):
+            clients_db.set_sms_consent(row["id"], ans == "yes", "voice")
+            row = clients_db.get_by_id(row["id"])
+        out["sms_consent"] = clients_db.sms_consent_state(row)
+    return out
 
 
 @app.post("/api/verify-patient/code-send")
@@ -474,6 +494,8 @@ def api_verify_patient_code(req: VerifyCodeRequest):
     result = confirm_code(email=req.email, phone=req.phone, code=req.code)
     if result.get("ok"):
         result["level"] = "sensitive"
+        # Name only after the code matched (it rides in the signed token).
+        result["name"] = str(verify_patient_token(result["verify_token"]).get("n") or "")[:80]
     return result
 
 
@@ -501,10 +523,31 @@ def api_types():
     return {"types": out}
 
 
+# Phone line (Amazon Connect via Caddy /desk-bridge, which sets X-Desk-Channel).
+# Web requests never carry it (Caddy strips it on public routes), so web is unchanged.
+PHONE_WINDOW_DAYS = 92
+PHONE_NOTICE_MINUTES = 14 * 60
+
+
+def _phone_channel(request: Request) -> bool:
+    return (request.headers.get("x-desk-channel") or "").strip().lower() == "voice"
+
+
+def _phone_slots(cfg, et, dur: int, range_start: datetime | None = None):
+    return generate_slots(
+        cfg, et, dur,
+        range_start=range_start,
+        days=PHONE_WINDOW_DAYS,
+        min_notice_minutes=PHONE_NOTICE_MINUTES,
+    )
+
+
 @app.get("/api/slots")
 def api_slots(
+    request: Request,
     type: str = Query(..., alias="type"),
     duration: int | None = None,
+    date: str | None = None,
 ):
     cfg = load_config()
     et = get_event_type(cfg, type)
@@ -514,13 +557,24 @@ def api_slots(
     dur = int(duration or durs[0])
     if dur not in durs:
         raise HTTPException(400, f"duration must be one of {durs}")
-    slots = generate_slots(cfg, et, dur)
+    if _phone_channel(request):
+        rs = None
+        if date:
+            try:
+                rs = datetime.strptime(date, "%Y-%m-%d").replace(
+                    tzinfo=ZoneInfo(cfg.get("timezone", "America/Chicago"))
+                )
+            except ValueError:
+                raise HTTPException(400, "date must be YYYY-MM-DD")
+        slots = _phone_slots(cfg, et, dur, rs)
+    else:
+        slots = generate_slots(cfg, et, dur)
     return {
         "event_type": type,
         "title": et.get("title"),
         "duration_minutes": dur,
         "timezone": cfg.get("timezone"),
-        "slots": slots[:200],
+        "slots": slots[:1000],  # 92-day window needs >200
         "count": len(slots),
     }
 
@@ -545,6 +599,8 @@ def _send_booking_notices(
     timezone: str = "America/Chicago",
     ics_url: str = "",
     event_id: str = "",
+    hold_until_label: str = "",
+    intake_url: str = "",
 ) -> None:
     """Run after response — Proton can take 10–60s; do not block the thanks screen."""
     patient_confirm_email(
@@ -562,6 +618,8 @@ def _send_booking_notices(
         timezone=timezone,
         notes=notes,
         ics_url=ics_url,
+        hold_until_label=hold_until_label,
+        intake_url=intake_url,
     )
     patient_confirm_sms(
         phone=phone,
@@ -570,6 +628,8 @@ def _send_booking_notices(
         sms_consent=sms_consent,
         duration_minutes=duration_minutes,
         event_id=event_id,
+        hold_until_label=hold_until_label,
+        intake_url=intake_url,
     )
     staff_notify_email(
         name=name,
@@ -586,8 +646,73 @@ def _send_booking_notices(
     )
 
 
+HOLD_EVENT_TYPE = "new-client"
+from .onboarding import HOLD_PREFIX  # noqa: E402
+
+
+def _plan_hold(req: "BookRequest", start: datetime, *, phone: bool) -> dict[str, Any] | None:
+    """None for existing clients (unchanged) or when the hold can't be set up (fail open)."""
+    from . import onboarding
+
+    try:
+        needed, _row = onboarding.needs_hold(str(req.email))
+        if not needed:
+            return None
+        row = onboarding.ensure_new_client(name=req.name, email=str(req.email), phone=req.phone or "")
+    except Exception as e:
+        print("hold_plan_fail", type(e).__name__, flush=True)
+        return None
+    try:
+        intake_url = _mint_intake_url(str(req.email), req.name)
+    except Exception as e:
+        print("hold_mint_fail", type(e).__name__, flush=True)
+        intake_url = f"{SITE_PUBLIC}/forms"
+    booked = datetime.now(start.tzinfo)
+    deadline = onboarding.deadline_for(booked, start)
+    return {
+        "client_id": row["id"],
+        "intake_url": intake_url,
+        "booked_at": booked,
+        "deadline": deadline,
+        "deadline_iso": deadline.isoformat(),
+        "deadline_label": onboarding.hold_phrase(booked, deadline),
+        "phone": phone,
+    }
+
+
+def _desk_intake_link(email: str) -> str:
+    """Desk-booked new client (no hold): still send the intake cascade link unless intake is done."""
+    from . import onboarding
+
+    try:
+        if onboarding.status(email=email)["complete"]:
+            return ""
+        return _mint_intake_url(email)
+    except Exception:
+        return ""
+
+
+def _onboarding_fx():
+    from . import onboarding
+    from .notify import default_staff_emails, send_email, send_sms
+
+    def staff(subject: str, body: str) -> None:
+        for to in default_staff_emails():
+            send_email(to, subject, body)
+
+    return onboarding.Effects(
+        get_event=get_event,
+        patch_event=patch_event,
+        delete_event=delete_event,
+        send_email=send_email,
+        send_sms=send_sms,
+        staff_email=staff,
+        rebook_url=f"{PUBLIC_BASE}/{HOLD_EVENT_TYPE}",
+    )
+
+
 @app.post("/api/book")
-def api_book(req: BookRequest, background_tasks: BackgroundTasks):
+def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Request):
     cfg = load_config()
     et = get_event_type(cfg, req.event_type)
     if not et:
@@ -597,8 +722,16 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
     if dur not in durs:
         raise HTTPException(400, f"duration must be one of {durs}")
 
-    # SMS consent requires a phone number
-    sms_consent = bool(req.sms_consent) and bool((req.phone or "").strip())
+    # SMS consent requires a phone number. Phone line with no answer: use the one on file.
+    on_file = None
+    if _phone_channel(request):
+        from . import onboarding
+
+        on_file = onboarding.find_client(str(req.email))
+    if req.sms_consent is None and on_file:
+        sms_consent = clients_db.sms_consent_state(on_file) == "yes" and bool((req.phone or "").strip())
+    else:
+        sms_consent = bool(req.sms_consent) and bool((req.phone or "").strip())
     extra_notify = parse_email_list(req.notify_emails or "", limit=4)
 
     # Voice/chat follow-ups must pass the current-patient gate.
@@ -639,7 +772,10 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
 
     staff_override = src == "desk"
     if not staff_override:
-        slots = generate_slots(cfg, et, dur)
+        if _phone_channel(request):
+            slots = _phone_slots(cfg, et, dur, start)
+        else:
+            slots = generate_slots(cfg, et, dur)
         ok = any(s["start"] == start.isoformat() for s in slots)
         if not ok:
             ok = any(
@@ -662,6 +798,20 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
     if occ and not dual and not envelope_id:
         # Occupancy with no cleartext shadow: detail must exist as a sealed blob.
         raise HTTPException(400, "cipher mode: sealed intake required (cipher_envelope_id)")
+
+    # New-client hold (web + phone): 'Held: paperwork due' until intake + consents + card on file.
+    hold: dict[str, Any] | None = None
+    desk_intake_url = ""
+    if req.event_type == HOLD_EVENT_TYPE and src != "desk" and not occ:
+        hold = _plan_hold(req, start, phone=_phone_channel(request) or src in ("voice", "chat", "agent"))
+    elif req.event_type == HOLD_EVENT_TYPE and src == "desk" and not occ:
+        desk_intake_url = _desk_intake_link(str(req.email))
+    elif req.event_type != HOLD_EVENT_TYPE and _phone_channel(request) and not occ:
+        # Existing client booking by phone with intake unfinished: send the cascade link, no hold.
+        from . import onboarding
+
+        if onboarding.find_client(str(req.email)):
+            desk_intake_url = _desk_intake_link(str(req.email))
 
     # Summary shows client visit length; calendar event span may be cal_dur (e.g. 120)
     if occ:
@@ -699,6 +849,9 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
             desc_lines.append(f"Notes: {req.notes}")
         if extra_notify:
             desc_lines.append("Also notify: " + ", ".join(extra_notify))
+        if hold:
+            desc_lines.insert(1, f"HELD {hold['deadline_label']}: paperwork due (intake + consents + card on file). "
+                                 "Released automatically if not finished.")
 
     rebook_url = f"{PUBLIC_BASE}/{req.event_type}"
     token = mint_cancel_token(
@@ -751,6 +904,11 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
             "rem24": "0",
             "rem2": "0",
         }
+        if hold:
+            private_props["hold"] = "held"
+            private_props["hold_deadline"] = hold["deadline_iso"]
+    if hold:
+        summary = HOLD_PREFIX + summary
 
     try:
         created = create_event(
@@ -763,9 +921,33 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
             attendee_email=None,
             private_props=private_props,
             uid=event_id,
+            **({"status": "tentative"} if hold else {}),
         )
     except Exception as e:
         raise HTTPException(502, f"Calendar write failed: {e}") from e
+
+    if _phone_channel(request) and req.sms_consent is not None:
+        # Save the caller's text answer on the client record (new hold client or existing).
+        cid = (hold or {}).get("client_id") or (on_file or {}).get("id")
+        if cid:
+            try:
+                clients_db.set_sms_consent(cid, bool(req.sms_consent), "voice")
+            except Exception as e:
+                print("sms_consent_save_fail", type(e).__name__, flush=True)
+
+    if hold:
+        try:
+            from . import onboarding
+
+            onboarding.create_hold(
+                event_id=event_id, calendar_id=cal_id, client_id=hold["client_id"], email=str(req.email),
+                name=req.name, phone=req.phone or "", sms_consent=sms_consent, title=title,
+                when_label=when_label, event_type=req.event_type, start=start, booked_at=hold["booked_at"],
+                deadline=hold["deadline"], intake_url=hold["intake_url"], summary=summary, source=src,
+            )
+        except Exception as e:  # fail open: the visit stays booked, staff sees no hold
+            print("hold_record_fail", type(e).__name__, flush=True)
+            hold = None
 
     if cipher_on and dual:
         # Dual-write: cleartext client record in the on-box sqlite, as today.
@@ -795,9 +977,11 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
             timezone=str(cfg.get("timezone", "America/Chicago")),
             ics_url=ics_url,
             event_id=event_id,
+            hold_until_label=(hold or {}).get("deadline_label", ""),
+            intake_url=(hold or {}).get("intake_url", "") or desk_intake_url,
         )
 
-    return {
+    out = {
         "ok": True,
         "event_id": event_id,
         "html_link": created.get("htmlLink"),
@@ -816,6 +1000,21 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks):
         "email": {"queued": bool(req.send_email)},
         "message": "You're booked. A confirmation email with a cancel link is on the way.",
     }
+    if desk_intake_url and not hold and _phone_channel(request):
+        out["intake_link_sent"] = True
+    if hold:
+        out["held"] = True
+        out["hold_until"] = hold["deadline_iso"]
+        out["hold_until_label"] = hold["deadline_label"]
+        out["message"] = (
+            f"Your spot is held {hold['deadline_label']}. Please complete your intake paperwork "
+            "and add a card on file before your visit; the link is also in your email"
+            + (" and text." if sms_consent else ".")
+        )
+        if not hold["phone"]:
+            # Web booker goes straight into the intake screens with this personal link.
+            out["intake_url"] = hold["intake_url"]
+    return out
 
 
 @app.post("/api/reminders/run")
@@ -844,6 +1043,15 @@ class ChatThreadPost(BaseModel):
 def api_chat_thread_post(req: ChatThreadPost):
     from .chat_threads import post_message
 
+    name = req.name
+    if not (name or "").strip():
+        # The site no longer learns the name before a code; label the staff thread here instead.
+        from .verify_codes import _lookup
+
+        found = _lookup(req.email or "", req.phone or "")
+        if found:
+            row = found[2]
+            name = str(row.get("preferred_name") or row.get("display_name") or "")[:80]
     try:
         return post_message(
             body=req.body,
@@ -853,7 +1061,7 @@ def api_chat_thread_post(req: ChatThreadPost):
             phone=req.phone,
             hear_back=req.hear_back,
             sms_consent=req.sms_consent,
-            name=req.name,
+            name=name,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -1589,6 +1797,7 @@ def _desk_week_payload(start: str = "", days: int = 7) -> dict[str, Any]:
             visits.append(fields)
     visits = [v for v in visits if v.get("event_id") or v.get("title")]
     visits.sort(key=lambda v: v.get("start_iso") or "")
+    _attach_intake(visits)
     return {
         "ok": True,
         "start": day0.date().isoformat(),
@@ -1604,6 +1813,24 @@ def _desk_week_payload(start: str = "", days: int = 7) -> dict[str, Any]:
             if v.get("enabled", True)
         },
     }
+
+
+def _attach_intake(visits: list[dict[str, Any]]) -> None:
+    """Calendar card: hold state + intake flags for new-client visits. Never raises."""
+    try:
+        from . import onboarding
+
+        holds = onboarding.holds_by_event([str(v.get("event_id") or "") for v in visits
+                                           if v.get("event_type") == HOLD_EVENT_TYPE])
+        for v in visits:
+            h = holds.get(str(v.get("event_id") or ""))
+            if not h:
+                continue
+            st = onboarding.status(client_id=h.get("client_id") or "", email=h.get("email") or "")
+            v["hold"] = {"status": h["status"], "deadline_at": h["deadline_at"]}
+            v["intake"] = {"flags": st["flags"], "complete": st["complete"], "missing": st["missing"]}
+    except Exception:
+        return
 
 
 @app.get("/api/desk/week")
@@ -1643,6 +1870,223 @@ def api_desk_clients(
     }
 
 
+class InternalIntakeRequest(BaseModel):
+    form: str
+    fields: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+INTAKE_FORMS = ("personal", "consents", "card-auth", "roi")
+
+
+def _chart_for(row: dict[str, Any]) -> str:
+    from .drive_paths import LIVING_ROOT, person_folder_name, paths_from_row, resolve_client_paths
+
+    chart = paths_from_row(row).get("chart") or ""
+    if not chart:
+        try:
+            chart = resolve_client_paths(row, _drive_list).get("chart") or ""
+        except Exception:
+            chart = ""
+    if not chart:
+        dest = person_folder_name(row)
+        if dest:
+            chart = f"{LIVING_ROOT}/{dest}/Chart"
+    return chart
+
+
+_COPIES_LOCK = threading.Lock()
+
+
+def _maybe_send_copies(client_id: str) -> dict[str, Any] | None:
+    """Once intake is complete, email + text the client a 30-day no-login link to their signed copies
+    (and the Notice of Privacy Practices). Re-sends with a fresh link when a newer document is signed.
+    Never raises; logs no PHI."""
+    from . import billing, intake_copies, onboarding
+
+    try:
+        with _COPIES_LOCK:
+            st = onboarding.status(client_id=client_id)
+            if not intake_copies.due(client_id, bool(st["complete"])):
+                return None
+            view = dict(client_by_id(client_id) or {})
+            if not view:
+                return None
+            ids = [d["id"] for d in intake_copies.docs_for(client_id)]
+            n = len(ids)
+            billing.revoke_shares(client_id, "docs")
+            link = billing.mint_share(billing_id=client_id, client_id=client_id, source="docs", path=",".join(ids),
+                                      name="Signed intake documents", kind="docs")
+        url = f"{PUBLIC_BASE}/docs/{link['token']}"
+        first = (str(view.get("name") or "there").split() or ["there"])[0]
+        sent = _bill_send(
+            kind="intake_copies",
+            view=view,
+            fields={"name": view.get("name") or "", "url": url, "count": n, "npp_url": intake_copies.NPP_URL},
+            sms_body=f"Hi {first}, copies of the forms you signed for Dr. Brown, plus our privacy notice "
+                     f"(private link, good for 30 days): {url}",
+            send_email=True,
+            send_sms=True,
+            dry=False,
+            key=f"docs-{link['id']}",
+        )
+        print("intake_copies_sent", n, "email", (sent.get("email") or {}).get("ok"),
+              "sms", (sent.get("sms") or {}).get("ok"), flush=True)
+        return sent
+    except Exception as e:
+        print("intake_copies_fail", type(e).__name__, flush=True)
+        return None
+
+
+def _file_intake_pdf(sub_id: str, client_id: str, form: str, fields: dict[str, Any], meta: dict[str, Any],
+                     received_at: str) -> dict[str, Any]:
+    """Render the signed submission and save it to the client's Chart/Consents (created if missing)."""
+    import base64
+
+    from . import onboarding
+    from .intake_pdf import intake_pdf
+
+    row = client_by_id(client_id) if client_id else None
+    if not row:
+        onboarding.set_pdf(sub_id, status="no client")
+        return {"ok": False, "detail": "no client"}
+    try:
+        tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+        when = datetime.fromisoformat(received_at).astimezone(tz)
+        link = meta.get("linkAuth") or {}
+        pdf = intake_pdf(
+            form=form, fields=fields, received_at=when.strftime("%Y-%m-%d %I:%M:%S %p CT"),
+            ip=str(meta.get("ip") or ""), user_agent=str(meta.get("userAgent") or ""),
+            link_verified=bool(link.get("verified")), link_email=str(link.get("email") or ""),
+            client_name=row.get("name") or "",
+        )
+        chart = _chart_for(row)
+        if not chart:
+            raise HTTPException(400, "no chart folder for this client")
+        folder = _ensure_visit_notes(chart, "Consents")
+        given = (row.get("given_name") or "").strip()
+        family = (row.get("family_name") or "").strip()
+        ini = ((given[:1] + family[:1]).upper()) if given and family else ""
+        stem = f"{when.date().isoformat()} {ini} {form}" if ini else f"{when.date().isoformat()} {form}"
+        dest = folder + "/" + _unique_pdf_name(folder, stem)
+        code, saved = _notify_post("/drive/save", {"path": dest, "b64": base64.b64encode(pdf).decode("ascii")})
+        if code >= 400 or not saved.get("ok"):
+            raise HTTPException(502, "drive save failed")
+        onboarding.set_pdf(sub_id, path=dest, status="saved")
+        _maybe_send_copies(client_id)
+        return {"ok": True, "path": dest}
+    except Exception as e:
+        detail = e.detail if isinstance(e, HTTPException) else type(e).__name__
+        onboarding.set_pdf(sub_id, status=f"failed: {str(detail)[:80]}")
+        print("intake_pdf_fail", form, str(detail)[:80], flush=True)
+        return {"ok": False, "detail": str(detail)[:80]}
+
+
+@app.post("/api/internal/intake/submitted")
+def api_internal_intake_submitted(req: InternalIntakeRequest, request: Request, background_tasks: BackgroundTasks,
+                                  secret: str = Query(default="")):
+    """Site intake form landed (already emailed to the practice). Record the completion flag, file the
+    signed PDF under Chart/Consents, and confirm any held new-client visit once intake is complete."""
+    from . import onboarding
+
+    _require_staff(secret, request)
+    form = (req.form or "").strip()
+    if form not in INTAKE_FORMS:
+        raise HTTPException(400, "unknown form")
+    link = req.meta.get("linkAuth") or {}
+    email = str((link.get("email") if link.get("verified") else "") or req.fields.get("email") or "").strip().lower()
+    rec = onboarding.record_submission(form=form, email=email, link_verified=bool(link.get("verified")))
+    background_tasks.add_task(_file_intake_pdf, rec["id"], rec["client_id"], form, dict(req.fields),
+                              dict(req.meta), rec["received_at"])
+    # Confirming a hold patches two calendars and sends notices (slow); do it after responding so the
+    # site's call never times out. The PDF task above runs first, then this.
+    if rec["client_id"]:
+        background_tasks.add_task(_check_client_bg, rec["client_id"])
+    st = onboarding.status(client_id=rec["client_id"]) if rec["client_id"] else None
+    return {"ok": True, "linked": bool(rec["client_id"]), "flags": (st or {}).get("flags"),
+            "complete": bool(st and st["complete"])}
+
+
+def _check_client_bg(client_id: str) -> list[str]:
+    from . import onboarding
+
+    try:
+        return onboarding.check_client(_onboarding_fx(), client_id=client_id)
+    except Exception as e:
+        print("hold_check_fail", type(e).__name__, flush=True)
+        return []
+
+
+@app.get("/api/internal/intake/progress")
+def api_internal_intake_progress(request: Request, email: str = "", secret: str = Query(default="")):
+    """Site cascade: which steps are done for the emailed-link session (resume at first incomplete),
+    plus name/phone to prefill. Staff secret (site server only)."""
+    from . import onboarding
+
+    _require_staff(secret, request)
+    row = onboarding.find_client(email)
+    st = onboarding.status(email=email)
+    holds = onboarding.holds_for_client(st["client_id"]) if st["client_id"] else []
+    h = holds[0] if holds else None
+    return {
+        "ok": True,
+        "flags": st["flags"],
+        "complete": st["complete"],
+        "missing": st["missing"],
+        "client": {
+            "name": (row or {}).get("display_name") or "",
+            "given_name": (row or {}).get("given_name") or "",
+            "family_name": (row or {}).get("family_name") or "",
+            "phone": (row or {}).get("phone_e164") or "",
+            "dob": (row or {}).get("dob") or "",
+        } if row else None,
+        "hold": {"status": h["status"], "when_label": h["when_label"],
+                 "deadline_label": onboarding.label(datetime.fromisoformat(h["deadline_at"]))} if h else None,
+    }
+
+
+class HoldTimesRequest(BaseModel):
+    deadline_minutes: float
+    remind_minutes: float | None = None
+
+
+@app.post("/api/desk/onboarding/hold/{event_id}/times")
+def api_desk_hold_times(event_id: str, req: HoldTimesRequest, request: Request, secret: str = Query(default="")):
+    """Staff/test only: move ONE hold's deadline (minutes from now). The 48h policy is unchanged."""
+    from datetime import timezone as _tz
+
+    from . import onboarding
+
+    _require_staff(secret, request)
+    now = datetime.now(_tz.utc)
+    dl = now + timedelta(minutes=req.deadline_minutes)
+    rm = now + timedelta(minutes=req.remind_minutes if req.remind_minutes is not None else req.deadline_minutes / 2)
+    h = onboarding.set_times(event_id, deadline=dl, remind_at=rm)
+    if not h:
+        raise HTTPException(404, "no hold")
+    return {"ok": True, "hold": {k: h[k] for k in ("event_id", "status", "deadline_at", "remind_at")}}
+
+
+@app.post("/api/desk/onboarding/sweep")
+def api_desk_hold_sweep(request: Request, secret: str = Query(default="")):
+    from . import onboarding
+
+    _require_staff(secret, request)
+    return {"ok": True, **onboarding.sweep(_onboarding_fx())}
+
+
+@app.get("/api/desk/onboarding/status")
+def api_desk_onboarding_status(request: Request, secret: str = Query(default=""), client_id: str = "",
+                               email: str = ""):
+    from . import onboarding
+
+    _require_staff(secret, request)
+    st = onboarding.status(client_id=client_id, email=email)
+    holds = onboarding.holds_for_client(st["client_id"]) if st["client_id"] else []
+    return {"ok": True, **st, "holds": [{k: h[k] for k in ("event_id", "status", "when_label", "deadline_at",
+                                                          "reminded_at", "resolved_at")} for h in holds]}
+
+
 class InternalCardRequest(BaseModel):
     email: str = ""
     customer_id: str = ""
@@ -1654,12 +2098,12 @@ class InternalCardRequest(BaseModel):
 
 
 @app.post("/api/internal/client/card")
-def api_internal_client_card(req: InternalCardRequest, secret: str = Query(default="")):
+def api_internal_client_card(req: InternalCardRequest, request: Request, secret: str = Query(default="")):
     """Site pay form writes Stripe pointers. Staff secret. No PAN. No new row."""
     from .patients import record_card_on_file
 
-    _require_staff(secret)
-    return record_card_on_file(
+    _require_staff(secret, request)
+    out = record_card_on_file(
         email=req.email,
         customer_id=req.customer_id,
         payment_method_id=req.payment_method_id,
@@ -1668,6 +2112,47 @@ def api_internal_client_card(req: InternalCardRequest, secret: str = Query(defau
         exp_month=req.exp_month,
         exp_year=req.exp_year,
     )
+    try:
+        from . import onboarding
+
+        out["confirmed_holds"] = onboarding.check_client(_onboarding_fx(), email=req.email)
+        row = onboarding.find_client(req.email)
+        if row and row.get("id"):
+            _maybe_send_copies(str(row["id"]))
+    except Exception as e:
+        print("hold_check_fail", type(e).__name__, flush=True)
+    return out
+
+
+def _intake_summary(row: dict[str, Any]) -> dict[str, Any]:
+    """Per-client intake flags for the desk card. Never raises."""
+    try:
+        from . import intake_copies, onboarding
+
+        if not (row.get("id") or row.get("email")):
+            return {}
+        st = onboarding.status(client_id=str(row.get("id") or ""), email=str(row.get("email") or ""))
+        holds = onboarding.holds_for_client(st["client_id"]) if st["client_id"] else []
+        open_hold = next((h for h in holds if h["status"] == "held"), None)
+        return {
+            "flags": st["flags"],
+            "complete": st["complete"],
+            "missing": st["missing"],
+            "forms": st["forms"],
+            "copies": intake_copies.summary(st["client_id"]) if st["client_id"] else None,
+            "hold": {k: open_hold[k] for k in ("event_id", "when_label", "deadline_at", "reminded_at")}
+            if open_hold
+            else None,
+        }
+    except Exception:
+        return {}
+
+
+def _form_status(intake: dict[str, Any], form: str) -> str:
+    f = ((intake or {}).get("forms") or {}).get(form) if form else None
+    if not intake or not form:
+        return "unknown"
+    return "done" if f and f.get("done") else "not yet"
 
 
 def _desk_cal_ids() -> set[str]:
@@ -1773,11 +2258,13 @@ def api_desk_client(
     pay_url = f"{SITE_PUBLIC}/pay"
     if row.get("email"):
         pay_url += "?" + urlencode({"email": row["email"], "name": row.get("name") or ""})
+    intake = _intake_summary(row)
+    done_by_item = {"personal": "personal", "consents": "consents", "card": "card-auth", "roi": "roi"}
     forms = [
         {
             "id": sid,
             "label": spec.get("label") or sid,
-            "status": "unknown",
+            "status": _form_status(intake, done_by_item.get(sid, "")),
             "url": spec.get("url") or f"{SITE_PUBLIC}/forms",
         }
         for sid, spec in SEND_ITEMS.items()
@@ -1812,6 +2299,7 @@ def api_desk_client(
         },
         "visits": {"upcoming": upcoming[:12], "past": past[:16]},
         "forms": forms,
+        "intake": intake,
         "last_note": last_note,
         "books": books,
         "plan": {"ok": False, "status": "none", "hint": "Light treatment plan comes after notes."},
@@ -1846,7 +2334,7 @@ class DeskFeeRequest(BaseModel):
     kind: str = "visit"
     note: str = ""
     event_id: str = ""
-    charge: bool = True
+    charge: bool = False  # charges only when the desk click says so explicitly
     duration_minutes: int | None = None
     notify: bool = True
 
@@ -2208,6 +2696,12 @@ def api_desk_note_sign(
     from .note_templates import get_template, render_template
 
     _require_staff(secret)
+    from .billing import letterhead_missing, refusal_message
+    from .practice import load as load_practice  # was imported below its first use: every sign 500'd
+
+    missing = letterhead_missing(load_practice())
+    if missing:
+        raise HTTPException(409, refusal_message(missing))
     row = client_by_id(req.client_id) if req.client_id else None
     if not row and req.email:
         row = client_by_email(req.email)
@@ -2226,8 +2720,7 @@ def api_desk_note_sign(
             chart = f"{LIVING_ROOT}/{dest}/Chart"
     if not chart:
         raise HTTPException(400, "no chart folder for this client")
-    vn = chart.rstrip("/") + "/" + VISIT_NOTES_FOLDER
-    _drive_mkdir(vn)
+    vn = _ensure_visit_notes(chart)
     dos = (req.dos or "").strip()[:10]
     if len(dos) != 10:
         dos = datetime.now().date().isoformat()
@@ -2238,7 +2731,7 @@ def api_desk_note_sign(
     if not get_template(tid):
         tid = "avs"
     slug = "avs" if tid == "avs" else tid
-    fname = f"{dos} {ini} {slug}.pdf" if ini else f"{dos} {slug}.pdf"
+    fname = _unique_pdf_name(vn, f"{dos} {ini} {slug}" if ini else f"{dos} {slug}")
     dest = vn + "/" + fname
     fields = {
         "name": req.name or row.get("name") or "",
@@ -2268,39 +2761,67 @@ def api_desk_note_sign(
     prac = load_practice()
     if not fields["physician"]:
         fields["physician"] = prac.get("clinician_name") or "Matthew Brown, D.O."
+    from .note_pdf import CHART_ONLY
+    from .practice import asset_bytes, format_licenses
+
     letterhead = {
         "name": prac.get("display_name") or "",
         "address": prac.get("address") or "",
         "phone": prac.get("phone") or "",
         "fax": prac.get("fax") or "",
+        "email": prac.get("email") or "",
         "clinician": prac.get("clinician_name") or "",
-        "npi": prac.get("npi") or "",
+        "licenses": format_licenses(prac.get("licenses") or []),
     }
+    # Logo slot: only a logo uploaded in desk -> Practice (no shipped placeholder on patient documents).
+    logo = asset_bytes("logo") if prac.get("logo") else None
     sections = spec.get("sections") or []
-    if sections:
+    is_avs = tid in ("avs", "avs-followup")
+    chart_pdf = b""
+    if is_avs:
+        # Patient-facing AVS (January 2025 letterhead layout, Meet again first). S/O/A never go on it;
+        # when present they are kept in a separate chart copy in the same Visit notes folder.
+        pdf = after_visit_pdf(fields, title="After Visit Summary", letterhead=letterhead, patient=True, logo=logo)
+        if any(str(fields.get(k) or "").strip() for k in CHART_ONLY):
+            chart_pdf = after_visit_pdf(
+                fields, sections, title=str(spec.get("title") or "After-Visit Summary") + " (chart copy)",
+                letterhead=letterhead, logo=logo,
+            )
+    elif sections:
         pdf = after_visit_pdf(
-            fields, sections, title=str(spec.get("title") or ""), letterhead=letterhead
+            fields, sections, title=str(spec.get("title") or ""), letterhead=letterhead, logo=logo
         )
-    elif tid == "avs":
-        pdf = after_visit_pdf(fields, letterhead=letterhead)
     else:
         pdf = markdown_pdf(render_template(tid, fields))
     from .notify import NOTIFY_TOKEN
 
-    payload = json.dumps({"path": dest, "b64": base64.b64encode(pdf).decode("ascii")}).encode()
-    r = UrlRequest(
-        _notify_base() + "/drive/save",
-        data=payload,
-        headers={"Content-Type": "application/json", "X-Notify-Token": NOTIFY_TOKEN},
-        method="POST",
+    def _save(path: str, blob: bytes) -> None:
+        payload = json.dumps({"path": path, "b64": base64.b64encode(blob).decode("ascii")}).encode()
+        r = UrlRequest(
+            _notify_base() + "/drive/save",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Notify-Token": NOTIFY_TOKEN},
+            method="POST",
+        )
+        try:
+            with urlopen(r, timeout=180) as resp:
+                saved = json.loads(resp.read().decode() or "{}")
+        except HTTPError as e:
+            raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+        if not saved.get("ok"):
+            raise HTTPException(502, "drive save failed")
+
+    _save(dest, pdf)
+    chart_dest = ""
+    if chart_pdf:
+        chart_dest = dest[: -len(".pdf")] + " chart.pdf"
+        _save(chart_dest, chart_pdf)
+    from . import signed_notes
+
+    note_id = signed_notes.record(
+        client_id=str(row.get("id") or ""), dos=dos, template=tid, fields=fields,
+        avs_path=dest if is_avs else "", avs_name=fname if is_avs else "", chart_path=chart_dest,
     )
-    try:
-        with urlopen(r, timeout=180) as resp:
-            saved = json.loads(resp.read().decode() or "{}")
-    except HTTPError as e:
-        raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
-    if not saved.get("ok"):
-        raise HTTPException(502, "drive save failed")
     # Local style-pack learn (scrub Name/DOB first; never log body; no cloud train).
     try:
         from .style_pack_learn import learn_safe
@@ -2308,7 +2829,179 @@ def api_desk_note_sign(
         background_tasks.add_task(learn_safe, dict(fields), tid)
     except Exception:
         pass
-    return {"ok": True, "path": dest, "name": fname, "bytes": len(pdf), "template": tid}
+    return {"ok": True, "path": dest, "name": fname, "bytes": len(pdf), "template": tid,
+            "note_id": note_id, "chart_path": chart_dest, "shareable": is_avs}
+
+
+# ---- signed AVS: prefill next note + 30-day patient link (no login) ----------
+
+@app.get("/api/desk/note/last-avs")
+def api_desk_note_last_avs(client_id: str = Query(default=""), secret: str = Query(default="")):
+    """Last signed AVS for a client: prefill fields for the next note + its share status."""
+    _require_staff(secret)
+    from . import billing, signed_notes
+
+    note = signed_notes.last_for_client(client_id.strip())
+    if not note:
+        return {"ok": True, "note": None, "prefill": {}}
+    share = billing.active_share(note["id"], "avs") if note.get("avs_path") else None
+    return {
+        "ok": True,
+        "note": {"id": note["id"], "dos": note["dos"], "template": note["template"],
+                 "name": note.get("avs_name") or "", "signed_at": note["signed_at"],
+                 "shareable": bool(note.get("avs_path"))},
+        "prefill": signed_notes.prefill(note),
+        "share": share,
+    }
+
+
+class AvsShareRequest(BaseModel):
+    note_id: str
+    send_email: bool = True
+    send_sms: bool = True
+    to_email: str = ""
+    to_phone: str = ""
+
+
+@app.post("/api/desk/note/avs/share")
+def api_desk_note_avs_share(req: AvsShareRequest, secret: str = Query(default="")):
+    """Send (or re-send) the signed AVS: turn off any old link, mint a fresh 30-day one, email + Spruce text."""
+    _require_staff(secret)
+    from . import billing, signed_notes
+    from .superbill_pdf import pretty_date
+
+    note = signed_notes.get(req.note_id.strip())
+    if not note or not note.get("avs_path"):
+        raise HTTPException(404, "signed AVS not found")
+    view = dict(client_by_id(note["client_id"]) or {})
+    if not view:
+        raise HTTPException(404, "client not found")
+    if req.to_email.strip():
+        view["email"] = req.to_email.strip()
+    if req.to_phone.strip():
+        view["phone"] = req.to_phone.strip()
+    revoked = billing.revoke_shares(note["id"], "avs")
+    link = billing.mint_share(
+        billing_id=note["id"], client_id=note["client_id"], source="avs", path=note["avs_path"],
+        name=note.get("avs_name") or "After Visit Summary.pdf", kind="avs",
+    )
+    url = f"{PUBLIC_BASE}/avs/{link['token']}"
+    first = (str(view.get("name") or "there").split() or ["there"])[0]
+    sent = _bill_send(
+        kind="avs",
+        view=view,
+        fields={"name": view.get("name") or "", "url": url, "dos_label": pretty_date(note["dos"])},
+        sms_body=f"Hi {first}, your after-visit summary from Dr. Brown (link good for 30 days): {url}",
+        send_email=req.send_email,
+        send_sms=req.send_sms,
+        dry=False,
+        key=f"avs-{link['id']}",
+    )
+    return {"ok": True, "url": url, "share_id": link["id"], "expires_iso": link["expires_iso"],
+            "replaced": revoked, **sent}
+
+
+class AvsRevokeRequest(BaseModel):
+    note_id: str
+
+
+@app.post("/api/desk/note/avs/share/revoke")
+def api_desk_note_avs_revoke(req: AvsRevokeRequest, secret: str = Query(default="")):
+    _require_staff(secret)
+    from . import billing, signed_notes
+
+    if not signed_notes.get(req.note_id.strip()):
+        raise HTTPException(404, "signed AVS not found")
+    return {"ok": True, "revoked": billing.revoke_shares(req.note_id.strip(), "avs")}
+
+
+@app.get("/avs/{token}")
+def public_avs_share(token: str):
+    """Branded, signed, expiring AVS link (30 days, no login; re-send or turn off from the desk)."""
+    from . import billing
+
+    try:
+        row = billing.verify_share(token, kind="avs")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="After-visit summary")
+    code, data, _ctype = _notify_get("/drive/file?path=" + quote(str(row.get("path") or ""), safe="/"))
+    if code != 200 or not data.startswith(b"%PDF"):
+        return _share_page("The file could not be loaded right now. Try again shortly.", 502, title="After-visit summary")
+    billing.note_hit(row["id"])
+    name = (row.get("name") or "After Visit Summary.pdf").replace('"', "")
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{name}"',
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
+@app.get("/docs/{token}")
+def public_intake_copies(token: str):
+    """Client's copies of their signed intake documents (30-day, no-login, revocable) + privacy notice."""
+    from html import escape
+
+    from . import billing, intake_copies
+    from .practice import load as load_practice
+
+    try:
+        row = billing.verify_share(token, kind="docs")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="Your signed documents")
+    docs = intake_copies.docs_for(str(row.get("client_id") or ""))
+    billing.note_hit(row["id"])
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    who = str(load_practice().get("display_name") or "")
+    exp = datetime.fromtimestamp(int(row.get("expires_at") or 0), timezone.utc).astimezone(tz)
+    items = "".join(
+        "<li style='margin:.6rem 0;padding:.8rem 1rem;border:1px solid #e5e7eb;border-radius:12px'>"
+        f"<a style='color:#111;font-weight:600' href='/docs/{escape(token)}/{escape(d['id'])}'>{escape(d['label'])}</a>"
+        "<div style='color:#6b7280;font-size:.85rem'>Signed "
+        f"{escape(datetime.fromisoformat(d['received_at']).astimezone(tz).strftime('%b %-d, %Y · %-I:%M %p CT'))} · PDF</div></li>"
+        for d in docs
+    ) or "<li>No signed documents yet.</li>"
+    body = (
+        "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='robots' content='noindex'><title>Your signed documents</title>"
+        "<body style='font-family:Inter,system-ui,sans-serif;max-width:34rem;margin:8vh auto;padding:0 1rem;color:#111'>"
+        f"<img src='/api/practice/logo' alt='' style='height:56px'><p style='color:#2f57a5;margin:.4rem 0'>{escape(who)}</p>"
+        "<h1 style='font-size:1.3rem;margin:.6rem 0'>Your signed documents</h1>"
+        "<p style='color:#374151'>Here are copies of the forms you signed, for your records. Tap one to open or save it.</p>"
+        f"<ul style='list-style:none;padding:0'>{items}</ul>"
+        "<h2 style='font-size:1rem;margin-top:1.6rem'>Notice of Privacy Practices</h2>"
+        "<p style='color:#374151'>How we use and protect your health information, and your rights. "
+        f"<a href='{escape(intake_copies.NPP_URL)}' style='color:#2f57a5'>Open the notice (PDF)</a>. "
+        "You can ask us for a paper copy anytime.</p>"
+        f"<p style='color:#6b7280;font-size:.85rem;margin-top:1.6rem'>This private link works until "
+        f"{escape(exp.strftime('%b %-d, %Y'))}. Questions? Reply to the email or call the practice.</p></body>"
+    )
+    return HTMLResponse(body, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex",
+                                       "Referrer-Policy": "no-referrer"})
+
+
+@app.get("/docs/{token}/{sub_id}")
+def public_intake_copy_file(token: str, sub_id: str):
+    from . import billing, intake_copies
+
+    try:
+        row = billing.verify_share(token, kind="docs")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="Your signed documents")
+    d = intake_copies.doc(str(row.get("client_id") or ""), sub_id)
+    if not d:
+        return _share_page("That document was not found.", 404, title="Your signed documents")
+    code, data, _ctype = _notify_get("/drive/file?path=" + quote(str(d["path"]), safe="/"))
+    if code != 200 or not data.startswith(b"%PDF"):
+        return _share_page("The file could not be loaded right now. Try again shortly.", 502, title="Your signed documents")
+    name = (d["path"].rsplit("/", 1)[-1] or "document.pdf").replace('"', "")
+    return Response(content=data, media_type="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="{name}"', "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer"})
 
 
 @app.get("/api/desk/note/templates")
@@ -2436,86 +3129,38 @@ class DeskNoteDraftRequest(BaseModel):
 
 @app.post("/api/desk/note/draft")
 def api_desk_note_draft(req: DeskNoteDraftRequest, secret: str = Query(default="")):
-    """SOAP + AVS from a transcript. Body never logged."""
+    """SOAP + AVS fields from a scribe note or a transcript. Body never logged. No xAI.
+
+    A scribe-aws note (fixed SOAP + After Visit Summary format) is parsed directly, no model call.
+    A raw transcript goes to the scribe-aws note writer (Bedrock Nova Pro, under the AWS BAA)."""
     _require_staff(secret)
     raw = (req.transcript or "").strip()
     if len(raw) < 20:
         raise HTTPException(400, "need a bit more transcript")
-    from .desk_agent import XAI_KEY, XAI_MODEL, XAI_URL
+    from .note_parse import is_structured, parse_structured
 
-    if not XAI_KEY:
-        raise HTTPException(503, "desk agent key unset")
-    style_ctx = ""
+    if is_structured(raw):
+        return {"ok": True, "fields": parse_structured(raw), "engine": "scribe-structured"}
+    minutes = 0
     try:
-        from .style_pack import draft_prompt_context, enabled_for_draft
-
-        if enabled_for_draft():
-            style_ctx = draft_prompt_context()
-    except Exception:
-        style_ctx = ""
-    prompt = (
-        "From this visit transcript, fill a SOAP note and an after-visit summary. "
-        "Do not invent facts. Prefer practice style-pack stems and formulary names when "
-        "the transcript supports them. JSON only with keys: subjective, objective, assessment, "
-        "plan, return_visit, medications, supplements, recommendations. "
-        "AVS fields (return_visit/medications/supplements/recommendations) are patient language.\n\n"
-        + (style_ctx + "\n\n" if style_ctx else "")
-        + "TRANSCRIPT:\n"
-        + raw[:12000]
-    )
-    system = (
-        "You draft psychiatry notes for this practice. Reply with JSON only. No markdown fence. "
-        "Follow STYLE PACK priors when present. Never invent meds, doses, or findings absent from the transcript."
-    )
-    payload = json.dumps(
-        {
-            "model": XAI_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.2,
-        }
-    ).encode()
-    http_req = UrlRequest(
-        XAI_URL,
-        data=payload,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + XAI_KEY},
-        method="POST",
-    )
+        minutes = int(str(req.duration or "0").strip() or 0)
+    except ValueError:
+        minutes = 0
+    body = json.dumps({"transcript": raw[:400000], "duration_minutes": minutes}).encode()
+    http_req = UrlRequest(SCRIBE_NOTE_URL, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urlopen(http_req, timeout=90) as resp:
+        with urlopen(http_req, timeout=150) as resp:
             data = json.loads(resp.read().decode() or "{}")
-    except HTTPError as e:
-        raise HTTPException(502, f"draft failed {e.code}") from e
-    text = ""
-    try:
-        text = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-    except Exception:
-        text = ""
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        parsed = {"plan": text[:2000]}
-    if not isinstance(parsed, dict):
-        parsed = {}
-    keys = (
-        "subjective",
-        "objective",
-        "assessment",
-        "plan",
-        "return_visit",
-        "medications",
-        "supplements",
-        "recommendations",
-    )
-    out = {k: str(parsed.get(k) or "")[:8000] for k in keys}
-    return {"ok": True, "fields": out}
+    except (HTTPError, URLError, TimeoutError, ValueError) as e:
+        raise HTTPException(502, "note writer unavailable") from e
+    note = str(data.get("note") or "")
+    if data.get("note_engine") == "raw-transcript" or not is_structured(note):
+        raise HTTPException(502, "note writer (Bedrock) unavailable; nothing was sent elsewhere")
+    return {"ok": True, "fields": parse_structured(note), "engine": str(data.get("note_engine") or "")}
+
+
+# scribe-aws sidecar (127.0.0.1 only): Bedrock note writer under the AWS BAA.
+SCRIBE_NOTE_URL = os.environ.get("SCRIBE_NOTE_URL", "http://127.0.0.1:8795/note")
 
 
 class DeskScribeIngestRequest(BaseModel):
@@ -2989,10 +3634,15 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
     import base64
 
     from .drive_paths import BILLING_CHILD, LIVING_ROOT, person_folder_name, paths_from_row, resolve_client_paths
-    from .practice import format_licenses, load as load_practice, next_statement
+    from .practice import asset_bytes, format_licenses, load as load_practice, next_statement
     from .superbill_pdf import superbill_filename, superbill_pdf
 
     _require_staff(secret)
+    from .billing import letterhead_missing, refusal_message
+
+    missing = letterhead_missing(load_practice())
+    if missing:
+        raise HTTPException(409, refusal_message(missing))
     row = client_by_id(req.client_id) if req.client_id else None
     if not row and req.email:
         row = client_by_email(req.email)
@@ -3071,6 +3721,16 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
                 "dob": row.get("dob") or "",
             },
             "licenses": format_licenses(prac.get("licenses") or []),
+            "letterhead": {
+                "name": prac.get("legal_name") or prac.get("display_name") or "",
+                "address": prac.get("address") or "",
+                "phone": prac.get("phone") or "",
+                "email": prac.get("email") or "",
+                "ein": prac.get("ein") or "",
+                "npi": prac.get("npi") or "",
+                "licenses": format_licenses(prac.get("licenses") or []),
+            },
+            "logo": asset_bytes("logo"),
             "diagnoses": diagnoses,
             "lines": lines,
         }
@@ -3092,6 +3752,516 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
     if not saved.get("ok"):
         raise HTTPException(502, "drive save failed")
     return {"ok": True, "path": dest, "name": fname, "statement": statement, "bytes": len(pdf)}
+
+
+# ---- One-click billing: Bill visit (docs/GO_BILLING_ONE_CLICK.md) ----------
+# Nothing is charged, written, or sent until the clinician confirms the visit code.
+# BILLING_LIVE unset means every confirm is a dry run (no fee row, no Stripe, no Drive, no sends).
+
+
+def _bill_client(client_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    from . import clients_db
+
+    raw = clients_db.get_by_id((client_id or "").strip()) if client_id else None
+    if not raw:
+        raise HTTPException(404, "client not found")
+    return raw, client_by_id(raw["id"]) or {}
+
+
+def _bill_billing_folder(view: dict[str, Any]) -> str:
+    from .drive_paths import BILLING_CHILD, LIVING_ROOT, person_folder_name, paths_from_row, resolve_client_paths
+
+    billing = paths_from_row(view).get("billing") or ""
+    if not billing:
+        try:
+            billing = resolve_client_paths(view, _drive_list).get("billing") or ""
+        except Exception:
+            billing = ""
+    if not billing:
+        dest = person_folder_name(view)
+        if dest:
+            billing = f"{LIVING_ROOT}/{dest}/{BILLING_CHILD}"
+    return billing
+
+
+def _bill_drive_save(dest: str, data: bytes) -> None:
+    import base64
+
+    code, saved = _notify_post("/drive/save", {"path": dest, "b64": base64.b64encode(data).decode("ascii")})
+    if code >= 400 or not saved.get("ok"):
+        raise HTTPException(502, "drive save failed")
+
+
+@app.get("/api/desk/bill")
+def api_desk_bill_preview(
+    secret: str = Query(default=""),
+    client_id: str = Query(default=""),
+    event_id: str = Query(default=""),
+    dos: str = Query(default=""),
+    event_type: str = Query(default=""),
+    duration_minutes: int | None = Query(default=None),
+):
+    """Confirm-sheet data: guessed code, CPT lines, standing dx, card, letterhead gaps."""
+    _require_staff(secret)
+    from . import billing
+    from .practice import load as load_practice
+
+    raw, view = _bill_client(client_id)
+    codes = billing.load_codes()
+    day = (dos or "")[:10] or datetime.now().date().isoformat()
+    key = billing.event_key(event_id, raw["id"], day)
+    existing = billing.find_billing(key, dry_run=False) or billing.find_billing(key, dry_run=True)
+    missing = billing.letterhead_missing(load_practice())
+    return {
+        "ok": True,
+        "client": {
+            "id": raw["id"],
+            "name": view.get("name") or "",
+            "email": view.get("email") or "",
+            "has_phone": bool(view.get("phone")),
+            "dob": view.get("dob") or "",
+        },
+        "event_id": event_id,
+        "dos": day,
+        "guess": billing.guess_code(event_type, duration_minutes),
+        "pos": codes["pos"],
+        "codes": list(codes["visit_types"].values()),
+        "standing_dx": billing.standing_dx(raw),
+        "card": {
+            "on_file": bool(raw.get("stripe_customer_id") and raw.get("stripe_payment_method_id")),
+            "brand": raw.get("stripe_card_brand") or "",
+            "last4": raw.get("stripe_card_last4") or "",
+        },
+        "live": billing.live_enabled(),
+        "sms": billing.sms_enabled(),
+        "letterhead_missing": missing,
+        "letterhead_message": billing.refusal_message(missing) if missing else "",
+        "existing": billing.public_billing(existing),
+    }
+
+
+class BillConfirmRequest(BaseModel):
+    client_id: str = ""
+    event_id: str = ""
+    dos: str = ""
+    visit_code: str = ""
+    confirm_code: str = ""  # must equal visit_code: the clinician's explicit confirm
+    diagnoses: list[Any] = []
+    save_dx: bool = False
+    payment: str = "link"  # link | card
+    confirm_charge: bool = False  # required when payment == card
+    send_email: bool = True
+    send_sms: bool = False
+    share_superbill: bool = True
+    dry_run: bool = True
+    specimen: bool = False  # dry run only: mark missing letterhead [not set] instead of refusing
+    share_ttl_seconds: int | None = None  # dry run only (expiry proof); live is always 30 days
+
+
+class BillSuperbillRequest(BaseModel):
+    billing_id: str = ""
+    diagnoses: list[Any] = []
+    save_dx: bool = False
+    share_superbill: bool = True
+    send_email: bool = True
+    send_sms: bool = False
+    specimen: bool = False
+    share_ttl_seconds: int | None = None
+
+
+class BillShareRequest(BaseModel):
+    billing_id: str = ""
+    pay_link: bool = False
+    send_email: bool = True
+    send_sms: bool = False
+    share_ttl_seconds: int | None = None
+
+
+def _bill_send(*, kind: str, view: dict[str, Any], fields: dict[str, Any], sms_body: str,
+               send_email: bool, send_sms: bool, dry: bool, key: str) -> dict[str, Any]:
+    from . import billing
+    from .email_templates import render_named
+    from .notify import normalize_e164, send_named_email
+    from .spruce_api import send_spruce_sms
+
+    out: dict[str, Any] = {"email": {"skipped": True}, "sms": {"skipped": True}}
+    email = str(view.get("email") or "")
+    phone = str(view.get("phone") or "")
+    if send_email:
+        if not email:
+            out["email"] = {"ok": False, "detail": "no email on file"}
+        elif dry:
+            subject = render_named(kind, {"email": email, **fields})[0]
+            out["email"] = {"ok": True, "dry_run": True, "sent": False, "subject": subject}
+        else:
+            r = send_named_email(kind=kind, to=email, fields=fields)
+            out["email"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("ok"))}
+    if send_sms:
+        e164 = normalize_e164(phone) or ""
+        if not billing.sms_enabled():
+            out["sms"] = {"ok": False, "skipped": True, "detail": "SMS is off (BILLING_SMS unset or Spruce not configured)"}
+        elif not e164:
+            out["sms"] = {"ok": False, "detail": "no phone on file"}
+        elif dry:
+            out["sms"] = {"ok": True, "dry_run": True, "sent": False, "via": "spruce_api",
+                          "to": "•••" + e164[-4:], "text": sms_body[:480]}
+        else:
+            r = send_spruce_sms(e164, sms_body, idempotency_key=key)
+            out["sms"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("sent")), "via": "spruce_api",
+                          "request_id": r.get("request_id") or "", "detail": r.get("detail") or ""}
+    return out
+
+
+def _bill_share(rec: dict[str, Any], view: dict[str, Any], *, send_email: bool, send_sms: bool,
+                ttl: int | None) -> dict[str, Any]:
+    from . import billing
+    from .superbill_pdf import superbill_filename
+
+    if rec.get("superbill_status") != "saved":
+        raise HTTPException(409, "No saved superbill to share yet.")
+    dry = bool(rec.get("dry_run"))
+    seconds = billing.SHARE_TTL_SECONDS
+    if ttl is not None and dry:
+        seconds = int(ttl)
+    revoked = billing.revoke_shares(rec["id"])
+    link = billing.mint_share(
+        billing_id=rec["id"],
+        client_id=rec["client_id"],
+        source=rec.get("superbill_source") or "drive",
+        path=rec.get("superbill_path") or "",
+        name=superbill_filename(rec["dos"]),
+        ttl_seconds=seconds,
+    )
+    url = f"{PUBLIC_BASE}/sb/{link['token']}"
+    inv = rec.get("invoice") or {}
+    first = (str(view.get("name") or "there").split() or ["there"])[0]
+    sent = _bill_send(
+        kind="superbill",
+        view=view,
+        fields={"name": view.get("name") or "", "title": inv.get("label") or "Visit",
+                "amount": inv.get("amount_pretty") or "", "url": url},
+        sms_body=f"Hi {first}, your superbill is ready (link good for 30 days): {url} — Dr. B",
+        send_email=send_email,
+        send_sms=send_sms,
+        dry=dry,
+        key=f"sb-{link['id']}",
+    )
+    return {"ok": True, "url": url, "share_id": link["id"], "expires_iso": link["expires_iso"],
+            "replaced": revoked, **sent}
+
+
+def _bill_superbill(rec: dict[str, Any], raw: dict[str, Any], view: dict[str, Any], *,
+                    specimen: bool) -> dict[str, Any]:
+    from . import billing
+    from .practice import asset_bytes, load as load_practice, next_statement
+    from .superbill_pdf import superbill_filename, superbill_pdf
+
+    dry = bool(rec.get("dry_run"))
+    prac = load_practice()
+    missing = billing.letterhead_missing(prac)
+    dx = rec.get("dx") or []
+    if missing and not (dry and specimen):
+        msg = billing.refusal_message(missing)
+        billing.update_billing(rec["id"], superbill_status="refused", superbill_detail=msg[:400])
+        return {"ok": False, "status": "refused", "missing": missing, "detail": msg}
+    if not dx:
+        msg = "Superbill not built: add at least one ICD-10 code. The invoice is not affected."
+        billing.update_billing(rec["id"], superbill_status="refused", superbill_detail=msg)
+        return {"ok": False, "status": "refused", "missing": ["ICD-10 code"], "detail": msg}
+    statement = next_statement() if not dry else "DRY-" + rec["id"][:6].upper()
+    doc = billing.superbill_doc(
+        prac=prac, client=view, rec=rec, dx=dx, statement=statement,
+        paid=rec.get("payment_status") == "paid", specimen=bool(missing),
+    )
+    doc["logo"] = asset_bytes("logo")
+    pdf = superbill_pdf(doc)
+    fname = superbill_filename(rec["dos"])
+    if dry:
+        local = f"{rec['id']}.pdf"
+        (billing.dryrun_dir() / local).write_bytes(pdf)
+        source, path = "local", local
+    else:
+        folder = _bill_billing_folder(view)
+        if not folder:
+            msg = "Superbill not saved: no billing folder for this client."
+            billing.update_billing(rec["id"], superbill_status="failed", superbill_detail=msg)
+            return {"ok": False, "status": "failed", "detail": msg}
+        _drive_mkdir(folder)
+        path = folder.rstrip("/") + "/" + fname
+        _bill_drive_save(path, pdf)
+        source = "drive"
+    billing.update_billing(
+        rec["id"], superbill_status="saved", superbill_source=source, superbill_path=path,
+        superbill_detail="specimen (dry run)" if missing else "", statement=statement,
+    )
+    return {"ok": True, "status": "saved", "source": source, "path": path, "name": fname,
+            "statement": statement, "bytes": len(pdf), "specimen": bool(missing)}
+
+
+@app.post("/api/desk/bill")
+def api_desk_bill_confirm(req: BillConfirmRequest, secret: str = Query(default="")):
+    """Bill visit: invoice + payment (card or link) + superbill, after the clinician confirms."""
+    _require_staff(secret)
+    from . import billing
+    from .fees import attach_invoice, create as fee_create, set_status
+    from .stripe_pay import charge_off_session, create_invoice, ensure_customer, stripe_ready
+
+    raw, view = _bill_client(req.client_id)
+    cid = raw["id"]
+    codes = billing.load_codes()
+    spec = codes["visit_types"].get((req.visit_code or "").strip())
+    if not spec:
+        raise HTTPException(400, "Pick a visit code.")
+    if (req.confirm_code or "").strip() != spec["id"]:
+        raise HTTPException(400, "Confirm the visit code first. Nothing was charged or sent.")
+    dos = (req.dos or "").strip()[:10]
+    try:
+        datetime.strptime(dos, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "need a date of service (YYYY-MM-DD)")
+    payment = (req.payment or "").strip().lower()
+    if payment not in billing.PAYMENTS:
+        raise HTTPException(400, "Pick charge card on file or send payment link.")
+    card_ready = bool(raw.get("stripe_customer_id") and raw.get("stripe_payment_method_id"))
+    if payment == "card":
+        if not req.confirm_charge:
+            raise HTTPException(400, "Tick the charge confirmation to charge the card on file.")
+        if not card_ready:
+            raise HTTPException(409, "No card on file. Choose send payment link instead.")
+    live = billing.live_enabled()
+    dry = bool(req.dry_run) or not live
+    if req.specimen and not dry:
+        raise HTTPException(400, "specimen is dry-run only")
+    if req.share_ttl_seconds is not None and not dry:
+        raise HTTPException(400, "share_ttl_seconds is dry-run only")
+    if not dry and not stripe_ready():
+        raise HTTPException(503, "Stripe is not on the booker")
+
+    dx = billing.clean_dx(req.diagnoses)
+    if req.save_dx and dx:
+        billing.save_standing_dx(cid, dx)
+    key = billing.event_key(req.event_id, cid, dos)
+    invoice = billing.build_invoice(spec, codes["pos"], dos)
+    rec = billing.claim_billing(
+        client_id=cid, key=key, dos=dos, invoice=invoice, dx=dx, payment=payment, dry_run=dry,
+    )
+    if not rec:
+        existing = billing.find_billing(key, dry_run=dry)
+        return {"ok": True, "created": False, "detail": "This visit is already billed.",
+                "billing": billing.public_billing(existing)}
+
+    pay: dict[str, Any] = {"mode": payment, "dry_run": dry, "charged": False}
+    amount = int(invoice["amount_cents"])
+    if dry:
+        pay["detail"] = (
+            f"Dry run: would charge {invoice['amount_pretty']} to the card on file."
+            if payment == "card"
+            else f"Dry run: would create a {invoice['amount_pretty']} Stripe invoice and send the pay link."
+        )
+        rec = billing.update_billing(rec["id"], payment_status="dry_run")
+    else:
+        fee = fee_create(client_id=cid, dos=dos, amount_cents=amount, kind="visit",
+                         note=invoice["invoice_code"], event_id=req.event_id or "")
+        rec = billing.update_billing(rec["id"], fee_id=str(fee["id"]))
+        if payment == "card":
+            try:
+                result = charge_off_session(
+                    customer_id=str(raw["stripe_customer_id"]),
+                    payment_method_id=str(raw["stripe_payment_method_id"]),
+                    amount_cents=amount, dos=dos, fee_id=str(fee["id"]),
+                )
+            except RuntimeError as e:
+                result = {"ok": False, "error": str(e)[:200], "stripe_id": ""}
+            set_status(str(fee["id"]), status="paid" if result.get("ok") else "failed",
+                       stripe_id=str(result.get("stripe_id") or ""))
+            pay["charged"] = bool(result.get("ok"))
+            pay["detail"] = "" if pay["charged"] else str(result.get("error") or "charge failed")
+            rec = billing.update_billing(rec["id"], payment_status="paid" if pay["charged"] else "failed",
+                                         stripe_id=str(result.get("stripe_id") or ""))
+        else:
+            try:
+                cust = ensure_customer(email=str(raw.get("email") or ""),
+                                       existing_id=str(raw.get("stripe_customer_id") or ""), client_id=cid)
+                if cust and cust != raw.get("stripe_customer_id"):
+                    from . import clients_db
+
+                    clients_db.upsert({"id": cid, "stripe_customer_id": cust})
+                inv = create_invoice(customer_id=cust, lines=[fee], client_id=cid)
+            except RuntimeError as e:
+                rec = billing.update_billing(rec["id"], payment_status="failed")
+                raise HTTPException(502, "Invoice not created: " + str(e)[:160]) from e
+            attach_invoice([str(fee["id"])], stripe_id=str(inv["stripe_id"]), pay_url=str(inv.get("pay_url") or ""))
+            link = billing.mint_share(billing_id=rec["id"], client_id=cid, source="pay", kind="pay",
+                                      path=str(inv["stripe_id"]), name=invoice["invoice_code"])
+            pay["pay_url"] = f"{PUBLIC_BASE}/pay/{link['token']}"
+            rec = billing.update_billing(rec["id"], payment_status="sent", stripe_id=str(inv["stripe_id"]),
+                                         pay_url=pay["pay_url"])
+    if payment == "link":
+        first = (str(view.get("name") or "there").split() or ["there"])[0]
+        url = pay.get("pay_url") or (
+            f"{SITE_PUBLIC}/pay?" + urlencode({"email": view.get("email") or "", "name": view.get("name") or ""})
+        )
+        pay["notify"] = _bill_send(
+            kind="payment_due", view=view,
+            fields={"name": view.get("name") or "", "amount": invoice["amount_pretty"],
+                    "title": invoice["label"], "url": url},
+            sms_body=f"Hi {first}, your visit balance of {invoice['amount_pretty']} is ready: {url} — Dr. B",
+            send_email=req.send_email, send_sms=req.send_sms, dry=dry, key=f"pay-{rec['id']}",
+        )
+
+    sb = _bill_superbill(rec, raw, view, specimen=req.specimen)
+    rec = billing.get_billing(rec["id"]) or rec
+    share: dict[str, Any] = {"skipped": True}
+    if sb.get("ok") and req.share_superbill:
+        share = _bill_share(rec, view, send_email=req.send_email, send_sms=req.send_sms,
+                            ttl=req.share_ttl_seconds)
+    return {
+        "ok": True,
+        "created": True,
+        "dry_run": dry,
+        "forced_dry_run": dry and not req.dry_run,
+        "invoice": invoice,
+        "payment": pay,
+        "superbill": sb,
+        "share": share,
+        "billing": billing.public_billing(billing.get_billing(rec["id"])),
+    }
+
+
+@app.post("/api/desk/bill/superbill")
+def api_desk_bill_superbill(req: BillSuperbillRequest, secret: str = Query(default="")):
+    """Build the superbill for an already-billed visit (e.g. once the letterhead is filled)."""
+    _require_staff(secret)
+    from . import billing
+
+    rec = billing.get_billing(req.billing_id)
+    if not rec:
+        raise HTTPException(404, "billing not found")
+    if req.specimen and not rec.get("dry_run"):
+        raise HTTPException(400, "specimen is dry-run only")
+    if req.share_ttl_seconds is not None and not rec.get("dry_run"):
+        raise HTTPException(400, "share_ttl_seconds is dry-run only")
+    raw, view = _bill_client(rec["client_id"])
+    redo_specimen = bool(rec.get("dry_run")) and str(rec.get("superbill_detail") or "").startswith("specimen")
+    if rec.get("superbill_status") == "saved" and not (redo_specimen and not req.specimen):
+        return {"ok": True, "created": False, "detail": "Superbill already saved.",
+                "billing": billing.public_billing(rec)}
+    dx = billing.clean_dx(req.diagnoses) or rec.get("dx") or []
+    if req.save_dx and dx:
+        billing.save_standing_dx(raw["id"], dx)
+    rec = billing.update_billing(rec["id"], dx_json=json.dumps(dx))
+    sb = _bill_superbill(rec, raw, view, specimen=req.specimen)
+    share: dict[str, Any] = {"skipped": True}
+    if sb.get("ok") and req.share_superbill:
+        share = _bill_share(billing.get_billing(rec["id"]) or rec, view, send_email=req.send_email,
+                            send_sms=req.send_sms, ttl=req.share_ttl_seconds)
+    return {"ok": True, "created": bool(sb.get("ok")), "superbill": sb, "share": share,
+            "billing": billing.public_billing(billing.get_billing(rec["id"]))}
+
+
+@app.post("/api/desk/bill/share")
+def api_desk_bill_share(req: BillShareRequest, secret: str = Query(default="")):
+    """Rotate: turn off the old branded link and mint a fresh 30-day one (optionally send it)."""
+    _require_staff(secret)
+    from . import billing
+
+    rec = billing.get_billing(req.billing_id)
+    if not rec:
+        raise HTTPException(404, "billing not found")
+    if req.share_ttl_seconds is not None and not rec.get("dry_run"):
+        raise HTTPException(400, "share_ttl_seconds is dry-run only")
+    _raw, view = _bill_client(rec["client_id"])
+    return _bill_share(rec, view, send_email=req.send_email, send_sms=req.send_sms, ttl=req.share_ttl_seconds)
+
+
+@app.post("/api/desk/bill/share/revoke")
+def api_desk_bill_share_revoke(req: BillShareRequest, secret: str = Query(default="")):
+    _require_staff(secret)
+    from . import billing
+
+    if not billing.get_billing(req.billing_id):
+        raise HTTPException(404, "billing not found")
+    return {"ok": True, "revoked": billing.revoke_shares(req.billing_id, "pay" if req.pay_link else "sb")}
+
+
+def _share_page(message: str, status: int, title: str = "Superbill link") -> HTMLResponse:
+    from html import escape
+
+    from .practice import load as load_practice
+
+    who = str(load_practice().get("display_name") or "")
+    body = (
+        "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<meta name='robots' content='noindex'><title>{escape(title)}</title>"
+        "<body style='font-family:Inter,system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem;color:#111'>"
+        f"<img src='/api/practice/logo' alt='' style='height:56px'><p style='color:#2f57a5;margin:.4rem 0'>{escape(who)}</p>"
+        f"<h1 style='font-size:1.2rem'>{escape(title)}</h1><p>{escape(message)}</p></body>"
+    )
+    return HTMLResponse(body, status_code=status, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex",
+                                                            "Referrer-Policy": "no-referrer"})
+
+
+_PAY_CLOSED = {
+    "paid": "This invoice is paid. Thank you!",
+    "void": "This invoice is closed. No payment is needed.",
+    "uncollectible": "This invoice is closed. Contact the practice with any questions.",
+}
+
+
+@app.get("/pay/{token}")
+def public_pay_link(token: str):
+    """Branded pay link (signed, 30-day, revocable): 302 to the Stripe hosted invoice while it is open."""
+    from . import billing, stripe_pay
+
+    try:
+        row = billing.verify_share(token, kind="pay")
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status, title="Payment link")
+    try:
+        inv = stripe_pay._get("/invoices/" + quote(str(row.get("path") or ""), safe=""))
+    except RuntimeError:
+        return _share_page("The invoice could not be loaded right now. Try again shortly.", 502, title="Payment link")
+    status = str(inv.get("status") or "")
+    if status in _PAY_CLOSED:
+        return _share_page(_PAY_CLOSED[status], 200, title="Payment link")
+    url = str(inv.get("hosted_invoice_url") or "")
+    if status != "open" or not url.startswith("https://invoice.stripe.com/"):
+        return _share_page("This invoice is not available. Contact the practice.", 404, title="Payment link")
+    billing.note_hit(row["id"])
+    return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex",
+                                                           "Referrer-Policy": "no-referrer"})
+
+
+@app.get("/sb/{token}")
+def public_superbill_share(token: str):
+    """Branded, signed, expiring superbill link (30 days; rotate or revoke from the desk)."""
+    from . import billing
+
+    try:
+        row = billing.verify_share(token)
+    except billing.ShareError as e:
+        return _share_page(e.message, e.status)
+    name = (row.get("name") or "Superbill.pdf").replace('"', "")
+    if row.get("source") == "local":
+        local = billing.dryrun_dir() / Path(str(row.get("path") or "")).name
+        if not local.is_file():
+            return _share_page("This file is no longer available.", 404)
+        data = local.read_bytes()
+    else:
+        code, data, _ctype = _notify_get("/drive/file?path=" + quote(str(row.get("path") or ""), safe="/"))
+        if code != 200:
+            return _share_page("The file could not be loaded right now. Try again shortly.", 502)
+    billing.note_hit(row["id"])
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{name}"',
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 def _last_note_listing(vn_path: str) -> dict[str, Any]:
@@ -3145,6 +4315,57 @@ def _drive_mkdir(path: str) -> None:
             json.loads(resp.read().decode() or "{}")
     except HTTPError as e:
         raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
+
+
+def _folder_names(path: str) -> dict[str, str] | None:
+    """{lowercase name: real name} of child folders, or None when the folder is missing/unreadable."""
+    data = _drive_list(path)
+    if not data.get("ok"):
+        return None
+    return {str(i.get("name") or "").lower(): str(i.get("name") or "")
+            for i in (data.get("items") or []) if (i.get("type") or "") == "folder" and i.get("name")}
+
+
+def _ensure_visit_notes(chart: str, sub: str = "") -> str:
+    """Chart/Visit Notes path for signing (or Chart/<sub>, e.g. Consents). Creates what is missing, never duplicates an existing folder:
+    a missing living client folder gets the real-client tree (Billing + Chart/Consents, Labs, Letters,
+    Orders, Visit Notes); an existing chart only gets Visit Notes if it has none (case-insensitive)."""
+    from .drive_paths import BILLING_CHILD, CHART_SUBFOLDERS, LIVING_ROOT, VISIT_NOTES_FOLDER
+
+    want = sub or VISIT_NOTES_FOLDER
+    chart = chart.rstrip("/")
+    client_dir, _ = chart.rsplit("/", 1)
+    kids = _folder_names(chart)
+    if kids is None:
+        if not client_dir.startswith(LIVING_ROOT + "/"):
+            raise HTTPException(400, "chart folder not found (archive tree is never created)")
+        if _folder_names(client_dir) is None:
+            if _folder_names(LIVING_ROOT) is None:
+                raise HTTPException(502, "Drive is not reachable right now; nothing was created")
+            _drive_mkdir(client_dir)
+            _drive_mkdir(client_dir + "/" + BILLING_CHILD)
+        _drive_mkdir(chart)
+        for kid in CHART_SUBFOLDERS:
+            _drive_mkdir(chart + "/" + kid)
+        if want not in CHART_SUBFOLDERS:
+            _drive_mkdir(chart + "/" + want)
+        return chart + "/" + want
+    have = kids.get(want.lower())
+    if have:
+        return chart + "/" + have
+    _drive_mkdir(chart + "/" + want)
+    return chart + "/" + want
+
+
+def _unique_pdf_name(folder: str, stem: str) -> str:
+    """`stem.pdf`, or `stem-2.pdf`, `stem-3.pdf`… when a same-day note is already there (never overwrite)."""
+    data = _drive_list(folder)
+    names = {str(i.get("name") or "").lower() for i in (data.get("items") or [])}
+    taken = lambda n: n.lower() in names or n[:-4].lower() + " chart.pdf" in names  # noqa: E731
+    name, k = f"{stem}.pdf", 2
+    while taken(name):
+        name, k = f"{stem}-{k}.pdf", k + 1
+    return name
 
 
 def _drive_list(path: str) -> dict[str, Any]:
@@ -3460,7 +4681,7 @@ def api_desk_agent(
     background_tasks: BackgroundTasks,
     secret: str = Query(default=""),
 ):
-    """Staff Grok: look up, create, send forms/mail, book."""
+    """Pa (Bedrock Nova Pro): look up, create, send forms/mail, book."""
     _require_staff(secret)
     from .desk_agent import run_desk_agent
 

@@ -1,9 +1,13 @@
+const SLOT_TAKEN_MSG = "That time was just taken. Please pick another.";
+
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data.detail || data.message || res.statusText || "Request failed";
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
@@ -623,6 +627,7 @@ export async function initBooker(opts) {
       booking = true;
       if (modal) modal.classList.add("is-booking");
       if (submitBtn) {
+        submitBtn.dataset.label = submitBtn.dataset.label || submitBtn.textContent;
         submitBtn.disabled = true;
         submitBtn.textContent = "Booking…";
       }
@@ -679,6 +684,14 @@ export async function initBooker(opts) {
         if (priceLabel) params.set("price", priceLabel);
         if (data.cancel_url) params.set("cancel", data.cancel_url);
         if (data.ics_url) params.set("ics", data.ics_url);
+        // New client: the spot is held; go straight into the intake screens with the personal link.
+        if (data.held && data.intake_url && /\/intake\/open/.test(data.intake_url)) {
+          const sep = data.intake_url.indexOf("?") >= 0 ? "&" : "?";
+          window.location.replace(
+            data.intake_url + sep + "next=" + encodeURIComponent("/intake?held=1")
+          );
+          return;
+        }
         // Hard navigate immediately after calendar write (emails go out in background)
         window.location.replace("/thanks?" + params.toString());
       } catch (e) {
@@ -689,10 +702,16 @@ export async function initBooker(opts) {
         });
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = "Confirm booking";
+          submitBtn.textContent = submitBtn.dataset.label || "Confirm booking";
         }
-        setMsg(modalMsgEl || msgEl, e.message || String(e), "err");
-        loadSlots();
+        // Refresh first: loadSlots() clears both message lines, so set the message after it.
+        await loadSlots();
+        if (e && e.status === 409) {
+          closeModal(); // form fields are kept; the patient picks a new time
+          setMsg(msgEl, SLOT_TAKEN_MSG, "err");
+        } else {
+          setMsg(modalMsgEl || msgEl, e.message || String(e), "err");
+        }
       }
     });
   }

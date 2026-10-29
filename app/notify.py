@@ -274,6 +274,8 @@ def patient_confirm_email(
     notes: str = "",
     ics_url: str = "",
     phone: str = "",
+    hold_until_label: str = "",
+    intake_url: str = "",
 ) -> dict[str, Any]:
     from .email_templates import render_visit_email
 
@@ -293,6 +295,8 @@ def patient_confirm_email(
         timezone=timezone,
         notes=notes,
         ics_url=ics_url,
+        hold_until_label=hold_until_label,
+        intake_url=intake_url,
     )
     return send_email(email, subject, html, html=True, inline_logo=True)
 
@@ -305,6 +309,8 @@ def patient_confirm_sms(
     sms_consent: bool,
     duration_minutes: int | None = None,
     event_id: str = "",
+    hold_until_label: str = "",
+    intake_url: str = "",
 ) -> dict[str, Any]:
     if not sms_consent:
         return {"ok": False, "channel": "sms", "skipped": True, "detail": "no consent"}
@@ -314,6 +320,8 @@ def patient_confirm_sms(
         title=title,
         when_label=when_label,
         duration_minutes=duration_minutes,
+        hold_until_label=hold_until_label,
+        intake_url=intake_url,
     )
     key = f"{event_id}:confirm" if event_id else ""
     return send_sms(
