@@ -459,7 +459,7 @@ class VerifyCodeRequest(BaseModel):
 
 @app.post("/api/verify-patient")
 def api_verify_patient(req: VerifyRequest):
-    """Phone or email on file can name a message. No token. No chart."""
+    """Phone or email on file can file a message. No name, no token, no chart."""
     from .verify_codes import recognize_for_message
 
     if not (req.email or "").strip() and not (req.phone or "").strip():
@@ -483,6 +483,8 @@ def api_verify_patient_code(req: VerifyCodeRequest):
     result = confirm_code(email=req.email, phone=req.phone, code=req.code)
     if result.get("ok"):
         result["level"] = "sensitive"
+        # Name only after the code matched (it rides in the signed token).
+        result["name"] = str(verify_patient_token(result["verify_token"]).get("n") or "")[:80]
     return result
 
 
@@ -1005,6 +1007,15 @@ class ChatThreadPost(BaseModel):
 def api_chat_thread_post(req: ChatThreadPost):
     from .chat_threads import post_message
 
+    name = req.name
+    if not (name or "").strip():
+        # The site no longer learns the name before a code; label the staff thread here instead.
+        from .verify_codes import _lookup
+
+        found = _lookup(req.email or "", req.phone or "")
+        if found:
+            row = found[2]
+            name = str(row.get("preferred_name") or row.get("display_name") or "")[:80]
     try:
         return post_message(
             body=req.body,
@@ -1014,7 +1025,7 @@ def api_chat_thread_post(req: ChatThreadPost):
             phone=req.phone,
             hear_back=req.hear_back,
             sms_consent=req.sms_consent,
-            name=req.name,
+            name=name,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

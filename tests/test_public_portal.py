@@ -331,7 +331,7 @@ def test_verify_routes_recognize_then_code_then_token() -> None:
     with _portal() as (main, _fake):
         assert main.api_verify_patient(main.VerifyRequest())["reason"] == "need_email_or_phone"
         named = main.api_verify_patient(main.VerifyRequest(phone="(555) 555-0100"))
-        assert named == {"ok": True, "level": "message", "name": "Jane Demo"}
+        assert named == {"ok": True, "level": "message"}  # never the name before a code
         assert main.api_verify_patient(main.VerifyRequest(email="nobody@example.com"))["ok"] is False
         assert main.api_verify_patient(main.VerifyRequest(full_name="Jane Demo", dob="1990-01-02"))["ok"] is False
 
@@ -350,7 +350,7 @@ def test_verify_routes_recognize_then_code_then_token() -> None:
         if sent[0][2] != "000000":
             assert wrong == {"ok": False, "reason": "invalid_code"}
         good = main.api_verify_patient_code(main.VerifyCodeRequest(email="jane@example.com", code=sent[0][2]))
-        assert good["ok"] is True and good["level"] == "sensitive"
+        assert good["ok"] is True and good["level"] == "sensitive" and good["name"] == "Jane Demo"
         out = main.api_public_balance(main.PublicTokenRequest(verify_token=good["verify_token"]))
         assert out["ok"] is True
 
@@ -378,3 +378,36 @@ def test_voice_follow_up_needs_contact_on_file() -> None:
         assert book(email="other@example.com", phone="555-555-0100") == 401
         assert book(email="jane@example.com") == 409
         assert book(email="other@example.com", verify_token=_token()) == 409
+
+
+def test_slot_taken_is_a_clear_409() -> None:
+    with _portal() as (main, _fake):
+        main.generate_slots = lambda *a, **k: []
+        req = main.BookRequest(event_type="follow-up", start="2026-10-20T10:00:00-05:00", duration_minutes=30,
+                               name="Jane Demo", email="jane@example.com", source="web")
+        http = Request({"type": "http", "method": "POST", "path": "/api/book", "query_string": b"", "headers": []})
+        try:
+            main.api_book(req, BackgroundTasks(), http)
+        except HTTPException as e:
+            assert e.status_code == 409 and "no longer available" in str(e.detail)
+        else:
+            raise AssertionError("expected 409")
+
+
+def test_booker_page_keeps_slot_taken_message_after_refresh() -> None:
+    """Root cause: the submit catch set the error, then loadSlots() cleared it. Now: refresh, then message."""
+    import subprocess
+
+    js = (ROOT / "static" / "js" / "booker.js").read_text()
+    i = js.index("await loadSlots();\n        if (e && e.status === 409)")
+    assert js.index("SLOT_TAKEN_MSG, \"err\")", i) > i
+    assert 'const SLOT_TAKEN_MSG = "That time was just taken. Please pick another.";' in js
+    fetch_fn = js[js.index("async function fetchJSON"): js.index("function el(id)")]
+    harness = fetch_fn + """
+globalThis.fetch = async () => ({ ok: false, status: 409, statusText: "Conflict",
+  json: async () => ({ detail: "That slot is no longer available. Please pick another." }) });
+fetchJSON("/api/book", {}).then(() => { console.log("no-throw"); process.exit(1); },
+  (e) => { console.log(e.status); process.exit(e.status === 409 ? 0 : 1); });
+"""
+    out = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stdout + out.stderr

@@ -1,9 +1,13 @@
+const SLOT_TAKEN_MSG = "That time was just taken. Please pick another.";
+
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data.detail || data.message || res.statusText || "Request failed";
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
@@ -700,8 +704,14 @@ export async function initBooker(opts) {
           submitBtn.disabled = false;
           submitBtn.textContent = submitBtn.dataset.label || "Confirm booking";
         }
-        setMsg(modalMsgEl || msgEl, e.message || String(e), "err");
-        loadSlots();
+        // Refresh first: loadSlots() clears both message lines, so set the message after it.
+        await loadSlots();
+        if (e && e.status === 409) {
+          closeModal(); // form fields are kept; the patient picks a new time
+          setMsg(msgEl, SLOT_TAKEN_MSG, "err");
+        } else {
+          setMsg(modalMsgEl || msgEl, e.message || String(e), "err");
+        }
       }
     });
   }
