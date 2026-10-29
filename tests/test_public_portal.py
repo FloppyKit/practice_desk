@@ -329,11 +329,11 @@ def test_verify_routes_recognize_then_code_then_token() -> None:
     from app import verify_codes
 
     with _portal() as (main, _fake):
-        assert main.api_verify_patient(main.VerifyRequest())["reason"] == "need_email_or_phone"
-        named = main.api_verify_patient(main.VerifyRequest(phone="(555) 555-0100"))
+        assert main.api_verify_patient(main.VerifyRequest(), _req(False))["reason"] == "need_email_or_phone"
+        named = main.api_verify_patient(main.VerifyRequest(phone="(555) 555-0100"), _req(False))
         assert named == {"ok": True, "level": "message"}  # never the name before a code
-        assert main.api_verify_patient(main.VerifyRequest(email="nobody@example.com"))["ok"] is False
-        assert main.api_verify_patient(main.VerifyRequest(full_name="Jane Demo", dob="1990-01-02"))["ok"] is False
+        assert main.api_verify_patient(main.VerifyRequest(email="nobody@example.com"), _req(False))["ok"] is False
+        assert main.api_verify_patient(main.VerifyRequest(full_name="Jane Demo", dob="1990-01-02"), _req(False))["ok"] is False
 
         sent: list[tuple[str, str, str]] = []
 
@@ -476,3 +476,55 @@ def test_confirm_sms_carries_intake_link_when_given() -> None:
     s = confirm_sms(title="Follow-up", when_label="Tue Oct 20 · 10:00 AM", intake_url="https://x/intake")
     assert "https://x/intake" in s and "card on file" in s
     assert "intake" not in confirm_sms(title="Follow-up", when_label="Tue Oct 20 · 10:00 AM")
+
+
+def _req(voice: bool) -> Request:
+    hdrs = [(b"x-desk-channel", b"voice")] if voice else []
+    return Request({"type": "http", "method": "POST", "path": "/", "query_string": b"", "headers": hdrs})
+
+
+def test_voice_sms_consent_saved_once_and_reused() -> None:
+    from app import clients_db
+
+    with _portal() as (main, _fake):
+        V = main.VerifyRequest
+        web = main.api_verify_patient(V(email="jane@example.com"), _req(False))
+        assert "sms_consent" not in web  # web never learns consent
+        assert main.api_verify_patient(V(email="jane@example.com"), _req(True))["sms_consent"] == "unknown"
+        assert main.api_verify_patient(V(email="jane@example.com", sms_consent="yes"), _req(True))["sms_consent"] == "yes"
+        row = clients_db.get_by_id("c-jane")
+        assert row["sms_consent"] == 1 and row["sms_consent_source"] == "voice" and row["sms_consent_at"]
+        assert main.api_verify_patient(V(phone="555-555-0100"), _req(True))["sms_consent"] == "yes"
+        # Retraction, then opt back in.
+        assert main.api_verify_patient(V(email="jane@example.com", sms_consent="no"), _req(True))["sms_consent"] == "no"
+        assert main.api_verify_patient(V(email="jane@example.com", sms_consent="yes"), _req(True))["sms_consent"] == "yes"
+        assert main.api_verify_patient(V(email="nobody@example.com", sms_consent="yes"), _req(True)).get("ok") is False
+
+
+def test_voice_booking_uses_consent_on_file_and_saves_an_answer() -> None:
+    from app import clients_db
+
+    with _portal() as (main, _fake):
+        start = "2026-10-20T10:00:00-05:00"
+        saved = {k: getattr(main, k) for k in ("_phone_slots", "create_event", "_mint_intake_url")}
+        main._phone_slots = lambda *a, **k: [{"start": start}]
+        main.generate_slots = lambda *a, **k: [{"start": start}]
+        main.create_event = lambda **k: {"htmlLink": ""}
+        main._mint_intake_url = lambda *a, **k: ""
+        try:
+            def book(voice: bool, **kw):
+                req = main.BookRequest(event_type="follow-up", start=start, duration_minutes=30, name="Jane Demo",
+                                       email="jane@example.com", phone="555-555-0100", source="voice",
+                                       verify_token=_token(), **kw)
+                return main.api_book(req, BackgroundTasks(), _req(voice))["sms_consent"]
+
+            assert book(True) is False  # unknown on file, no answer: no texts
+            clients_db.set_sms_consent("c-jane", True, "voice")
+            assert book(True) is True  # yes on file, not asked again
+            assert book(True, sms_consent=False) is False  # caller retracts on the booking
+            assert clients_db.sms_consent_state(clients_db.get_by_id("c-jane")) == "no"
+            assert book(False, sms_consent=True) is True  # web checkbox unchanged, not saved
+            assert clients_db.sms_consent_state(clients_db.get_by_id("c-jane")) == "no"
+        finally:
+            for k, v in saved.items():
+                setattr(main, k, v)

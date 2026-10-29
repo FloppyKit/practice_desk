@@ -43,4 +43,20 @@ class T(unittest.TestCase):
         r = self.book(visit_type="new-client", sms_consent="false")
         self.assertTrue(r["intake_link_sent"]); self.assertFalse(r["texts"]); self.assertNotIn("held", r)
         self.assertIn("emailed.", r["message"])
+    def test_verify_saves_and_reports_consent(self):
+        got = []
+        def http(m, p, body=None, extra=None):
+            got.append(body); return 200, {"ok": True, "level": "message", "sms_consent": body["sms_consent"] or "unknown"}
+        L._http = http; L._stash_verify = lambda ctx, tok: None
+        ev = lambda **p: {"Details": {"Parameters": dict(tool="verify_patient", email="psycharts@mail.grokbot.com", **p),
+              "ContactData": {"ContactId": "c1", "CustomerEndpoint": {"Address": "+19133918760"}}}}
+        r = json.loads(L.lambda_handler(ev(), None)["result"]); self.assertEqual(r["sms_consent"], "unknown")
+        r = json.loads(L.lambda_handler(ev(sms_consent="yes"), None)["result"]); self.assertEqual(got[-1]["sms_consent"], "yes")
+        self.assertEqual(r["sms_consent"], "yes")
+    def test_no_answer_uses_file(self):
+        def http(m, p, body=None, extra=None):
+            self.sent.append(body); return 200, {"when_label": "Wed", "sms_consent": True}
+        L._http = http
+        self.book(sms_consent="$.Modules.Input.sms_consent")
+        self.assertNotIn("sms_consent", self.sent[-1])
 unittest.main()

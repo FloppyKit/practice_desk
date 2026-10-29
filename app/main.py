@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
+from . import clients_db
 from .config import DEFAULT_CALENDAR, get_event_type, load_config
 from .cal import create_event, delete_event, get_event, list_booker_events, list_events, patch_event, using_caldav
 from .notify import (
@@ -221,7 +222,7 @@ class BookRequest(BaseModel):
     email: EmailStr
     phone: str = Field(default="", max_length=40)
     notes: str = Field(default="", max_length=500)
-    sms_consent: bool = False
+    sms_consent: bool | None = None  # None (phone line): use the answer on file
     # Optional extra people to notify (comma-separated emails)
     notify_emails: str = Field(default="", max_length=400)
     source: str = Field(default="web", max_length=20)
@@ -240,6 +241,7 @@ class VerifyRequest(BaseModel):
     last_name: str = ""
     dob: str = ""
     portal: bool = False
+    sms_consent: str = ""  # phone line only: "yes"/"no" saves the caller's text answer
 
 
 def _durations(et: dict[str, Any]) -> list[int]:
@@ -458,13 +460,22 @@ class VerifyCodeRequest(BaseModel):
 
 
 @app.post("/api/verify-patient")
-def api_verify_patient(req: VerifyRequest):
+def api_verify_patient(req: VerifyRequest, request: Request):
     """Phone or email on file can file a message. No name, no token, no chart."""
-    from .verify_codes import recognize_for_message
+    from .verify_codes import _lookup, recognize_for_message
 
     if not (req.email or "").strip() and not (req.phone or "").strip():
         return {"ok": False, "level": "none", "reason": "need_email_or_phone"}
-    return recognize_for_message(email=req.email, phone=req.phone)
+    out = recognize_for_message(email=req.email, phone=req.phone)
+    if out.get("ok") and _phone_channel(request):
+        # Phone line only: text consent on file (yes/no/unknown); a yes/no from the caller is saved.
+        row = _lookup(req.email, req.phone)[2]
+        ans = (req.sms_consent or "").strip().lower()
+        if ans in ("yes", "no"):
+            clients_db.set_sms_consent(row["id"], ans == "yes", "voice")
+            row = clients_db.get_by_id(row["id"])
+        out["sms_consent"] = clients_db.sms_consent_state(row)
+    return out
 
 
 @app.post("/api/verify-patient/code-send")
@@ -711,8 +722,16 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
     if dur not in durs:
         raise HTTPException(400, f"duration must be one of {durs}")
 
-    # SMS consent requires a phone number
-    sms_consent = bool(req.sms_consent) and bool((req.phone or "").strip())
+    # SMS consent requires a phone number. Phone line with no answer: use the one on file.
+    on_file = None
+    if _phone_channel(request):
+        from . import onboarding
+
+        on_file = onboarding.find_client(str(req.email))
+    if req.sms_consent is None and on_file:
+        sms_consent = clients_db.sms_consent_state(on_file) == "yes" and bool((req.phone or "").strip())
+    else:
+        sms_consent = bool(req.sms_consent) and bool((req.phone or "").strip())
     extra_notify = parse_email_list(req.notify_emails or "", limit=4)
 
     # Voice/chat follow-ups must pass the current-patient gate.
@@ -906,6 +925,15 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
         )
     except Exception as e:
         raise HTTPException(502, f"Calendar write failed: {e}") from e
+
+    if _phone_channel(request) and req.sms_consent is not None:
+        # Save the caller's text answer on the client record (new hold client or existing).
+        cid = (hold or {}).get("client_id") or (on_file or {}).get("id")
+        if cid:
+            try:
+                clients_db.set_sms_consent(cid, bool(req.sms_consent), "voice")
+            except Exception as e:
+                print("sms_consent_save_fail", type(e).__name__, flush=True)
 
     if hold:
         try:

@@ -173,7 +173,8 @@ def verify_patient(a, ctx):
     email, phone = _clean(a.get("email")), _clean(a.get("phone"))
     if not (email or phone): return {"ok": False, "reason": "need_email_or_phone",
                                      "message": "Ask for the email or phone number on file."}
-    st, d = _http("POST", "/api/verify-patient", {"email": email, "phone": phone})
+    ans = {"true": "yes", "yes": "yes", "1": "yes", "false": "no", "no": "no", "0": "no"}.get(_clean(a.get("sms_consent")).lower(), "")
+    st, d = _http("POST", "/api/verify-patient", {"email": email, "phone": phone, "sms_consent": ans})
     if st != 200 or not d.get("ok"):
         return {"ok": False, "reason": d.get("reason", "not_found"),
                 "message": "Could not verify. Do not book a follow-up. Offer book.psycharts.org or notify_matt."}
@@ -182,7 +183,7 @@ def verify_patient(a, ctx):
     ident = ("e:" + _norm_email(email)) if email else ("p:" + _norm_phone(phone))
     tok = _sign("pv", {"c": ctx["contact_id"], "i": _h(ident), "x": int(time.time()) + VERIFY_TTL})
     _stash_verify(ctx, tok)
-    return {"ok": True, "verify_token": tok,
+    return {"ok": True, "verify_token": tok, "sms_consent": d.get("sms_consent", "unknown"),
             "message": "Verified current patient. Pass verify_token exactly as given to list_visit_slots and create_visit "
                        "for follow-ups, with the same email or phone."}
 
@@ -190,7 +191,8 @@ def create_visit(a, ctx):
     vt = _clean(a.get("visit_type"))
     start, name, email, phone = _clean(a.get("start")), _clean(a.get("name")), _norm_email(a.get("email")), _clean(a.get("phone")) or _clean(ctx.get("caller"))
     if len(_norm_phone(phone)) < 10: phone = _clean(ctx.get("caller"))   # e.g. "this number"
-    sms_ok = _clean(a.get("sms_consent")).lower() in ("true", "yes", "1")
+    raw = _clean(a.get("sms_consent")).lower()
+    sms_ok = True if raw in ("true", "yes", "1") else False if raw in ("false", "no", "0") else None  # None: on file
     for k, v in (("start", start), ("name", name), ("email", email)):
         if not v: return {"ok": False, "error": f"{k} required"}
     if vt not in ("new-client", "follow-up"): return {"ok": False, "error": "bad visit_type"}
@@ -228,7 +230,8 @@ def create_visit(a, ctx):
         return {"ok": False, "error": "caller_not_confirmed",
                 "message": "The caller has not said yes since the read-back. Read back the time and ask them to confirm."}
     body = {"event_type": vt, "start": start, "name": name, "email": email,
-            "phone": phone, "notes": "Booked by Connect voice agent", "source": "voice", "sms_consent": sms_ok}
+            "phone": phone, "notes": "Booked by Connect voice agent", "source": "voice"}
+    if sms_ok is not None: body["sms_consent"] = sms_ok
     if vt == "follow-up": body["duration_minutes"] = int(dur)
     if DRY_RUN: return {"ok": True, "dry_run": True, "when": _label(start), "message": "DRY RUN: not booked."}
     st, d = _http("POST", "/api/book", body)
