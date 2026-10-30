@@ -20,8 +20,8 @@ HOST_SHORT = "Dr. B"
 HOST_EMAIL = "matt@drmattbrown.com"
 HOST_PHONE = "773-312-3858"
 PRACTICE = "Psych Arts"
-MEET_URL = "https://live.psycharts.org/guest"
-MEET_HOST = "live.psycharts.org/guest"
+MEET_URL = "https://meet.drmattbrown.com/guest"
+MEET_HOST = "meet.drmattbrown.com/guest"
 DEFAULT_TZ = "America/Chicago"
 SITE_URL = "https://drmattbrown.com"
 
@@ -41,9 +41,9 @@ def _identity() -> dict[str, str]:
         "website": p.get("website") or SITE_URL,
         "meet": p.get("meet") or MEET_URL,
     }
-FORMS_URL = "https://site.psycharts.org/forms"
-ROI_URL = "https://site.psycharts.org/forms/roi"
-PAY_URL = "https://site.psycharts.org/pay"
+FORMS_URL = "https://drmattbrown.com/forms"
+ROI_URL = "https://drmattbrown.com/forms/roi"
+PAY_URL = "https://drmattbrown.com/pay"
 BOOK_URL = "https://book.psycharts.org"
 
 # Staff compose + notify `template=` names

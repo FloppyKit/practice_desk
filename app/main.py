@@ -96,7 +96,7 @@ app.add_middleware(
     allow_origins=[
         "https://book.psycharts.org",
         "https://live.psycharts.org",
-        "https://site.psycharts.org",
+        "https://drmattbrown.com",
         "https://drmattbrown.com",
         "https://www.drmattbrown.com",
         "https://portal.drmattbrown.com",
@@ -117,7 +117,7 @@ if STATIC.exists():
 
 PUBLIC_BASE = os.environ.get("PUBLIC_BASE_URL", "https://book.psycharts.org").rstrip("/")
 REMIND_SECRET = os.environ.get("REMIND_CRON_SECRET", "")
-SITE_PUBLIC = os.environ.get("SITE_PUBLIC_URL", "https://site.psycharts.org").rstrip("/")
+SITE_PUBLIC = os.environ.get("SITE_PUBLIC_URL", "https://drmattbrown.com").rstrip("/")
 INTAKE_MINT_URL = os.environ.get(
     "INTAKE_MINT_URL", "http://127.0.0.1:3000/api/intake/mint"
 )
@@ -591,7 +591,7 @@ def _send_booking_notices(
     notes: str,
     sms_consent: bool,
     price_label: str = "",
-    location_line: str = "Video visit · https://live.psycharts.org/guest",
+    location_line: str = "Video visit · https://meet.drmattbrown.com/guest",
     extra_notify: list[str] | None = None,
     rebook_url: str = "",
     duration_minutes: int | None = None,
@@ -3601,7 +3601,7 @@ def api_desk_meta(secret: str = Query(default="")):
         "ok": True,
         "office_url": os.environ.get("LIVEKIT_OFFICE_URL", "").strip(),
         "guest_url": os.environ.get(
-            "LIVEKIT_GUEST_URL", "https://live.psycharts.org/guest"
+            "LIVEKIT_GUEST_URL", "https://meet.drmattbrown.com/guest"
         ).strip(),
         "agent": True,
         "drive": True,

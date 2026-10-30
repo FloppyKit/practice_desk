@@ -52,7 +52,7 @@ def _write(row: dict[str, Any]) -> None:
 
 
 def public_thread(row: dict[str, Any]) -> dict[str, Any]:
-    site = os.environ.get("SITE_PUBLIC_URL", "https://site.psycharts.org").rstrip("/")
+    site = os.environ.get("SITE_PUBLIC_URL", "https://drmattbrown.com").rstrip("/")
     token = row["token"]
     return {
         "ok": True,
@@ -146,7 +146,7 @@ def _lookup_conversation(conversation_id: str) -> str:
 
 
 def _compose_note(row: dict[str, Any], text: str) -> str:
-    site = os.environ.get("SITE_PUBLIC_URL", "https://site.psycharts.org").rstrip("/")
+    site = os.environ.get("SITE_PUBLIC_URL", "https://drmattbrown.com").rstrip("/")
     token = row["token"]
     name = (row.get("name") or "").strip()
     lines = [

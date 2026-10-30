@@ -16,7 +16,7 @@ LABELS = {
     "consents": "Consents & practice policies (informed consent, telehealth, policies, privacy acknowledgment)",
     "roi": "Authorization to release information",
 }
-NPP_URL = "https://site.psycharts.org/forms/handouts/privacy-notice.pdf"
+NPP_URL = "https://drmattbrown.com/forms/handouts/privacy-notice.pdf"
 
 
 def docs_for(client_id: str) -> list[dict[str, Any]]:
