@@ -109,8 +109,8 @@ function priceForDuration(opts, minutes) {
 function timesSubLabel(opts, minutes) {
   const price = priceForDuration(opts, minutes);
   const short = minutes + "-min";
-  if (price) return short + " · " + price + " · Chicago time";
-  return durationPhrase(minutes) + " openings · Chicago time";
+  if (price) return short + " · " + price + " · Central Time";
+  return durationPhrase(minutes) + " openings · Central Time";
 }
 
 function durationPhrase(minutes) {

@@ -1596,7 +1596,7 @@ def _cancel_html(
         {visit_card}
         <p style="margin-top:12px">To reschedule, pick a new time below.</p>
         <p style="margin-top:16px"><a class="btn" href="{_esc(rebook_href)}" style="display:inline-block;text-decoration:none">Book a new time</a></p>
-        <p style="margin-top:10px"><a class="back" href="/">All booking options</a></p>
+        <p style="margin-top:10px"><a class="back" href="https://drmattbrown.com/contact">All booking options</a></p>
         """
     elif error:
         body = f"""
