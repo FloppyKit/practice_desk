@@ -13,7 +13,7 @@ import json, os, re, time, hmac, hashlib, base64, urllib.request, urllib.error, 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-BASE = os.environ["BRIDGE_BASE_URL"].rstrip("/")          # e.g. https://hooks.psycharts.org/desk-bridge
+BASE = os.environ["BRIDGE_BASE_URL"].rstrip("/")          # e.g. https://hooks.drmattbrown.com/desk-bridge
 TOKEN = os.environ["BRIDGE_TOKEN"]                         # checked by Caddy
 NOTIFY_TOKEN = os.environ.get("NOTIFY_TOKEN", "")          # checked by notify server
 HKEY = os.environ.get("VERIFY_HMAC_KEY", "").encode()      # signs verify/confirm tokens
