@@ -14,7 +14,7 @@ CSV_HDR = ["Id", "First name", "Last name", "Preferred name", "Email", "Phone nu
 ROWS = [
     ["cp-001", "Testy", "McFakerson", "", "TESTY@example.test", "'+13175550101", "01/02/1980", "Active", "f411, F32.A; U071", "sertraline 50 mg\nhydroxyzine 25 mg prn", "FakeCo 123", "4111111111111111", "12/29", "cvcQ987"],
     ["cp-002", "Ada", "Placeholder", "Addie", "ada@example.test", "317.555.0102", "1990-03-04", "Active", "", "", "", "", "", ""],
-    ["C0FFEE03-0000", "Bob", "Nobody", "", "", "317-555-0103", "5/6/1975", "Active", "F90.0", "", "", "5555444433332222", "01/30", "cvcQ123"],
+    ["C0FFEE03-0000", "Bob", "Nobody", "", "", "317-555-0103", "5/6/1975", "Archived", "F90.0", "", "", "5555444433332222", "01/30", "cvcQ123"],
 ]
 
 
@@ -220,3 +220,15 @@ def test_cp_appointments_practice_tz_and_cross_file_dedupe():
     before = _q(d, "SELECT * FROM imported_appointments ORDER BY id")
     assert run().counts["appointments"].get("created", 0) == 0
     assert [r[:-1] for r in _q(d, "SELECT * FROM imported_appointments ORDER BY id")] == [r[:-1] for r in before]
+
+
+def test_cp_new_client_status_mapped_existing_kept():
+    d = _fixture()
+    _run(d)
+    assert _q(d, "SELECT status FROM clients WHERE carepatron_contact_id='cont-c0ffee03-0000'") == [("archived",)]
+    con = sqlite3.connect(d / "db.sqlite")
+    con.execute("UPDATE clients SET status='inactive', email='other@example.test' WHERE carepatron_contact_id='cont-cp-001'")
+    con.commit(); con.close()
+    r = _run(d)
+    assert r.counts["clients"]["kept_existing_email"] == 1
+    assert _q(d, "SELECT status, email FROM clients WHERE carepatron_contact_id='cont-cp-001'") == [("inactive", "other@example.test")]

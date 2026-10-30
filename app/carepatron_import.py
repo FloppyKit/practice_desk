@@ -59,6 +59,9 @@ APPT_COLUMNS: dict[str, list[str]] = {
 # All Carepatron appointment times are practice (Central) wall-clock, whatever TimeZone says (Matt, 2026-10-29).
 APPT_TZ = "America/Chicago"
 
+# Carepatron Status -> clients.status for NEW clients only (existing statuses are never changed).
+STATUS_MAP = {"active": "active", "inactive": "inactive", "archived": "archived", "lead": "inactive"}
+
 # Clinical / admin CSV fields kept verbatim in imported_client_clinical (side table).
 CLINICAL_FIELDS: dict[str, str] = {
     "dx_code": "DX Code",
@@ -247,10 +250,13 @@ def load_clients(con, csv_path: Path, rep: Report) -> None:
                 "status,source,carepatron_contact_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (new_id, rec["display_name"], rec["preferred_name"] or None, rec["given_name"],
                  rec["family_name"], rec["email"] or None, rec["phone_e164"] or None, rec["dob"] or None,
-                 "active", "carepatron", rec["carepatron_contact_id"], now, now))
+                 STATUS_MAP.get(p["status"].strip().lower(), "inactive"), "carepatron", rec["carepatron_contact_id"], now, now))
             rep.inc("clients", "created"); rep.inc("clients", "out")
             load_clinical(con, new_id, rec["carepatron_contact_id"], raw, rep); continue
         # Matched: fill blanks only, never overwrite existing values.
+        for k, v in rec.items():  # differing non-empty values are kept as-is (never overwritten); counted only
+            if v and row[k] and str(row[k]).strip().lower() != str(v).strip().lower() and k != "display_name":
+                rep.inc("clients", "kept_existing_" + k)
         sets = {k: v for k, v in rec.items() if v and not row[k]}
         if sets:
             sets["updated_at"] = _now()
