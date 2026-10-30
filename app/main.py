@@ -4999,6 +4999,57 @@ def _page(name: str, cache: bool = True) -> FileResponse:
     return FileResponse(path, headers=headers)
 
 
+_BOOK_DESCRIPTIONS = {
+    "new-client": "Book a new-patient video evaluation (about 90 minutes, $600) with Matt Brown, DO, MBA. Times are shown in Central Time.",
+    "follow-up": "Book a follow-up video visit with Matt Brown, DO, MBA (current patients). Times are shown in Central Time.",
+}
+
+
+def _book_page(slug: str) -> HTMLResponse:
+    """book.html with the visit title, meta description and JSON-LD rendered on the server (JS still hydrates the rest)."""
+    import html as _html
+
+    path = STATIC / "book.html"
+    if not path.exists():
+        raise HTTPException(404)
+    raw = path.read_text(encoding="utf-8")
+    et = get_event_type(load_config(), slug) if slug else None
+    title = str((et or {}).get("title") or "Book a visit").strip() or "Book a visit"
+    desc = _BOOK_DESCRIPTIONS.get(
+        slug, f"Book a {title.lower()} with Dr. Matt Brown by secure video. Times are shown in Central Time."
+    )
+    page_url = f"https://book.drmattbrown.com/{slug}" if slug else "https://book.drmattbrown.com/"
+    ld = {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "@id": page_url + "#webpage",
+        "url": page_url,
+        "name": f"{title} · Dr. Matt Brown",
+        "description": desc,
+        "inLanguage": "en-US",
+        "isPartOf": {"@id": "https://drmattbrown.com/#website"},
+        "about": {"@id": "https://drmattbrown.com/#practice"},
+        "provider": {
+            "@type": ["MedicalBusiness", "MedicalOrganization"],
+            "@id": "https://drmattbrown.com/#practice",
+            "name": "Dr. Matt Brown",
+            "url": "https://drmattbrown.com",
+            "telephone": "+1-773-312-3858",
+        },
+        "potentialAction": {"@type": "ReserveAction", "target": page_url},
+    }
+    ld_json = json.dumps(ld).replace("<", "\\u003c")
+    head_extra = (
+        f'  <meta name="description" content="{_html.escape(desc)}" />\n'
+        f'  <link rel="canonical" href="{_html.escape(page_url)}" />\n'
+        f'  <script type="application/ld+json">{ld_json}</script>\n'
+    )
+    out = raw.replace("<title>Book · Dr. Matt Brown</title>", f"<title>{_html.escape(title)} · Dr. Matt Brown</title>", 1)
+    out = out.replace('<h1 id="book-title">Book a visit</h1>', f'<h1 id="book-title">{_html.escape(title)}</h1>', 1)
+    out = out.replace("</head>", head_extra + "</head>", 1)
+    return HTMLResponse(out)
+
+
 @app.get("/")
 def hub():
     return _page("index.html")
@@ -5006,17 +5057,17 @@ def hub():
 
 @app.get("/new-client")
 def page_new():
-    return _page("book.html")
+    return _book_page("new-client")
 
 
 @app.get("/follow-up")
 def page_follow():
-    return _page("book.html")
+    return _book_page("follow-up")
 
 
 @app.get("/intro-15")
 def page_intro():
-    return _page("book.html")
+    return _book_page("intro-15")
 
 
 @app.get("/thanks")
@@ -5034,4 +5085,4 @@ def page_book_slug(slug: str):
     et = (load_config().get("event_types") or {}).get(slug)
     if not isinstance(et, dict) or et.get("enabled") is False or et.get("public") is False:
         raise HTTPException(404)
-    return _page("book.html")
+    return _book_page(slug)

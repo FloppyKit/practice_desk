@@ -1545,3 +1545,10 @@ label.check a { color: inherit; text-decoration: underline; }
   resize: vertical;
   line-height: 1.45;
 }
+
+
+/* Round 3: 44px touch targets (back link, month arrows, SMS consent) */
+.back, .brand-side .back { min-height: 44px; padding: 0 0.25rem; }
+.cal-nav { width: 2.75rem; height: 2.75rem; }
+label.check { min-height: 44px; padding: 0.35rem 0; }
+label.check input[type="checkbox"] { width: 1.375rem; height: 1.375rem; margin-top: 0; }
