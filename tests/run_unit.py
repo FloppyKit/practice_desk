@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tests import (  # noqa: E402
+    test_carepatron_import,
     test_avs,
     test_desk_agent,
     test_billing,
@@ -53,6 +54,7 @@ def main() -> int:
         test_spruce_api,
         test_verify_codes,
         test_public_portal,
+        test_carepatron_import,
     ):
         for name in sorted(dir(mod)):
             if not name.startswith("test_"):

@@ -48,3 +48,9 @@ node_modules/
 # Build
 dist/
 *.log
+
+# Carepatron export / import artifacts (PHI) — keep under ~/practice-desk-import/
+practice-desk-import/
+carepatron-import-report/
+*carepatron*export*
+*.md.export
