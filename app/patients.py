@@ -196,6 +196,7 @@ def client_by_email(email: str) -> dict[str, Any] | None:
 
 def record_card_on_file(
     *,
+    client_id: str = "",
     email: str = "",
     customer_id: str = "",
     payment_method_id: str = "",
@@ -207,7 +208,9 @@ def record_card_on_file(
     """Stripe pointers only. Never PAN. No new row if nobody matches."""
     if not clients_ready():
         return {"ok": False, "detail": "clients db unset"}
-    row = clients_db.get_by_email(email) if email else None
+    row = clients_db.get_by_id(client_id) if client_id else None
+    if not row and email:
+        row = clients_db.get_by_email(email)
     if not row and customer_id:
         row = clients_db.get_by_stripe_customer(customer_id)
     if not row:
@@ -223,9 +226,42 @@ def record_card_on_file(
             "stripe_card_exp_year": exp_year,
             "stripe_card_updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
             "card_on_file": True,
+            "card_shared_from": None,
         }
     )
-    return {"ok": True}
+    shared = share_card_with_family(row["id"])
+    return {"ok": True, "client_id": row["id"], "shared_with": len(shared)}
+
+
+def share_card_with_family(source_id: str) -> list[str]:
+    """Same email + phone = one family card (consent line on the card authorization), unless a member
+    saved their own card. Members already pointing at this source are refreshed."""
+    src = clients_db.get_by_id(source_id)
+    if not src or not src.get("card_on_file"):
+        return []
+    out: list[str] = []
+    for m in clients_db.family_of(src):
+        own = m.get("card_on_file") and not m.get("card_shared_from")
+        if own:
+            continue
+        if m.get("card_shared_from") and m["card_shared_from"] != source_id:
+            continue
+        clients_db.upsert(
+            {
+                "id": m["id"],
+                "stripe_customer_id": src.get("stripe_customer_id"),
+                "stripe_payment_method_id": src.get("stripe_payment_method_id"),
+                "stripe_card_brand": src.get("stripe_card_brand"),
+                "stripe_card_last4": src.get("stripe_card_last4"),
+                "stripe_card_exp_month": src.get("stripe_card_exp_month"),
+                "stripe_card_exp_year": src.get("stripe_card_exp_year"),
+                "stripe_card_updated_at": src.get("stripe_card_updated_at"),
+                "card_on_file": True,
+                "card_shared_from": source_id,
+            }
+        )
+        out.append(m["id"])
+    return out
 
 
 def verify_patient(

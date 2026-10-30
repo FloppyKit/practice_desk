@@ -41,6 +41,9 @@ COLUMNS = (
     "sms_consent",
     "sms_consent_at",
     "sms_consent_source",
+    "intake_url",
+    "intake_minted_at",
+    "card_shared_from",
     "created_at",
     "updated_at",
 )
@@ -113,6 +116,10 @@ def _init(con: sqlite3.Connection) -> None:
         if col not in cols:
             # Text consent on file: NULL unknown, 1 yes, 0 no (when and where it was given).
             con.execute(f"ALTER TABLE clients ADD COLUMN {col} {typ}")
+    for col in ("intake_url", "intake_minted_at", "card_shared_from"):
+        if col not in cols:
+            # Per-client intake link (+ when minted); card_shared_from = family member whose card we use.
+            con.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_email ON clients(email)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone_e164)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(display_name)")
@@ -228,6 +235,46 @@ def set_sms_consent(client_id: str, yes: bool, source: str) -> None:
             (1 if yes else 0, _now(), source[:20], _now(), client_id),
         )
         con.commit()
+
+
+def set_intake_link(client_id: str, url: str) -> None:
+    with connect() as con:
+        con.execute(
+            "UPDATE clients SET intake_url=?, intake_minted_at=?, updated_at=? WHERE id=?",
+            (url, _now(), _now(), client_id),
+        )
+        con.commit()
+
+
+def list_by_email(email: str) -> list[dict[str, Any]]:
+    em = (email or "").strip().lower()
+    if not em:
+        return []
+    with connect() as con:
+        rows = con.execute("SELECT * FROM clients WHERE lower(trim(email)) = ? ORDER BY created_at", (em,)).fetchall()
+    return [r for r in (_row(x) for x in rows) if r]
+
+
+def family_of(row: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Other client rows sharing this row's email AND phone (both non-empty)."""
+    em = str((row or {}).get("email") or "").strip().lower()
+    ph = str((row or {}).get("phone_e164") or "").strip()
+    if not em or not ph:
+        return []
+    return [r for r in list_by_email(em) if r["id"] != row["id"] and str(r.get("phone_e164") or "").strip() == ph]
+
+
+def set_sms_consent_by_phone(e164: str, yes: bool, source: str) -> int:
+    ph = (e164 or "").strip()
+    if not ph:
+        return 0
+    with connect() as con:
+        cur = con.execute(
+            "UPDATE clients SET sms_consent=?, sms_consent_at=?, sms_consent_source=?, updated_at=? WHERE phone_e164=?",
+            (1 if yes else 0, _now(), source[:20], _now(), ph),
+        )
+        con.commit()
+        return int(cur.rowcount or 0)
 
 
 def upsert(fields: dict[str, Any]) -> dict[str, Any]:

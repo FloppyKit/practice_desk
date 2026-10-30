@@ -366,6 +366,62 @@ def ingest_spruce_item(item: dict[str, Any]) -> str:
     return apply_spruce_item(row, item)
 
 
+SMS_STOP_WORDS = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit", "optout", "opt out", "revoke"}
+SMS_START_WORDS = {"start", "unstop", "subscribe"}
+
+
+def _phones_in(obj: Any, out: list[str]) -> list[str]:
+    """Collect phone endpoints (E.164 rawValue) anywhere under a Spruce conversation object."""
+    if isinstance(obj, dict):
+        ch = str(obj.get("channel") or "").lower()
+        raw = str(obj.get("rawValue") or "")
+        if ch in ("phone", "sms", "voice") and raw.startswith("+") and not obj.get("isInternal"):
+            out.append(raw)
+        for v in obj.values():
+            _phones_in(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            _phones_in(v, out)
+    return out
+
+
+def apply_sms_keyword(item: dict[str, Any], *, fetch: Callable[[str], dict[str, Any]] | None = None) -> str:
+    """Inbound STOP/UNSUBSCRIBE/... turns text consent off; START turns it back on. Returns 'off'/'on'/''."""
+    if str(item.get("direction") or "").lower() != "inbound":
+        return ""
+    word = re.sub(r"[^a-z ]", "", _item_text(item).lower()).strip()
+    if word in SMS_STOP_WORDS:
+        yes = False
+    elif word in SMS_START_WORDS:
+        yes = True
+    else:
+        return ""
+    conv = item.get("conversation") if isinstance(item.get("conversation"), dict) else {}
+    phones = _phones_in(conv.get("externalParticipants") or [], [])
+    if not phones:
+        cid = str(item.get("conversationId") or conv.get("id") or "")
+        try:
+            if fetch is not None:
+                full = fetch(cid)
+            else:
+                from urllib.parse import quote
+
+                from .spruce_api import spruce_request
+
+                _st, full = spruce_request("GET", f"/conversations/{quote(cid, safe='')}")
+            phones = _phones_in((full or {}).get("externalParticipants") or [], [])
+        except Exception:
+            phones = []
+    if not phones:
+        return ""
+    from . import clients_db
+
+    n = 0
+    for ph in dict.fromkeys(phones):
+        n += clients_db.set_sms_consent_by_phone(ph, yes, "spruce")
+    return ("on" if yes else "off") if n else ""
+
+
 def handle_spruce_webhook(raw: bytes, signature_b64: str) -> dict[str, Any]:
     """Verify Spruce's signature, then copy a staff note into the website thread."""
     from .spruce_api import verify_webhook_signature
@@ -382,8 +438,12 @@ def handle_spruce_webhook(raw: bytes, signature_b64: str) -> dict[str, Any]:
     obj = (event.get("data") or {}).get("object") if isinstance(event.get("data"), dict) else None
     if not isinstance(obj, dict):
         return {"ok": True, "accepted": 0}
+    consent = apply_sms_keyword(obj)
     result = ingest_spruce_item(obj)
-    return {"ok": True, "accepted": 1 if result == "reply" else 0, "result": result}
+    out = {"ok": True, "accepted": 1 if result == "reply" else 0, "result": result}
+    if consent:
+        out["sms_consent"] = consent
+    return out
 
 
 def _pull_spruce_items(

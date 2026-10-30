@@ -185,11 +185,13 @@ def _prefilled_book_url(
     return f"{PUBLIC_BASE}/{slug}" + (("?" + urlencode(q)) if q else "")
 
 
-def _mint_intake_url(email: str, name: str = "", forms: list[str] | None = None) -> str:
+def _mint_intake_url(email: str, name: str = "", forms: list[str] | None = None, client_id: str = "") -> str:
+    """Mint a personal intake link. With client_id the link is bound to that client row and saved on it."""
     payload = {
         "secret": INTAKE_MINT_SECRET,
         "email": email,
         "name": name,
+        "clientId": client_id,
         "sendEmail": False,
         "ttlDays": 21,
         "forms": forms or ["personal", "consents", "card-auth"],
@@ -211,7 +213,35 @@ def _mint_intake_url(email: str, name: str = "", forms: list[str] | None = None)
     url = str((data or {}).get("url") or "")
     if not url:
         raise HTTPException(502, "intake mint returned no url")
+    if client_id:
+        clients_db.set_intake_link(client_id, url)
     return url
+
+
+def mint_client_intake(row: dict[str, Any], ttl_days: int = 21) -> str:
+    """Per-client link (client id in the token), stored on the row with minted_at."""
+    em = str(row.get("email") or "").strip().lower()
+    if not em:
+        raise HTTPException(400, "client has no email")
+    return _mint_intake_url(em, str(row.get("display_name") or ""), client_id=str(row["id"]))
+
+
+def _client_for_booking(email: str, phone: str = "", name: str = "") -> dict[str, Any] | None:
+    """Existing client for a booking. Shared family emails: prefer the matching name, then phone."""
+    rows = clients_db.list_by_email(email)
+    if len(rows) <= 1:
+        return rows[0] if rows else None
+    nm = (name or "").strip().lower()
+    for r in rows:
+        if nm and nm == str(r.get("display_name") or "").strip().lower():
+            return r
+    from .notify import normalize_e164
+
+    ph = normalize_e164(phone) if phone else ""
+    for r in rows:
+        if ph and ph == r.get("phone_e164"):
+            return r
+    return rows[0]
 
 
 class BookRequest(BaseModel):
@@ -663,7 +693,7 @@ def _plan_hold(req: "BookRequest", start: datetime, *, phone: bool) -> dict[str,
         print("hold_plan_fail", type(e).__name__, flush=True)
         return None
     try:
-        intake_url = _mint_intake_url(str(req.email), req.name)
+        intake_url = _mint_intake_url(str(req.email), req.name, client_id=str(row["id"]))
     except Exception as e:
         print("hold_mint_fail", type(e).__name__, flush=True)
         intake_url = f"{SITE_PUBLIC}/forms"
@@ -680,14 +710,15 @@ def _plan_hold(req: "BookRequest", start: datetime, *, phone: bool) -> dict[str,
     }
 
 
-def _desk_intake_link(email: str) -> str:
-    """Desk-booked new client (no hold): still send the intake cascade link unless intake is done."""
+def _desk_intake_link(email: str, client_id: str = "") -> str:
+    """Booked client with intake unfinished: send the (per-client) intake cascade link, no hold."""
     from . import onboarding
 
     try:
-        if onboarding.status(email=email)["complete"]:
+        if onboarding.status(client_id=client_id, email=email)["complete"]:
             return ""
-        return _mint_intake_url(email)
+        row = clients_db.get_by_id(client_id) if client_id else None
+        return _mint_intake_url(email, str((row or {}).get("display_name") or ""), client_id=client_id)
     except Exception:
         return ""
 
@@ -806,12 +837,15 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
         hold = _plan_hold(req, start, phone=_phone_channel(request) or src in ("voice", "chat", "agent"))
     elif req.event_type == HOLD_EVENT_TYPE and src == "desk" and not occ:
         desk_intake_url = _desk_intake_link(str(req.email))
-    elif req.event_type != HOLD_EVENT_TYPE and _phone_channel(request) and not occ:
-        # Existing client booking by phone with intake unfinished: send the cascade link, no hold.
-        from . import onboarding
-
-        if onboarding.find_client(str(req.email)):
-            desk_intake_url = _desk_intake_link(str(req.email))
+    elif req.event_type != HOLD_EVENT_TYPE and not occ:
+        # Existing client booking (phone or web) with intake unfinished: the updated personal intake
+        # link goes in the confirmation automatically, no hold.
+        try:
+            _bk = _client_for_booking(str(req.email), req.phone or "", req.name)
+        except Exception:
+            _bk = None
+        if _bk:
+            desk_intake_url = _desk_intake_link(str(req.email), str(_bk["id"]))
 
     # Summary shows client visit length; calendar event span may be cal_dur (e.g. 120)
     if occ:
@@ -926,12 +960,18 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
     except Exception as e:
         raise HTTPException(502, f"Calendar write failed: {e}") from e
 
-    if _phone_channel(request) and req.sms_consent is not None:
-        # Save the caller's text answer on the client record (new hold client or existing).
+    if req.sms_consent is not None:
+        # Save the text answer on the client record (phone line or web checkbox; new hold client or existing).
         cid = (hold or {}).get("client_id") or (on_file or {}).get("id")
+        if not cid:
+            try:
+                cid = (_client_for_booking(str(req.email), req.phone or "", req.name) or {}).get("id")
+            except Exception:
+                cid = None
         if cid:
             try:
-                clients_db.set_sms_consent(cid, bool(req.sms_consent), "voice")
+                clients_db.set_sms_consent(cid, bool(req.sms_consent) and bool((req.phone or "").strip()),
+                                           "voice" if _phone_channel(request) else "web")
             except Exception as e:
                 print("sms_consent_save_fail", type(e).__name__, flush=True)
 
@@ -1995,7 +2035,15 @@ def api_internal_intake_submitted(req: InternalIntakeRequest, request: Request, 
         raise HTTPException(400, "unknown form")
     link = req.meta.get("linkAuth") or {}
     email = str((link.get("email") if link.get("verified") else "") or req.fields.get("email") or "").strip().lower()
-    rec = onboarding.record_submission(form=form, email=email, link_verified=bool(link.get("verified")))
+    cid = str((link.get("clientId") if link.get("verified") else "") or "").strip()
+    rec = onboarding.record_submission(form=form, email=email, link_verified=bool(link.get("verified")),
+                                       client_id=cid)
+    if form == "personal" and rec["client_id"] and "smsConsent" in req.fields:
+        # Web intake text-consent checkbox: same store as the phone agent.
+        try:
+            clients_db.set_sms_consent(rec["client_id"], bool(req.fields.get("smsConsent")), "web")
+        except Exception as e:
+            print("sms_consent_save_fail", type(e).__name__, flush=True)
     background_tasks.add_task(_file_intake_pdf, rec["id"], rec["client_id"], form, dict(req.fields),
                               dict(req.meta), rec["received_at"])
     # Confirming a hold patches two calendars and sends notices (slow); do it after responding so the
@@ -2017,15 +2065,28 @@ def _check_client_bg(client_id: str) -> list[str]:
         return []
 
 
+@app.post("/api/desk/intake/link/{client_id}")
+def api_desk_intake_link(client_id: str, request: Request, secret: str = Query(default="")):
+    """Staff: mint (or re-mint) this client's personal intake link and save it on the row. Sends nothing."""
+    _require_staff(secret, request)
+    row = clients_db.get_by_id(client_id)
+    if not row:
+        raise HTTPException(404, "no client")
+    url = mint_client_intake(row)
+    got = clients_db.get_by_id(client_id) or {}
+    return {"ok": True, "url": url, "minted_at": got.get("intake_minted_at")}
+
+
 @app.get("/api/internal/intake/progress")
-def api_internal_intake_progress(request: Request, email: str = "", secret: str = Query(default="")):
+def api_internal_intake_progress(request: Request, email: str = "", client_id: str = "",
+                                 secret: str = Query(default="")):
     """Site cascade: which steps are done for the emailed-link session (resume at first incomplete),
     plus name/phone to prefill. Staff secret (site server only)."""
     from . import onboarding
 
     _require_staff(secret, request)
-    row = onboarding.find_client(email)
-    st = onboarding.status(email=email)
+    row = onboarding.find_client(email, client_id)
+    st = onboarding.status(client_id=(row or {}).get("id") or "", email=email)
     holds = onboarding.holds_for_client(st["client_id"]) if st["client_id"] else []
     h = holds[0] if holds else None
     return {
@@ -2088,6 +2149,7 @@ def api_desk_onboarding_status(request: Request, secret: str = Query(default="")
 
 
 class InternalCardRequest(BaseModel):
+    client_id: str = ""
     email: str = ""
     customer_id: str = ""
     payment_method_id: str = ""
@@ -2104,6 +2166,7 @@ def api_internal_client_card(req: InternalCardRequest, request: Request, secret:
 
     _require_staff(secret, request)
     out = record_card_on_file(
+        client_id=req.client_id,
         email=req.email,
         customer_id=req.customer_id,
         payment_method_id=req.payment_method_id,
@@ -2115,8 +2178,9 @@ def api_internal_client_card(req: InternalCardRequest, request: Request, secret:
     try:
         from . import onboarding
 
-        out["confirmed_holds"] = onboarding.check_client(_onboarding_fx(), email=req.email)
-        row = onboarding.find_client(req.email)
+        cid = str(out.get("client_id") or req.client_id or "")
+        out["confirmed_holds"] = onboarding.check_client(_onboarding_fx(), client_id=cid, email=req.email)
+        row = onboarding.find_client(req.email, cid)
         if row and row.get("id"):
             _maybe_send_copies(str(row["id"]))
     except Exception as e:

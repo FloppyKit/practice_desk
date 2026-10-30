@@ -125,17 +125,36 @@ def set_pdf(sub_id: str, *, path: str = "", status: str = "") -> None:
         con.execute("UPDATE intake_submissions SET pdf_path=?, pdf_status=? WHERE id=?", (path, status, sub_id))
 
 
+def _shared_card_auth(row: dict[str, Any] | None) -> bool:
+    """Family card: the signed card authorization of the member whose card is shared covers this row."""
+    src = str((row or {}).get("card_shared_from") or "")
+    if not src or not (row or {}).get("card_on_file"):
+        return False
+    with _con() as con:
+        r = con.execute(
+            "SELECT 1 FROM intake_submissions WHERE client_id = ? AND form = 'card-auth' LIMIT 1", (src,)
+        ).fetchone()
+    return bool(r)
+
+
 def status(client_id: str = "", email: str = "") -> dict[str, Any]:
     row = find_client(email, client_id)
     cid = (row or {}).get("id") or ""
     em = ((row or {}).get("email") or email or "").strip().lower()
     out: dict[str, Any] = {f: {"done": False, "at": "", "pdf": ""} for f in FORMS}
     with _con() as con:
-        rows = con.execute(
-            "SELECT form, received_at, pdf_path FROM intake_submissions"
-            " WHERE (client_id = ? AND ? != '') OR (lower(email) = ? AND ? != '') ORDER BY received_at",
-            (cid, cid, em, em),
-        ).fetchall()
+        if cid:
+            # Per client row: family members share an email, so never match on email here.
+            rows = con.execute(
+                "SELECT form, received_at, pdf_path FROM intake_submissions WHERE client_id = ? ORDER BY received_at",
+                (cid,),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT form, received_at, pdf_path FROM intake_submissions"
+                " WHERE lower(email) = ? AND ? != '' ORDER BY received_at",
+                (em, em),
+            ).fetchall()
     for r in rows:
         if r["form"] in out:
             out[r["form"]] = {"done": True, "at": r["received_at"], "pdf": r["pdf_path"] or ""}
@@ -144,7 +163,7 @@ def status(client_id: str = "", email: str = "") -> dict[str, Any]:
         "personal": out["personal"]["done"],
         "consents": out["consents"]["done"],
         "card": card,
-        "card_auth": out["card-auth"]["done"],
+        "card_auth": out["card-auth"]["done"] or _shared_card_auth(row),
         "roi": out["roi"]["done"],
     }
     return {
