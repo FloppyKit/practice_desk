@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import quote
 
 LOGO_CID = "cid:logo.png"
-LOGO_HTTPS = "https://book.psycharts.org/api/practice/logo"
+LOGO_HTTPS = "https://book.drmattbrown.com/api/practice/logo"
 
 HOST_NAME = "Dr. Matt Brown"
 HOST_SHORT = "Dr. B"
@@ -44,7 +44,7 @@ def _identity() -> dict[str, str]:
 FORMS_URL = "https://drmattbrown.com/forms"
 ROI_URL = "https://drmattbrown.com/forms/roi"
 PAY_URL = "https://drmattbrown.com/pay"
-BOOK_URL = "https://book.psycharts.org"
+BOOK_URL = "https://book.drmattbrown.com"
 
 # Staff compose + notify `template=` names
 SUITE: dict[str, str] = {
@@ -707,7 +707,7 @@ def confirm_sms(
 
 def book_link_sms() -> str:
     return (
-        "Dr. Matt Brown: Book a visit at https://book.psycharts.org "
+        "Dr. Matt Brown: Book a visit at https://book.drmattbrown.com "
         "Reply STOP to opt out, HELP for help. Msg & data rates may apply."
     )
 
@@ -1226,14 +1226,14 @@ def preview_samples(logo_src: str = LOGO_HTTPS) -> dict[str, tuple[str, str, str
         email="alex@example.com",
         title="Follow-up",
         when_label="Tue Aug 18 · 2:00 PM",
-        cancel_url="https://book.psycharts.org/cancel?token=preview",
-        rebook_url="https://book.psycharts.org/follow-up",
+        cancel_url="https://book.drmattbrown.com/cancel?token=preview",
+        rebook_url="https://book.drmattbrown.com/follow-up",
         price_label="$265",
         location_line="Video visit (telehealth) · https://meet.drmattbrown.com",
         duration_minutes=30,
         start_iso="2026-08-18T14:00:00-05:00",
         timezone=DEFAULT_TZ,
-        ics_url="https://book.psycharts.org/cal/visit.ics?token=preview",
+        ics_url="https://book.drmattbrown.com/cal/visit.ics?token=preview",
         logo_src=logo_src,
     )
     out: dict[str, tuple[str, str, str]] = {

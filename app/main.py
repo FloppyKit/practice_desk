@@ -94,7 +94,7 @@ app = FastAPI(title="Psych Arts Booker", version=VERSION, lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://book.psycharts.org",
+        "https://book.drmattbrown.com",
         "https://live.psycharts.org",
         "https://drmattbrown.com",
         "https://drmattbrown.com",
@@ -115,7 +115,7 @@ STATIC = Path(__file__).resolve().parent.parent / "static"
 if STATIC.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
-PUBLIC_BASE = os.environ.get("PUBLIC_BASE_URL", "https://book.psycharts.org").rstrip("/")
+PUBLIC_BASE = os.environ.get("PUBLIC_BASE_URL", "https://book.drmattbrown.com").rstrip("/")
 REMIND_SECRET = os.environ.get("REMIND_CRON_SECRET", "")
 SITE_PUBLIC = os.environ.get("SITE_PUBLIC_URL", "https://drmattbrown.com").rstrip("/")
 INTAKE_MINT_URL = os.environ.get(

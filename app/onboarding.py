@@ -259,7 +259,7 @@ class Effects:
         send_email: Callable[..., Any],
         send_sms: Callable[..., Any],
         staff_email: Callable[[str, str], Any] | None = None,
-        rebook_url: str = "https://book.psycharts.org/new-client",
+        rebook_url: str = "https://book.drmattbrown.com/new-client",
     ) -> None:
         self.get_event = get_event
         self.patch_event = patch_event

@@ -588,10 +588,10 @@
     }
   ],
   "defaults": {
-    "book_url": "https://book.psycharts.org/new-client",
-    "follow_url": "https://book.psycharts.org/follow-up",
-    "manage_url": "https://book.psycharts.org",
-    "pay_url": "https://book.psycharts.org",
+    "book_url": "https://book.drmattbrown.com/new-client",
+    "follow_url": "https://book.drmattbrown.com/follow-up",
+    "manage_url": "https://book.drmattbrown.com",
+    "pay_url": "https://book.drmattbrown.com",
     "forms_url": "/forms",
     "join_url": "https://meet.drmattbrown.com",
     "phone": "773-312-3858"

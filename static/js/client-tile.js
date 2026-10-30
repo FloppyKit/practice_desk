@@ -12,7 +12,7 @@
     return String(cfg().apiBase || "").replace(/\/$/, "");
   }
   function deskUrl() {
-    return String(cfg().deskUrl || "https://book.psycharts.org/desk").replace(/\/$/, "");
+    return String(cfg().deskUrl || "https://book.drmattbrown.com/desk").replace(/\/$/, "");
   }
   function secret() {
     if (cfg().secret) return cfg().secret;

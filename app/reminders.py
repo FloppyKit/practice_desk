@@ -25,7 +25,7 @@ from .tokens import mint_cancel_token
 
 log = logging.getLogger("booker.reminders")
 
-PUBLIC_BASE = os.environ.get("PUBLIC_BASE_URL", "https://book.psycharts.org").rstrip("/")
+PUBLIC_BASE = os.environ.get("PUBLIC_BASE_URL", "https://book.drmattbrown.com").rstrip("/")
 # Window: look ahead this many hours for candidates
 LOOKAHEAD_HOURS = float(os.environ.get("REMINDER_LOOKAHEAD_HOURS", "26"))
 REM_24H_HOURS = float(os.environ.get("REMINDER_24H_HOURS", "24"))

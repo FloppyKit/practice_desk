@@ -17,7 +17,7 @@ NOTIFY_TOKEN = os.environ.get("NOTIFY_WEBHOOK_TOKEN", "")
 STAFF_NOTIFY = os.environ.get("STAFF_NOTIFY_EMAIL", "matt@drmattbrown.com")
 # Comma/semicolon separated extras always notified (in addition to STAFF_NOTIFY_EMAIL)
 STAFF_NOTIFY_EXTRA = os.environ.get("STAFF_NOTIFY_EXTRA", "")
-PUBLIC_BASE = os.environ.get("PUBLIC_BASE_URL", "https://book.psycharts.org").rstrip("/")
+PUBLIC_BASE = os.environ.get("PUBLIC_BASE_URL", "https://book.drmattbrown.com").rstrip("/")
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
