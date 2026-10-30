@@ -45,9 +45,9 @@ APPT_COLUMNS: dict[str, list[str]] = {
     "client_name": ["Client"],
     "email": ["Email", "ClientEmail"],      # not in the 2026-10 export; used if present
     "phone": ["Phone", "ClientPhone"],      # not in the 2026-10 export; used if present
-    "start": ["StartDate"],                 # wall-clock "YYYY-MM-DD HH:MM:SS" in TimeZone
+    "start": ["StartDate"],                 # wall-clock "YYYY-MM-DD HH:MM:SS", practice time
     "end": ["EndDate"],
-    "tz": ["TimeZone"],
+    "tz": ["TimeZone"],                     # stored for reference only; NOT used for conversion
     "service": ["Service"],
     "code": ["Code"],
     "price": ["Price"],
@@ -56,7 +56,8 @@ APPT_COLUMNS: dict[str, list[str]] = {
     "duration": ["DurationInMinutes"],
     "dx": ["DiagnosisCodes"],
 }
-APPT_DEFAULT_TZ = "America/Chicago"
+# All Carepatron appointment times are practice (Central) wall-clock, whatever TimeZone says (Matt, 2026-10-29).
+APPT_TZ = "America/Chicago"
 
 # Clinical / admin CSV fields kept verbatim in imported_client_clinical (side table).
 CLINICAL_FIELDS: dict[str, str] = {
@@ -391,11 +392,11 @@ def to_utc(local: str, tz: str) -> str:
     except ValueError:
         return ""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=ZoneInfo(tz or APPT_DEFAULT_TZ))
+        dt = dt.replace(tzinfo=ZoneInfo(tz or APPT_TZ))
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def load_appointments(con, src: Path, rep: Report) -> None:
+def load_appointments(con, srcs: "Path | list[Path]", rep: Report) -> None:
     """One row per (Carepatron appointment id, client). Repeated rows for the same pair
     (one per service/invoice line in the export) are merged into lines_json."""
     by_cp, by_name = _client_index(con)
@@ -406,9 +407,12 @@ def load_appointments(con, src: Path, rep: Report) -> None:
     groups: dict[tuple[str, str], list[tuple[str, dict[str, str], dict[str, str]]]] = {}
     forbidden = {_key(c) for c in FORBIDDEN_COLUMNS}
     now = _now()
-    for ref, raw in _appt_rows(src):
+    srcs = srcs if isinstance(srcs, list) else [srcs]
+    files_for: dict[tuple[str, str], set[int]] = {}
+    rows = ((i, ref, raw) for i, src in enumerate(srcs) for ref, raw in _appt_rows(src))
+    for fi, ref, raw in rows:
         raw = {k: v for k, v in raw.items() if k and _key(k) not in forbidden}
-        rep.inc("appointments", "in")
+        rep.inc("appointments", "in"); rep.inc("appointments", f"in_file{fi + 1}")
         p = _pick(raw, APPT_COLUMNS)
         rid = p["appointment_id"] or ref
         if not p["contact_id"] and not p["client_name"] and not p["email"]:
@@ -418,16 +422,28 @@ def load_appointments(con, src: Path, rep: Report) -> None:
         cp = cp or by_phone.get(norm_phone(p["phone"]), "") if p["phone"] else cp
         cp = cp or by_name.get(_key(p["client_name"]), "")
         if not cp or cp not in by_cp:
-            rep.gap("appointments", rid, "client id not found"); continue
+            fut = to_utc(p["start"], APPT_TZ) > now
+            rep.gap("appointments", rid, "client id not found" + (" (future)" if fut else "")); continue
+        if (rid, cp) in files_for and fi not in files_for[(rid, cp)]:
+            rep.inc("appointments", "deduped_across_files")
+        files_for.setdefault((rid, cp), set()).add(fi)
         groups.setdefault((rid, cp), []).append((ref, p, raw))
     for (rid, cp), items in groups.items():
         rep.inc("appointments", "deduped", len(items) - 1)
         p = items[0][1]
-        tz = p["tz"] or APPT_DEFAULT_TZ
-        start_utc, end_utc = to_utc(p["start"], tz), to_utc(p["end"], tz)
+        tz = p["tz"]  # original label, reference only
+        start_utc, end_utc = to_utc(p["start"], APPT_TZ), to_utc(p["end"], APPT_TZ)
         if not start_utc:
             rep.gap("appointments", rid, "unparseable start"); continue
-        lines = [{k: q[k] for k in ("service", "code", "price", "invoice", "dx")} for _, q, _ in items]
+        seen, lines = set(), []
+        for _, q, _ in items:  # identical lines from overlapping files collapse
+            line = {k: q[k] for k in ("service", "code", "price", "invoice", "dx")}
+            if json.dumps(line, sort_keys=True) not in seen:
+                seen.add(json.dumps(line, sort_keys=True)); lines.append(line)
+        raws = []
+        for _, _, r in items:
+            if r not in raws:
+                raws.append(r)
         aid = hashlib.sha256(f"{rid}\x1f{cp}".encode()).hexdigest()[:32]
         cur = con.execute(
             "INSERT OR IGNORE INTO imported_appointments (id,client_id,carepatron_contact_id,carepatron_appointment_id,"
@@ -435,10 +451,12 @@ def load_appointments(con, src: Path, rep: Report) -> None:
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (aid, by_cp[cp], cp, rid, p["start"], p["end"], tz, start_utc, end_utc, p["service"], p["status"],
              int(p["duration"]) if p["duration"].isdigit() else None, json.dumps(lines),
-             json.dumps([r for _, _, r in items], sort_keys=True), _now()))
+             json.dumps(raws, sort_keys=True), _now()))
         rep.inc("appointments", "created" if cur.rowcount else "unchanged"); rep.inc("appointments", "out")
         rep.inc("appointments", "status_" + (p["status"] or "blank"))
         rep.inc("appointments", "future" if start_utc > now else "past")
+        if start_utc > now:
+            rep.inc("appointments", "future_month_" + p["start"][:7])
 
 
 def count_pdfs(folder: Path, rep: Report) -> list[Path]:
@@ -557,7 +575,7 @@ def run(*, db: Path, clients_csv: Path | None, notes_dir: Path | None, appts: Pa
         if clients_csv: load_clients(con, clients_csv, rep)
         if apply_clinical_fields: apply_clinical(con, rep)
         if notes_dir: load_notes(con, notes_dir, rep)
-        if appts: load_appointments(con, appts, rep)
+        if appts: load_appointments(con, appts if isinstance(appts, list) else [appts], rep)
         if pdf_dir: count_pdfs(pdf_dir, rep)
         con.commit()
         out_dir.mkdir(parents=True, exist_ok=True)

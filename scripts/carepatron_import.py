@@ -15,7 +15,7 @@ def main() -> int:
     ap.add_argument("--db", required=True, type=Path)
     ap.add_argument("--clients", type=Path)
     ap.add_argument("--notes", type=Path, help="folder of .md notes")
-    ap.add_argument("--appointments", type=Path, help="CSV or zip of CSVs")
+    ap.add_argument("--appointments", type=Path, nargs="+", help="one or more CSVs / zips (deduped across files)")
     ap.add_argument("--pdfs", type=Path)
     ap.add_argument("--out", type=Path, default=Path("carepatron-import-report"))
     ap.add_argument("--apply", action="store_true", help="write to --db (default: dry run on a copy)")

@@ -12,9 +12,9 @@ from app import carepatron_import as ci
 
 CSV_HDR = ["Id", "First name", "Last name", "Preferred name", "Email", "Phone number", "Date of birth", "Status", "DX Code", "Medications", "Ins Info", "Card Number", "Exp Date", "CVC"]
 ROWS = [
-    ["cp-001", "Testy", "McFakerson", "", "TESTY@example.test", "'+13175550101", "01/02/1980", "Active", "f411, F32.A; U071", "sertraline 50 mg\nhydroxyzine 25 mg prn", "FakeCo 123", "4111111111111111", "12/29", "987"],
+    ["cp-001", "Testy", "McFakerson", "", "TESTY@example.test", "'+13175550101", "01/02/1980", "Active", "f411, F32.A; U071", "sertraline 50 mg\nhydroxyzine 25 mg prn", "FakeCo 123", "4111111111111111", "12/29", "cvcQ987"],
     ["cp-002", "Ada", "Placeholder", "Addie", "ada@example.test", "317.555.0102", "1990-03-04", "Active", "", "", "", "", "", ""],
-    ["C0FFEE03-0000", "Bob", "Nobody", "", "", "317-555-0103", "5/6/1975", "Active", "F90.0", "", "", "5555444433332222", "01/30", "123"],
+    ["C0FFEE03-0000", "Bob", "Nobody", "", "", "317-555-0103", "5/6/1975", "Active", "F90.0", "", "", "5555444433332222", "01/30", "cvcQ123"],
 ]
 
 
@@ -163,7 +163,7 @@ def test_cp_card_columns_never_stored():
     d = _fixture()
     _run(d)
     _run(d, apply=False, do_extract=True, call=lambda t: ('{"dx_codes": [], "medications": []}', 1, 1))
-    secrets = ["4111111111111111", "5555444433332222", "12/29", "01/30", "987", "Card Number", "CVC", "Exp Date"]
+    secrets = ["4111111111111111", "5555444433332222", "12/29", "01/30", "cvcQ987", "cvcQ123", "Card Number", "CVC", "Exp Date"]
     blobs = [p.read_text() for p in (d / "out").iterdir()]
     con = sqlite3.connect(d / "db.sqlite")
     for (tbl,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
@@ -178,6 +178,7 @@ def test_cp_card_columns_never_stored():
 def test_cp_appointments_tz_dedupe_and_blocks():
     assert ci.to_utc("2026-01-05 10:00:00", "America/Chicago") == "2026-01-05T16:00:00+00:00"
     assert ci.to_utc("2026-07-01 09:00:00", "US/Central") == "2026-07-01T14:00:00+00:00"
+    assert ci.APPT_TZ == "America/Chicago"
     d = _fixture()
     r = _run(d)
     c = r.counts["appointments"]
@@ -190,3 +191,32 @@ def test_cp_appointments_tz_dedupe_and_blocks():
     assert [x["code"] for x in json.loads(row[0][3])] == ["99214", "90833"]
     assert "4111" not in row[0][4] and "Card Number" not in row[0][4]
     assert _run(d).counts["appointments"].get("created", 0) == 0
+
+
+def test_cp_appointments_practice_tz_and_cross_file_dedupe():
+    d = _fixture()
+    src = list(csv.reader(open(d / "appts.csv")))
+    hdr, overlap = src[0], src[1]
+    blank = dict.fromkeys(hdr, "")
+    def row(**kw):
+        r = dict(blank, **kw); return [r[h] for h in hdr]
+    with open(d / "future.csv", "w", newline="") as f:
+        w = csv.writer(f); w.writerow(hdr); w.writerow(overlap)  # overlapping date range: same row again
+        w.writerow(row(AppointmentId="ap-9", StartDate="2099-02-10 09:00:00", EndDate="2099-02-10 09:30:00",
+                       ClientId="cp-001", Status="Confirmed", Service="Follow-up", TimeZone="America/New_York"))
+        w.writerow(row(AppointmentId="ap-8", StartDate="2099-04-01 09:00:00", ClientId="cp-404",
+                       Status="Confirmed", TimeZone="America/Chicago"))
+    run = lambda: ci.run(db=d / "db.sqlite", clients_csv=d / "clients.csv", notes_dir=None,
+                         appts=[d / "appts.csv", d / "future.csv"], pdf_dir=None, out_dir=d / "out", apply=True)
+    c = run().counts["appointments"]
+    assert c["in"] == 8 and c["in_file1"] == 5 and c["in_file2"] == 3
+    assert c["deduped_across_files"] == 1 and c["out"] == 3 and c["future"] == 1 and c["future_month_2099-02"] == 1
+    # NY label is reference only: 09:00 Central (CST) = 15:00 UTC
+    assert _q(d, "SELECT tz, start_utc FROM imported_appointments WHERE carepatron_appointment_id='ap-9'") == [
+        ("America/New_York", "2099-02-10T15:00:00+00:00")]
+    assert len(json.loads(_q(d, "SELECT lines_json FROM imported_appointments WHERE carepatron_appointment_id='ap-1'")[0][0])) == 2
+    gaps = json.loads((d / "out" / "reconciliation.json").read_text())["gaps"]
+    assert {"type": "appointments", "ref": "ap-8", "reason": "client id not found (future)"} in gaps
+    before = _q(d, "SELECT * FROM imported_appointments ORDER BY id")
+    assert run().counts["appointments"].get("created", 0) == 0
+    assert [r[:-1] for r in _q(d, "SELECT * FROM imported_appointments ORDER BY id")] == [r[:-1] for r in before]
