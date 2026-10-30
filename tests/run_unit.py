@@ -28,6 +28,7 @@ from tests import (  # noqa: E402
     test_staff_auth,
     test_verify_codes,
     test_week_people,
+    test_uploads,
 )
 
 
@@ -42,6 +43,7 @@ def main() -> int:
         test_billing,
         test_chat_threads,
         test_week_people,
+        test_uploads,
         test_staff_auth,
         test_oss_hygiene,
         test_demo_store,

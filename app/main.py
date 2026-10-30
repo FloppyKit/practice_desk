@@ -1284,6 +1284,99 @@ def _verified_client(token: str) -> dict:
     return row
 
 
+
+_UPLOAD_LABEL = {"pdf": "PDF", "jpeg": "JPG image", "png": "PNG image", "heic": "HEIC photo",
+                 "docx": "Word document", "xlsx": "Excel spreadsheet"}
+
+
+def _upload_email(row: dict[str, Any], res: dict[str, Any], blob: bytes) -> None:
+    """Notice to the practice inbox (relay's fixed address). Attach when 8 MB or less."""
+    import base64
+    from . import uploads
+
+    label = _UPLOAD_LABEL.get(res.get("kind") or "", "file")
+    lines = [
+        "A patient sent a file through the portal chat.",
+        "",
+        f"Client: {row.get('name') or ''} ({row.get('id') or ''})",
+        f"Type: {label}, {res.get('size', 0) / 1048576:.1f} MB",
+        f"Filed to chart: {res.get('chart_path') or ''}",
+    ]
+    files = []
+    if len(blob) <= uploads.EMAIL_ATTACH_MAX:
+        files = [{"name": res.get("name") or "upload", "b64": base64.b64encode(blob).decode("ascii")}]
+    else:
+        lines.append("The file is over 8 MB, so it is not attached here; open it in the chart.")
+    try:
+        code, out = _notify_post("/mail/send", {"subject": "[Portal] File uploaded", "body": "\n".join(lines), "files": files})
+        uploads.log(str(row.get("id") or ""), len(blob), str(res.get("kind") or ""),
+                    "email_sent" if code < 400 and out.get("ok") else "email_failed")
+    except Exception:
+        uploads.log(str(row.get("id") or ""), len(blob), str(res.get("kind") or ""), "email_failed")
+
+
+@app.post("/api/public/portal/upload")
+async def api_public_portal_upload(
+    background_tasks: BackgroundTasks,
+    verify_token: str = Form(default=""),
+    thread: str = Form(default=""),
+    file: UploadFile = File(...),
+):
+    """Portal-only patient upload: verified patient, one file, sniffed + limited, filed to Chart/Uploads."""
+    import base64
+    from . import uploads
+    from .chat_threads import TOKEN_RE, post_message
+
+    if not verify_token.strip():
+        raise HTTPException(401, "Log in to your portal to send files.")
+    row = _verified_client(verify_token.strip())
+    blob = await file.read(uploads.MAX_BYTES + 1)
+
+    def _file_into_chart(name: str, data: bytes) -> str:
+        chart = _chart_for(row)
+        if not chart:
+            raise RuntimeError("no chart folder")
+        folder = _ensure_visit_notes(chart, "Uploads")
+        dest = folder + "/" + name
+        code, saved = _notify_post("/drive/save", {"path": dest, "b64": base64.b64encode(data).decode("ascii")})
+        if code >= 400 or not saved.get("ok"):
+            raise RuntimeError("drive save failed")
+        return dest
+
+    try:
+        res = uploads.handle(row, blob, file_into_chart=_file_into_chart)
+    except uploads.UploadError as e:
+        raise HTTPException(e.status, str(e)) from e
+
+    label = _UPLOAD_LABEL.get(res["kind"], "file")
+    mb = f"{res['size'] / 1048576:.1f}"
+    line = f"📎 Sent a {label} ({mb} MB). " + (
+        "This file is already in the chart." if res.get("duplicate") else "Filed privately to the chart."
+    )
+    thread_out = ""
+    try:
+        t = post_message(
+            body=line,
+            token=thread if TOKEN_RE.match(thread or "") else "",
+            label="Portal upload",
+            email=str(row.get("email") or ""),
+            name=str(row.get("name") or ""),
+        )
+        thread_out = str(t.get("token") or "")
+    except Exception:
+        uploads.log(str(row.get("id") or ""), res["size"], res["kind"], "thread_note_failed")
+    if not res.get("duplicate"):
+        background_tasks.add_task(_upload_email, row, res, blob)
+    return {
+        "ok": True,
+        "duplicate": bool(res.get("duplicate")),
+        "kind": res["kind"],
+        "size": res["size"],
+        "message": line,
+        "thread": thread_out,
+    }
+
+
 @app.post("/api/public/upcoming")
 def api_public_upcoming(req: PublicTokenRequest):
     """Next visits for a verified current patient. No chart."""
