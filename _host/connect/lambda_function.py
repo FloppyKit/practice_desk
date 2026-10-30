@@ -251,11 +251,13 @@ def create_visit(a, ctx):
 def notify_matt(a, ctx):
     m = (a.get("preferred_contact_method") or "phone").lower()
     if m not in ("phone", "sms", "email", "secure_chat"): return {"ok": False, "error": "bad preferred_contact_method"}
+    crisis = (a.get("urgency") or "").lower() == "crisis"
+    if crisis and not a.get("contact_value"): a["contact_value"] = ctx.get("caller", "") or "unknown"
     if m != "secure_chat" and not a.get("contact_value"): return {"ok": False, "error": "contact_value required"}
     if not a.get("summary"): return {"ok": False, "error": "summary required"}
     p = {"callId": ctx.get("contact_id", "connect"), "callerFrom": ctx.get("caller", ""),
          "caller_name": a.get("caller_name") or "Unknown", "preferred_contact_method": m,
-         "contact_value": a.get("contact_value") or "", "summary": a["summary"][:600],
+         "contact_value": a.get("contact_value") or "", "summary": (("CRISIS: caller was told 988 / 911. " if crisis else "") + a["summary"])[:600],
          "urgency": a.get("urgency") or "normal", "at": datetime.now(TZ).isoformat(), "source": "connect"}
     st, d = _http("POST", "/notify", p, {"X-Notify-Token": NOTIFY_TOKEN})
     ok = st == 200
