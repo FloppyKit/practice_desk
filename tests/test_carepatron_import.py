@@ -232,3 +232,19 @@ def test_cp_new_client_status_mapped_existing_kept():
     r = _run(d)
     assert r.counts["clients"]["kept_existing_email"] == 1
     assert _q(d, "SELECT status, email FROM clients WHERE carepatron_contact_id='cont-cp-001'") == [("inactive", "other@example.test")]
+
+
+def test_cp_review_clients_fully_skipped():
+    d = _fixture()
+    con = sqlite3.connect(d / "db.sqlite"); ci.ensure_schema(con)
+    con.execute("INSERT INTO clients (id, display_name, given_name, family_name, email, carepatron_contact_id, source) "
+                "VALUES ('o1','Other','Other','Person','testy@example.test','cont-someone-else','desk')")
+    con.commit(); con.close()
+    r = _run(d)
+    assert [x["ref"] for x in r.review] == ["cont-cp-001"]
+    assert _q(d, "SELECT count(*) FROM clients WHERE carepatron_contact_id='cont-cp-001'") == [(0,)]
+    assert _q(d, "SELECT count(*) FROM imported_notes WHERE carepatron_contact_id='cont-cp-001'") == [(0,)]
+    assert _q(d, "SELECT count(*) FROM imported_appointments WHERE carepatron_contact_id='cont-cp-001'") == [(0,)]
+    assert _q(d, "SELECT count(*) FROM imported_client_clinical WHERE source LIKE '%cont-cp-001'") == [(0,)]
+    assert _q(d, "SELECT email FROM clients WHERE id='o1'") == [("testy@example.test",)]
+    assert ("notes", "no matching client") in {(g["type"], g["reason"]) for g in r.gaps}
