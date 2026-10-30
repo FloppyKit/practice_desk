@@ -1556,3 +1556,8 @@ label.check input[type="checkbox"] { width: 1.375rem; height: 1.375rem; margin-t
 
 /* audit5: 44px theme toggle */
 .theme-toggle { width: 2.75rem !important; height: 2.75rem !important; }
+
+/* audit7 CLS: reserve ~5 week rows before the calendar is filled by JS */
+.cal-grid:empty {
+  aspect-ratio: 7 / 5;
+}
