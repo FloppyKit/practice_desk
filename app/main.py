@@ -5052,7 +5052,7 @@ def _book_page(slug: str) -> HTMLResponse:
 
 @app.get("/")
 def hub():
-    return _page("index.html")
+    return RedirectResponse("/new-client", status_code=302)
 
 
 @app.get("/new-client")
