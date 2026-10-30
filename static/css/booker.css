@@ -621,6 +621,7 @@ a:hover {
   flex-direction: column;
   gap: 0.5rem;
   max-height: 18rem;
+  min-height: 18rem; /* reserve space so slots loading doesn't shift layout (CLS) */
   overflow: auto;
   padding: 0.1rem 0.15rem 0.15rem 0;
   scrollbar-width: thin;

@@ -7,7 +7,9 @@
   <script>(function(){try{var k="dmb-theme";var s=localStorage.getItem(k);var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var t=(s==="light"||s==="dark")?s:(d?"dark":"light");var r=document.documentElement;if(t==="dark")r.classList.add("dark");else r.classList.remove("dark");r.style.colorScheme=t;}catch(e){}})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" /></noscript>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="stylesheet" href="/static/css/booker.css" />
   <title>New client visit · Dr. Matt Brown</title>
 </head>
@@ -40,12 +42,12 @@
           <div class="cal-weekdays" aria-hidden="true">
             <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
           </div>
-          <div class="cal-grid" id="cal-grid" role="grid" aria-label="Available dates"></div>
+          <div class="cal-grid" id="cal-grid" role="group" aria-label="Available dates"></div>
         </div>
         <div class="times-panel">
           <div class="times-header" id="times-header">Select a date</div>
           <p class="times-sub" id="times-sub">90-minute openings · Central Time</p>
-          <div id="slots" class="slots" role="listbox" aria-label="Available times"></div>
+          <div id="slots" class="slots" role="group" aria-label="Available times"></div>
         </div>
       </div>
 
@@ -86,7 +88,7 @@
 <label>Phone<input name="phone" type="tel" autocomplete="tel" placeholder="Optional — needed for SMS" /></label>
         <label class="check">
           <input name="sms_consent" type="checkbox" />
-          <span>I agree to receive SMS texts from Brown Psychiatric Services at this number for appointment reminders, scheduling, and care coordination. Message frequency varies. Message and data rates may apply. Reply STOP to cancel, HELP for help. Consent is not a condition of care. <a href="https://privacy.drmattbrown.com" target="_blank" rel="noopener">Privacy</a> · <a href="https://terms.drmattbrown.com" target="_blank" rel="noopener">Terms</a></span>
+          <span>I agree to receive SMS texts from Brown Psychiatric Services at this number for appointment reminders, scheduling, and care coordination. Message frequency varies. Message and data rates may apply. Reply STOP to cancel, HELP for help. Consent is not a condition of care. <a href="https://drmattbrown.com/privacy" target="_blank" rel="noopener">Privacy</a> · <a href="https://drmattbrown.com/terms" target="_blank" rel="noopener">Terms</a></span>
         </label>
 <label>Notes<textarea name="notes" rows="4" placeholder="Optional — non-clinical only"></textarea></label>
         <p class="hint" style="margin:0.25rem 0 0.75rem;font-size:0.9rem;opacity:0.8">Next you'll add a card on file (nothing is charged), then your personal info and consents — about 5–10 minutes. Your spot is held for 48 hours while you finish.</p>

@@ -1349,8 +1349,10 @@ async def api_public_portal_upload(
         raise HTTPException(e.status, str(e)) from e
 
     label = _UPLOAD_LABEL.get(res["kind"], "file")
-    mb = f"{res['size'] / 1048576:.1f}"
-    line = f"📎 Sent a {label} ({mb} MB). " + (
+    size = res["size"]
+    pretty = f"{size / 1048576:.1f} MB" if size >= 1048576 else f"{max(1, round(size / 1024))} KB"
+    article = "an" if label[:1].lower() in "aeiou" else "a"
+    line = f"📎 Sent {article} {label} ({pretty}). " + (
         "This file is already in the chart." if res.get("duplicate") else "Filed privately to the chart."
     )
     thread_out = ""
@@ -5141,6 +5143,11 @@ def _book_page(slug: str) -> HTMLResponse:
     out = out.replace('<h1 id="book-title">Book a visit</h1>', f'<h1 id="book-title">{_html.escape(title)}</h1>', 1)
     out = out.replace("</head>", head_extra + "</head>", 1)
     return HTMLResponse(out)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(STATIC / "favicon.ico", media_type="image/x-icon", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/")
