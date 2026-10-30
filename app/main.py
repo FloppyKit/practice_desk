@@ -1844,6 +1844,28 @@ def api_desk_week(
     return _desk_week_payload(start, days)
 
 
+@app.get("/api/desk/imported/week")
+def api_desk_imported_week(
+    secret: str = Query(default=""),
+    start: str = Query(default=""),
+    days: int = Query(default=7),
+):
+    """Read-only Carepatron-imported appointments for the staff week. Never booked or reminded."""
+    _require_staff(secret)
+    from . import imported_view
+    items = imported_view.week(start, days)
+    return {"ok": True, "available": items is not None, "items": items or []}
+
+
+@app.get("/api/desk/client/imported")
+def api_desk_client_imported(secret: str = Query(default=""), id: str = Query(default="")):
+    """Read-only Carepatron import for one client (notes, appointments, clinical fields). Staff only."""
+    _require_staff(secret)
+    from . import imported_view
+    data = imported_view.for_client(id.strip())
+    return {"ok": True, "available": data is not None, **(data or {})}
+
+
 @app.get("/api/desk/clients")
 def api_desk_clients(
     secret: str = Query(default=""),

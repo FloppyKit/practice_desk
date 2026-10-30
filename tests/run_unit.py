@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from tests import (  # noqa: E402
     test_carepatron_import,
+    test_imported_view,
     test_avs,
     test_desk_agent,
     test_billing,
@@ -55,6 +56,7 @@ def main() -> int:
         test_verify_codes,
         test_public_portal,
         test_carepatron_import,
+        test_imported_view,
     ):
         for name in sorted(dir(mod)):
             if not name.startswith("test_"):

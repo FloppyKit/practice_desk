@@ -585,6 +585,13 @@
     .home-files { display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.45rem; }
     .home-files .btn { font-size:0.82rem; padding:0.45rem 0.75rem; }
     .home-sec { margin-top:1rem; }
+    .cp-imp { margin-top:1.15rem; padding-top:0.85rem; border-top:1px solid var(--border); }
+    .cp-imp details { margin:0.3rem 0 0; font-size:0.82rem; }
+    .cp-imp summary { cursor:pointer; }
+    .cp-imp pre, .cp-imp .cp-val { margin:0.3rem 0 0.5rem; white-space:pre-wrap; font:inherit; font-size:0.82rem; }
+    .cp-tag { font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); border:1px solid var(--border); border-radius:0.3rem; padding:0 0.3rem; margin-left:0.3rem; }
+    #week-imported { margin-top:0.6rem; font-size:0.82rem; }
+    #week-imported ul { margin:0.3rem 0 0; padding-left:1rem; }
     .home-sec h4 { margin:0; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); }
     .home-note-fields { margin:0.35rem 0 0; }
     .home-note-fields p { margin:0.35rem 0 0; font-size:0.82rem; white-space:pre-wrap; }
@@ -3272,6 +3279,7 @@
       weekCache.set(data.start || key, visits);
       weekBox.classList.remove("is-pending");
       renderWeekGrid(visits);
+      loadImportedWeek(data.start || key);
       const prev = new Date(weekStart); prev.setDate(prev.getDate() - 7);
       const next = new Date(weekStart); next.setDate(next.getDate() + 7);
       prefetchWeek(prev);
@@ -4394,6 +4402,41 @@
       return html;
     }
 
+    // Carepatron import: read-only display. No booking, reminder, message or charge actions here.
+    async function loadImported(cid) {
+      const old = document.getElementById("cp-imp"); if (old) old.remove();
+      if (!cid) return;
+      const res = await deskFetch("/api/desk/client/imported?id=" + encodeURIComponent(cid)).catch(() => null);
+      const d = res && res.ok ? await res.json().catch(() => null) : null;
+      if (!d || !d.available || !homeCurrent || !homeCurrent.client || homeCurrent.client.id !== cid) return;
+      const ap = d.appointments || {};
+      const apLine = (a) => "<li>" + esc(a.when_label) + " · " + esc(a.service || "Visit")
+        + (a.status ? " · " + esc(a.status) : "") + "<span class='cp-tag'>imported</span>"
+        + ((a.lines || []).length ? "<div class='desk-meta'>" + a.lines.map((l) => esc([l.service, l.code, l.price && "$" + l.price, l.invoice].filter(Boolean).join(" · "))).join("<br>") + "</div>" : "")
+        + "</li>";
+      const notes = d.notes || [];
+      const clin = d.clinical || [];
+      const box = document.createElement("div");
+      box.className = "cp-imp"; box.id = "cp-imp";
+      box.innerHTML = "<h4 class='home-sec' style='margin:0'>Imported from Carepatron <span class='cp-tag'>read-only</span></h4>"
+        + (clin.length ? "<div class='home-sec'><h4>Clinical fields</h4>" + clin.map((x) => "<details><summary>" + esc(x.label) + "</summary><div class='cp-val'>" + esc(x.value) + "</div></details>").join("") + "</div>" : "")
+        + ((ap.upcoming || []).length ? "<div class='home-sec'><h4>Upcoming (" + ap.upcoming.length + ")</h4><ul class='home-list'>" + ap.upcoming.map(apLine).join("") + "</ul></div>" : "")
+        + ((ap.past || []).length ? "<div class='home-sec'><details><summary><h4 style='display:inline'>Past appointments (" + ap.past.length + ")</h4></summary><ul class='home-list'>" + ap.past.map(apLine).join("") + "</ul></details></div>" : "")
+        + (notes.length ? "<div class='home-sec'><h4>Notes (" + notes.length + ")</h4>" + notes.map((n) => "<details><summary>" + esc(n.dos || "undated") + " · " + esc(n.title) + "</summary><pre>" + esc(n.body) + "</pre></details>").join("") + "</div>" : "");
+      $("home-body").appendChild(box);
+    }
+    async function loadImportedWeek(start) {
+      let box = document.getElementById("week-imported");
+      const res = await deskFetch("/api/desk/imported/week?start=" + encodeURIComponent(start) + "&days=7").catch(() => null);
+      const d = res && res.ok ? await res.json().catch(() => null) : null;
+      const items = (d && d.available && d.items) || [];
+      if (!items.length) { if (box) box.hidden = true; return; }
+      if (!box) { box = document.createElement("div"); box.id = "week-imported"; box.className = "desk-meta"; $("week").insertAdjacentElement("afterend", box); }
+      box.hidden = false;
+      box.innerHTML = "<strong>Imported from Carepatron</strong><span class='cp-tag'>imported · read-only</span><ul>"
+        + items.map((a) => "<li>" + esc(a.when_label) + " · " + esc(a.client_name || "client") + " · " + esc(a.service || "Visit")
+          + (a.status ? " · " + esc(a.status) : "") + "</li>").join("") + "</ul>";
+    }
     function renderHome(data) {
       const c = data.client || {};
       const card = data.card || {};
@@ -4473,6 +4516,7 @@
         </div>`}`;
       $("home-empty").hidden = true;
       $("home-body").hidden = false;
+      loadImported(c.id);
       paintVaultNote(c);
       $("hm-close").onclick = closeHome;
       function startOfficeCall() {
