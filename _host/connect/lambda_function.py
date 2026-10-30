@@ -104,7 +104,7 @@ def _verified(a, ctx):
 
 NEED_VERIFY = {"ok": False, "error": "verification_required",
                "message": "Follow-up times and booking are only available after verify_patient succeeds on this call. "
-                          "Ask for the email or phone on file and run verify_patient, or offer book.psycharts.org or a message."}
+                          "Ask for the email or phone on file and run verify_patient, or offer book.drmattbrown.com or a message."}
 
 def _caller_said_yes_after(ctx, since):
     """True if the caller spoke an affirmative (and not a negative) message after `since` in this contact's AI session."""
@@ -129,7 +129,7 @@ def list_visit_slots(a, ctx):
     vt = a.get("visit_type") or "new-client"
     if vt not in ("new-client", "follow-up"): return {"ok": False, "error": "visit_type must be new-client or follow-up"}
     if vt == "follow-up" and not VERIFY_ON:
-        return {"ok": False, "error": "follow_up_disabled", "message": "Direct current patients to book.psycharts.org."}
+        return {"ok": False, "error": "follow_up_disabled", "message": "Direct current patients to book.drmattbrown.com."}
     if vt == "follow-up" and not _verified(a, ctx): return NEED_VERIFY
     q = {"type": vt}
     if vt == "follow-up":
@@ -149,7 +149,7 @@ def list_visit_slots(a, ctx):
     st, d = _http("GET", "/api/slots?" + urllib.parse.urlencode(q))
     if st == 404:
         return {"ok": False, "error": "visit_type_closed", "message": "That visit type is not open for phone booking right now. "
-                "Do not promise a time. Offer book.psycharts.org or take a message with notify_matt."}
+                "Do not promise a time. Offer book.drmattbrown.com or take a message with notify_matt."}
     if st != 200: return {"ok": False, "error": f"booker {st}", "detail": str(d.get("detail", ""))[:120]}
     raw = [s["start"] for s in (d.get("slots") or []) if lo <= datetime.fromisoformat(s["start"]) <= hi]
     same = [s for s in raw if s[:10] == want] if want else []
@@ -166,7 +166,7 @@ def list_visit_slots(a, ctx):
     return {"ok": True, "visit_type": vt, "duration_minutes": d.get("duration_minutes"), "timezone": "America/Chicago",
             "slots": slots, "message": (note + " Offer two or three of these Central times. Use the exact start when booking. "
             + span + " For another day, call list_visit_slots again with date as YYYY-MM-DD.") if slots
-            else "No open times. " + span + " Offer book.psycharts.org or notify_matt."}
+            else "No open times. " + span + " Offer book.drmattbrown.com or notify_matt."}
 
 def verify_patient(a, ctx):
     if not VERIFY_ON: return {"ok": False, "error": "verification_disabled"}
@@ -177,9 +177,9 @@ def verify_patient(a, ctx):
     st, d = _http("POST", "/api/verify-patient", {"email": email, "phone": phone, "sms_consent": ans})
     if st != 200 or not d.get("ok"):
         return {"ok": False, "reason": d.get("reason", "not_found"),
-                "message": "Could not verify. Do not book a follow-up. Offer book.psycharts.org or notify_matt."}
+                "message": "Could not verify. Do not book a follow-up. Offer book.drmattbrown.com or notify_matt."}
     if not ctx.get("contact_id") or not HKEY:
-        return {"ok": False, "reason": "verification_unavailable", "message": "Offer book.psycharts.org or a message."}
+        return {"ok": False, "reason": "verification_unavailable", "message": "Offer book.drmattbrown.com or a message."}
     ident = ("e:" + _norm_email(email)) if email else ("p:" + _norm_phone(phone))
     tok = _sign("pv", {"c": ctx["contact_id"], "i": _h(ident), "x": int(time.time()) + VERIFY_TTL})
     _stash_verify(ctx, tok)
@@ -196,7 +196,7 @@ def create_visit(a, ctx):
     for k, v in (("start", start), ("name", name), ("email", email)):
         if not v: return {"ok": False, "error": f"{k} required"}
     if vt not in ("new-client", "follow-up"): return {"ok": False, "error": "bad visit_type"}
-    if not ctx.get("contact_id"): return {"ok": False, "error": "no_contact", "message": "Offer book.psycharts.org."}
+    if not ctx.get("contact_id"): return {"ok": False, "error": "no_contact", "message": "Offer book.drmattbrown.com."}
     dur = ""
     if vt == "follow-up":
         if not VERIFY_ON: return {"ok": False, "error": "follow_up_disabled"}
