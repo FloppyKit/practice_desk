@@ -96,7 +96,7 @@ def build_visit_ics(
     cal.add("version", "2.0")
     cal.add("calscale", "GREGORIAN")
     cal.add("method", "PUBLISH")
-    cal.add("x-wr-calname", vText(summary or "Psych Arts visit"))
+    cal.add("x-wr-calname", vText(summary or "Dr. Matt Brown visit"))
     cal.add("x-wr-timezone", str(tz))
     ve = Event()
     ve.add("uid", uid or f"visit-{int(now.timestamp())}")

@@ -1619,7 +1619,7 @@ def _cancel_html(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{'Visit cancelled' if done else 'Cancel visit'} · Psych Arts</title>
+  <title>{'Visit cancelled' if done else 'Cancel visit'} · Dr. Matt Brown</title>
   <link rel="stylesheet" href="/static/css/booker.css" />
   <style>
     .cancel-row {{ display:flex; gap:12px; margin:6px 0; flex-wrap:wrap; }}
@@ -1631,7 +1631,7 @@ def _cancel_html(
 <body>
   <div class="wrap">
     <div class="brand">
-      <div class="kicker">Psych Arts · Dr. Matt Brown</div>
+      <div class="kicker">Dr. Matt Brown</div>
       <h1>{'Visit cancelled' if done else 'Cancel visit'}</h1>
     </div>
     <div class="card">
