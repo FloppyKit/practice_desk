@@ -478,7 +478,7 @@ def ics_visit(token: str = Query("")):
             description=desc,
             location=join,
         ),
-        "psycharts-visit.ics",
+        "drmattbrown-visit.ics",
         "private, max-age=60",
     )
 

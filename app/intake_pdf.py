@@ -137,7 +137,7 @@ def intake_pdf(
     client_name: str = "",
 ) -> bytes:
     title = FORM_TITLES.get(form, form)
-    lines: list[tuple[str, str]] = [("h", title), ("t", "Psych Arts - electronic intake submission"), ("t", "")]
+    lines: list[tuple[str, str]] = [("h", title), ("t", "Dr. Matt Brown - electronic intake submission"), ("t", "")]
     if client_name:
         lines.append(("t", f"Client: {client_name}"))
     lines += [

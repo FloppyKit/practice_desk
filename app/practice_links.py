@@ -1,7 +1,7 @@
-"""Practice link bases: one place to flip site.psycharts.org to drmattbrown.com later.
+"""Practice link bases: one place for the drmattbrown.com bases.
 
-PRACTICE_SITE_URL   public site (default https://site.psycharts.org)
-PRACTICE_VIDEO_URL  video waiting room (default https://live.psycharts.org/guest)
+PRACTICE_SITE_URL   public site (default https://drmattbrown.com)
+PRACTICE_VIDEO_URL  video waiting room (default https://meet.drmattbrown.com/guest)
 """
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import os
 
 
 def site_url() -> str:
-    return (os.environ.get("PRACTICE_SITE_URL") or "https://site.psycharts.org").strip().rstrip("/")
+    return (os.environ.get("PRACTICE_SITE_URL") or "https://drmattbrown.com").strip().rstrip("/")
 
 
 def video_url() -> str:
-    return (os.environ.get("PRACTICE_VIDEO_URL") or "https://live.psycharts.org/guest").strip().rstrip("/")
+    return (os.environ.get("PRACTICE_VIDEO_URL") or "https://meet.drmattbrown.com/guest").strip().rstrip("/")
 
 
 def link_map() -> list[tuple[str, str]]:
