@@ -498,7 +498,7 @@ def render_visit_email(
                     "Paperwork",
                     f'<a href="{_esc(intake_url)}" style="color:#111111;">Complete intake paperwork</a>'
                     '<div style="font-size:14px;color:#52525b;padding-top:2px;">'
-                    "Card on file (nothing is charged today), personal information, and consents. About 5–10 minutes; you can save and finish later.</div>",
+                    "Personal information, consents, then a card on file (nothing is charged today). About 5–10 minutes; you can save and finish later.</div>",
                 )
             )
             primary = (intake_url, "Complete intake paperwork")
