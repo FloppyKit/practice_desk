@@ -36,3 +36,7 @@ PDFs are counted for reconciliation only (not parsed yet).
 ## Column-mapping caveat
 
 `CLIENT_COLUMNS` / `APPT_COLUMNS` at the top of `app/carepatron_import.py` are **guesses** from Carepatron's help docs. Once the real export lands, check its header row (headers only) and add the real names to those dicts. Note-to-client linking uses a contact id or a unique client full name in the note's path; check the `notes` gaps in the first dry run.
+
+## Clinical fields
+
+`DX Code` is parsed to ICD-10 (uppercased, dot inserted, format-checked) and written to `report/clinical_suggestions.csv`. `--apply-clinical` (only with `--apply`) fills `standing_dx` where it is empty; never overwrites. Meds, supplements, pharmacy, recommendations, insurance, client notes, referral, first-seen and status are kept verbatim in `imported_client_clinical` (keyed on client+field+value hash); med lists are split into lines in the suggestions file for review. `Card Number`, `Exp Date` and `CVC` are dropped on read and never stored or reported.

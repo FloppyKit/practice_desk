@@ -20,9 +20,13 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("carepatron-import-report"))
     ap.add_argument("--apply", action="store_true", help="write to --db (default: dry run on a copy)")
     ap.add_argument("--extract", action="store_true", help="Nova Lite suggestions to extract_suggestions.csv")
+    ap.add_argument("--apply-clinical", action="store_true", help="with --apply: fill empty standing_dx from DX Code")
     a = ap.parse_args()
+    if a.apply_clinical and not a.apply:
+        ap.error("--apply-clinical requires --apply")
     rep = ci.run(db=a.db, clients_csv=a.clients, notes_dir=a.notes, appts=a.appointments, pdf_dir=a.pdfs,
-                 out_dir=a.out, apply=a.apply, do_extract=a.extract)
+                 out_dir=a.out, apply=a.apply, do_extract=a.extract,
+                 apply_clinical_fields=a.apply_clinical)
     for k, c in rep.counts.items():
         print(f"{k}: in={c.get('in', 0)} out={c.get('out', 0)} gaps={c.get('gap', 0)}")
     if hasattr(rep, "cost_usd"):

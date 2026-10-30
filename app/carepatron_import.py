@@ -48,6 +48,53 @@ APPT_COLUMNS: dict[str, list[str]] = {
     "status": ["Status"],
 }
 
+# Clinical / admin CSV fields kept verbatim in imported_client_clinical (side table).
+CLINICAL_FIELDS: dict[str, str] = {
+    "dx_code": "DX Code",
+    "medications": "Medications",
+    "medications_1": "Medications 1",
+    "discontinued_medications": "Discontinued Medications",
+    "supplements": "Supplements",
+    "preferred_pharmacy": "Preferred Pharmacy",
+    "other_recommendations": "Other Recommendations",
+    "ins_info": "Ins Info",
+    "client_notes": "Client Notes",
+    "note": "Note",
+    "referred_by": "Referred By",
+    "date_first_seen": "Date First Seen",
+    "status": "Status",
+}
+MED_FIELDS = ("medications", "medications_1", "discontinued_medications", "supplements")
+# Payment card data in the export: never read, stored, or reported.
+FORBIDDEN_COLUMNS = ("Card Number", "Exp Date", "CVC")
+
+_ICD_TOKEN = re.compile(r"\b([A-Z][0-9][0-9A-Z]\.?[0-9A-Z]{0,4})\b")
+_ICD_OK = re.compile(r"^[A-TV-Z][0-9][0-9A-Z](\.[0-9A-Z]{1,4})?$")
+
+
+def parse_dx(raw: str) -> tuple[list[str], int, int, int]:
+    """-> (valid normalized codes, parsed, invalid, normalized)."""
+    out: list[str] = []
+    parsed = invalid = normalized = 0
+    raw = raw or ""
+    for m in _ICD_TOKEN.finditer(raw.upper()):
+        tok = m.group(1)
+        parsed += 1
+        code = tok if "." in tok or len(tok) == 3 else tok[:3] + "." + tok[3:]
+        if not _ICD_OK.match(code):
+            invalid += 1; continue
+        if code != raw[m.start(1):m.end(1)]:
+            normalized += 1
+        if code not in out:
+            out.append(code)
+    return out, parsed, invalid, normalized
+
+
+def split_meds(raw: str) -> list[str]:
+    parts = re.split(r"[\r\n;]+|\s+\|\s+|^\s*[-*\u2022]\s*", raw or "", flags=re.M)
+    return [re.sub(r"^\s*(?:[-*\u2022]|\d+[.)])\s*", "", x).strip() for x in parts if x and x.strip(" -*\u2022")]
+
+
 NOVA_MODEL = "amazon.nova-lite-v1:0"
 NOVA_REGION = "us-east-1"
 NOVA_PRICE_IN, NOVA_PRICE_OUT = 0.06 / 1e6, 0.24 / 1e6  # USD per token, on-demand
@@ -102,6 +149,10 @@ def ensure_schema(con: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS imported_appointments (
           id TEXT PRIMARY KEY, client_id TEXT, carepatron_contact_id TEXT,
           start_at TEXT, end_at TEXT, service TEXT, status TEXT, raw_json TEXT, imported_at TEXT);
+        CREATE TABLE IF NOT EXISTS imported_client_clinical (
+          id TEXT PRIMARY KEY, client_id TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL,
+          source TEXT, imported_at TEXT);
+        CREATE INDEX IF NOT EXISTS idx_imported_clinical_client ON imported_client_clinical(client_id, field);
         CREATE INDEX IF NOT EXISTS idx_imported_appts_client ON imported_appointments(client_id, start_at);
         """
     )
@@ -112,6 +163,7 @@ class Report:
         self.counts: dict[str, dict[str, int]] = {}
         self.gaps: list[dict[str, str]] = []
         self.review: list[dict[str, str]] = []
+        self.clinical: list[dict[str, str]] = []
 
     def inc(self, kind: str, what: str, n: int = 1) -> None:
         self.counts.setdefault(kind, {}).setdefault(what, 0)
@@ -146,6 +198,7 @@ def load_clients(con, csv_path: Path, rep: Report) -> None:
         rows = list(csv.DictReader(f))
     for i, raw in enumerate(rows, 1):
         rep.inc("clients", "in")
+        raw = {k: v for k, v in raw.items() if _key(k) not in {_key(c) for c in FORBIDDEN_COLUMNS}}
         p = _pick(raw, CLIENT_COLUMNS)
         ref = norm_cp_id(p["carepatron_contact_id"]) or f"row{i}"
         rec = {
@@ -175,14 +228,15 @@ def load_clients(con, csv_path: Path, rep: Report) -> None:
                 if sim:
                     rep.review.append({"type": "client", "ref": ref, "reason": "name similar to existing client(s) " + ",".join(sim)})
                     rep.gap("clients", ref, "held for review"); continue
-            now = _now()
+            now = _now(); new_id = uuid.uuid4().hex[:16]
             con.execute(
                 "INSERT INTO clients (id,display_name,preferred_name,given_name,family_name,email,phone_e164,dob,"
                 "status,source,carepatron_contact_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (uuid.uuid4().hex[:16], rec["display_name"], rec["preferred_name"] or None, rec["given_name"],
+                (new_id, rec["display_name"], rec["preferred_name"] or None, rec["given_name"],
                  rec["family_name"], rec["email"] or None, rec["phone_e164"] or None, rec["dob"] or None,
                  "active", "carepatron", rec["carepatron_contact_id"], now, now))
-            rep.inc("clients", "created"); rep.inc("clients", "out"); continue
+            rep.inc("clients", "created"); rep.inc("clients", "out")
+            load_clinical(con, new_id, rec["carepatron_contact_id"], raw, rep); continue
         # Matched: fill blanks only, never overwrite existing values.
         sets = {k: v for k, v in rec.items() if v and not row[k]}
         if sets:
@@ -192,6 +246,47 @@ def load_clients(con, csv_path: Path, rep: Report) -> None:
         else:
             rep.inc("clients", "unchanged")
         rep.inc("clients", "matched_" + how); rep.inc("clients", "out")
+        load_clinical(con, row["id"], rec["carepatron_contact_id"], raw, rep)
+
+
+def load_clinical(con, cid: str, cp: str, raw: dict[str, str], rep: Report) -> None:
+    norm = {_key(k): (v or "").strip() for k, v in raw.items() if k}
+    src = "carepatron_csv:" + cp
+    for field, col in CLINICAL_FIELDS.items():
+        val = norm.get(_key(col), "")
+        if not val:
+            continue
+        rep.inc("clinical:" + field, "in")
+        hid = hashlib.sha256(f"{cid}\x1f{field}\x1f{val}".encode()).hexdigest()[:32]
+        cur = con.execute("INSERT OR IGNORE INTO imported_client_clinical (id,client_id,field,value,source,imported_at)"
+                          " VALUES (?,?,?,?,?,?)", (hid, cid, field, val, src, _now()))
+        rep.inc("clinical:" + field, "created" if cur.rowcount else "unchanged"); rep.inc("clinical:" + field, "out")
+        if field in MED_FIELDS:
+            for line in split_meds(val):
+                rep.inc("clinical:" + field, "lines")
+                rep.clinical.append({"client_id": cid, "carepatron_contact_id": cp, "field": field,
+                                     "current_value": "", "suggested_value": line, "source": col, "action": "review"})
+    codes, parsed, invalid, normalized = parse_dx(norm.get(_key(CLINICAL_FIELDS["dx_code"]), ""))
+    for k, n in (("parsed", parsed), ("valid", parsed - invalid), ("invalid", invalid), ("normalized", normalized)):
+        rep.inc("dx", k, n)
+    if not codes:
+        return
+    cur = con.execute("SELECT standing_dx FROM clients WHERE id=?", (cid,)).fetchone()[0] or ""
+    empty = cur.strip() in ("", "[]", "null")
+    rep.inc("dx", "would_fill" if empty else "already_set")
+    rep.clinical.append({"client_id": cid, "carepatron_contact_id": cp, "field": "standing_dx",
+                         "current_value": cur, "suggested_value": json.dumps(codes), "source": CLINICAL_FIELDS["dx_code"],
+                         "action": "fill_if_empty" if empty else "keep_current"})
+
+
+def apply_clinical(con, rep: Report) -> None:
+    """Fill standing_dx only where empty. Never overwrites."""
+    for s in rep.clinical:
+        if s["field"] == "standing_dx" and s["action"] == "fill_if_empty":
+            cur = con.execute("UPDATE clients SET standing_dx=?, updated_at=? WHERE id=? AND "
+                              "(standing_dx IS NULL OR trim(standing_dx) IN ('', '[]', 'null'))",
+                              (s["suggested_value"], _now(), s["client_id"]))
+            rep.inc("dx", "filled", cur.rowcount)
 
 
 def _client_index(con) -> tuple[dict[str, str], dict[str, str]]:
@@ -371,6 +466,10 @@ def extract(con, out_dir: Path, rep: Report, call: Callable[[str], tuple[str, in
 
 def write_reports(rep: Report, out_dir: Path, mode: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "clinical_suggestions.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["client_id", "carepatron_contact_id", "field", "current_value",
+                                          "suggested_value", "source", "action"])
+        w.writeheader(); w.writerows(rep.clinical)
     with open(out_dir / "review.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["type", "ref", "reason"]); w.writeheader(); w.writerows(rep.review)
     lines = [f"# Carepatron import reconciliation ({mode})", "", "| type | in | out | gaps | detail |", "|---|---|---|---|---|"]
@@ -384,7 +483,10 @@ def write_reports(rep: Report, out_dir: Path, mode: str) -> None:
 
 def run(*, db: Path, clients_csv: Path | None, notes_dir: Path | None, appts: Path | None,
         pdf_dir: Path | None, out_dir: Path, apply: bool = False, do_extract: bool = False,
+        apply_clinical_fields: bool = False,
         call: Callable | None = None) -> Report:
+    if apply_clinical_fields and not apply:
+        raise ValueError("--apply-clinical requires --apply")
     rep = Report()
     if apply:
         target = db
@@ -399,6 +501,7 @@ def run(*, db: Path, clients_csv: Path | None, notes_dir: Path | None, appts: Pa
     try:
         ensure_schema(con)
         if clients_csv: load_clients(con, clients_csv, rep)
+        if apply_clinical_fields: apply_clinical(con, rep)
         if notes_dir: load_notes(con, notes_dir, rep)
         if appts: load_appointments(con, appts, rep)
         if pdf_dir: count_pdfs(pdf_dir, rep)

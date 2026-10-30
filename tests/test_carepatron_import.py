@@ -10,11 +10,11 @@ from pathlib import Path
 
 from app import carepatron_import as ci
 
-CSV_HDR = ["Id", "First name", "Last name", "Preferred name", "Email", "Phone number", "Date of birth", "Status"]
+CSV_HDR = ["Id", "First name", "Last name", "Preferred name", "Email", "Phone number", "Date of birth", "Status", "DX Code", "Medications", "Ins Info", "Card Number", "Exp Date", "CVC"]
 ROWS = [
-    ["cp-001", "Testy", "McFakerson", "", "TESTY@example.test", "'+13175550101", "01/02/1980", "Active"],
-    ["cp-002", "Ada", "Placeholder", "Addie", "ada@example.test", "317.555.0102", "1990-03-04", "Active"],
-    ["C0FFEE03-0000", "Bob", "Nobody", "", "", "317-555-0103", "5/6/1975", "Active"],
+    ["cp-001", "Testy", "McFakerson", "", "TESTY@example.test", "'+13175550101", "01/02/1980", "Active", "f411, F32.A; U071", "sertraline 50 mg\nhydroxyzine 25 mg prn", "FakeCo 123", "4111111111111111", "12/29", "987"],
+    ["cp-002", "Ada", "Placeholder", "Addie", "ada@example.test", "317.555.0102", "1990-03-04", "Active", "", "", "", "", "", ""],
+    ["C0FFEE03-0000", "Bob", "Nobody", "", "", "317-555-0103", "5/6/1975", "Active", "F90.0", "", "", "5555444433332222", "01/30", "123"],
 ]
 
 
@@ -102,7 +102,7 @@ def test_cp_dry_run_never_writes_live():
 
 
 def test_cp_reconciliation_lists_gaps():
-    d = _fixture(ROWS + [["", "No", "Id", "", "", "", "", ""]])
+    d = _fixture(ROWS + [["", "No", "Id", "", "", "", "", "", "", "", "", "", "", ""]])
     _run(d)
     rec = json.loads((d / "out" / "reconciliation.json").read_text())
     assert rec["counts"]["clients"]["in"] == 4 and rec["counts"]["clients"]["out"] == 3
@@ -123,3 +123,45 @@ def test_cp_extract_mocked_suggestions_only():
     assert json.loads(rows[0]["dx_codes"]) == ["F41.1"] and rows[0]["status"] == "needs_review"
     assert _q(d, "SELECT count(*) FROM clients WHERE standing_dx IS NOT NULL") == [(0,)]
     assert ci.validate_extract("not json") is None and ci.validate_extract('{"dx_codes": "x", "medications": []}') is None
+
+
+def test_cp_clinical_dx_and_meds():
+    assert ci.parse_dx("f411, F32.A; U071 F41.1") == (["F41.1", "F32.A"], 4, 1, 1)
+    assert ci.split_meds("a 1 mg\n- b 2 mg; c") == ["a 1 mg", "b 2 mg", "c"]
+    d = _fixture()
+    con = sqlite3.connect(d / "db.sqlite"); ci.ensure_schema(con)
+    con.execute("INSERT INTO clients (id, display_name, given_name, family_name, carepatron_contact_id, standing_dx, source) "
+                "VALUES ('k1','B N','Bob','Nobody','cont-c0ffee03-0000','[\"F99\"]','desk')")
+    con.commit(); con.close()
+    r = _run(d)
+    assert r.counts["dx"]["would_fill"] == 1 and r.counts["dx"]["already_set"] == 1
+    assert _q(d, "SELECT count(*) FROM clients WHERE standing_dx LIKE '%F41.1%'") == [(0,)]  # suggestions only
+    sug = list(csv.DictReader(open(d / "out" / "clinical_suggestions.csv")))
+    assert {x["field"] for x in sug} == {"standing_dx", "medications"}
+    assert _q(d, "SELECT count(*) FROM imported_client_clinical WHERE field='ins_info'") == [(1,)]
+    try:
+        _run(d, apply=False, apply_clinical_fields=True); assert False
+    except ValueError:
+        pass
+    r = _run(d, apply_clinical_fields=True)
+    assert r.counts["dx"]["filled"] == 1
+    assert _q(d, "SELECT standing_dx FROM clients WHERE carepatron_contact_id='cont-cp-001'") == [('["F41.1", "F32.A"]',)]
+    assert _q(d, "SELECT standing_dx FROM clients WHERE id='k1'") == [('["F99"]',)]  # never overwritten
+    r = _run(d, apply_clinical_fields=True)
+    assert r.counts["dx"].get("filled", 0) == 0 and r.counts["clinical:medications"]["unchanged"] == 1
+
+
+def test_cp_card_columns_never_stored():
+    d = _fixture()
+    _run(d)
+    _run(d, apply=False, do_extract=True, call=lambda t: ('{"dx_codes": [], "medications": []}', 1, 1))
+    secrets = ["4111111111111111", "5555444433332222", "12/29", "01/30", "987", "Card Number", "CVC", "Exp Date"]
+    blobs = [p.read_text() for p in (d / "out").iterdir()]
+    con = sqlite3.connect(d / "db.sqlite")
+    for (tbl,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
+        for row in con.execute(f"SELECT * FROM {tbl}"):
+            blobs.append(" ".join(str(v) for v in row))
+    con.close()
+    for b in blobs:
+        for s in secrets:
+            assert s not in b, f"card data leaked: {s}"
