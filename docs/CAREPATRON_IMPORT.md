@@ -40,3 +40,7 @@ PDFs are counted for reconciliation only (not parsed yet).
 ## Clinical fields
 
 `DX Code` is parsed to ICD-10 (uppercased, dot inserted, format-checked) and written to `report/clinical_suggestions.csv`. `--apply-clinical` (only with `--apply`) fills `standing_dx` where it is empty; never overwrites. Meds, supplements, pharmacy, recommendations, insurance, client notes, referral, first-seen and status are kept verbatim in `imported_client_clinical` (keyed on client+field+value hash); med lists are split into lines in the suggestions file for review. `Card Number`, `Exp Date` and `CVC` are dropped on read and never stored or reported.
+
+## Appointments
+
+Calendar export zip (one CSV). Linked by `ClientId` -> `cont-<id>`, then email/phone/unique name if those columns exist. `StartDate`/`EndDate` are wall-clock times in the row's `TimeZone`; stored as-is plus `tz`, `start_utc`, `end_utc`. The export repeats an appointment once per service/invoice line; rows are merged per (AppointmentId, client) into `lines_json` (multi-client appointments get one row per client). Events with no client are calendar blocks and reported as gaps. Card columns are dropped on read.

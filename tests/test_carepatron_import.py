@@ -29,10 +29,18 @@ def _fixture(rows=ROWS):
     (notes / "Ada Placeholder 2026-02-01.md").write_text("# Intake\nSynthetic text.\n")
     (notes / "Unknown Person 2026-02-02.md").write_text("orphan\n")
     with open(d / "appts.csv", "w", newline="") as f:
-        w = csv.writer(f); w.writerow(["Id", "Client Id", "Client", "Start", "End", "Service", "Status"])
-        w.writerow(["ap-1", "cont-cp-001", "", "2026-01-05T10:00", "2026-01-05T10:30", "Follow-up", "Done"])
-        w.writerow(["ap-2", "", "Ada Placeholder", "2026-02-01T09:00", "", "Intake", "Done"])
-        w.writerow(["ap-3", "cp-999", "", "2026-02-03T09:00", "", "Intake", "Done"])
+        w = csv.writer(f)
+        w.writerow(["AppointmentId", "StartDate", "EndDate", "Title", "ClientId", "Client", "Status", "Service",
+                    "Code", "Price", "DurationInMinutes", "Invoices", "DiagnosisCodes", "TimeZone", "Card Number"])
+        w.writerow(["ap-1", "2026-01-05 10:00:00", "2026-01-05 10:30:00", "t", "CP-001", "", "Confirmed", "Follow-up",
+                    "99214", "200", "30", "000001 - Paid", "", "America/Chicago", "4111111111111111"])
+        w.writerow(["ap-1", "2026-01-05 10:00:00", "2026-01-05 10:30:00", "t", "CP-001", "", "Confirmed", "Add-on",
+                    "90833", "100", "30", "000002 - Paid", "", "America/Chicago", ""])
+        w.writerow(["ap-2", "2026-07-01 09:00:00", "", "t", "", "Ada Placeholder", "Cancelled", "Intake",
+                    "", "", "60", "", "", "US/Central", ""])
+        w.writerow(["ap-3", "2026-02-03 09:00:00", "", "t", "cp-999", "Zed Nobody", "Confirmed", "Intake",
+                    "", "", "60", "", "", "America/New_York", ""])
+        w.writerow(["blk-1", "2026-02-04 12:00:00", "", "Lunch", "", "", "", "", "", "", "60", "", "", "America/Chicago", ""])
     return d
 
 
@@ -60,7 +68,7 @@ def test_cp_load_and_idempotent():
     assert _q(d, "SELECT phone_e164, dob, email, source FROM clients WHERE carepatron_contact_id='cont-cp-001'") == [
         ("+13175550101", "1980-01-02", "testy@example.test", "carepatron")]
     assert r1.counts["notes"] == {"in": 4, "created": 3, "out": 3, "gap": 1}
-    assert r1.counts["appointments"]["out"] == 2 and r1.counts["appointments"]["gap"] == 1
+    assert r1.counts["appointments"]["out"] == 2 and r1.counts["appointments"]["gap"] == 2
     before = _q(d, "SELECT * FROM clients ORDER BY id") + _q(d, "SELECT id FROM imported_notes") + _q(d, "SELECT id FROM imported_appointments")
     r2 = _run(d)
     assert r2.counts["clients"].get("created", 0) == 0 and r2.counts["clients"]["unchanged"] == 3
@@ -107,7 +115,7 @@ def test_cp_reconciliation_lists_gaps():
     rec = json.loads((d / "out" / "reconciliation.json").read_text())
     assert rec["counts"]["clients"]["in"] == 4 and rec["counts"]["clients"]["out"] == 3
     refs = {(g["type"], g["ref"]) for g in rec["gaps"]}
-    assert ("clients", "row4") in refs and ("notes", "(top-level)") in refs and ("appointments", "ap-3") in refs
+    assert ("clients", "row4") in refs and ("notes", "(top-level)") in refs and ("appointments", "ap-3") in refs and ("appointments", "blk-1") in refs
 
 
 def test_cp_extract_mocked_suggestions_only():
@@ -165,3 +173,20 @@ def test_cp_card_columns_never_stored():
     for b in blobs:
         for s in secrets:
             assert s not in b, f"card data leaked: {s}"
+
+
+def test_cp_appointments_tz_dedupe_and_blocks():
+    assert ci.to_utc("2026-01-05 10:00:00", "America/Chicago") == "2026-01-05T16:00:00+00:00"
+    assert ci.to_utc("2026-07-01 09:00:00", "US/Central") == "2026-07-01T14:00:00+00:00"
+    d = _fixture()
+    r = _run(d)
+    c = r.counts["appointments"]
+    assert c["in"] == 5 and c["out"] == 2 and c["deduped"] == 1 and c["gap"] == 2
+    assert c["status_Confirmed"] == 1 and c["status_Cancelled"] == 1
+    reasons = {(g["ref"], g["reason"]) for g in r.gaps if g["type"] == "appointments"}
+    assert reasons == {("ap-3", "client id not found"), ("blk-1", "no client on event (calendar block)")}
+    row = _q(d, "SELECT carepatron_appointment_id, tz, start_utc, lines_json, raw_json FROM imported_appointments WHERE carepatron_appointment_id='ap-1'")
+    assert len(row) == 1 and row[0][1] == "America/Chicago" and row[0][2] == "2026-01-05T16:00:00+00:00"
+    assert [x["code"] for x in json.loads(row[0][3])] == ["99214", "90833"]
+    assert "4111" not in row[0][4] and "Card Number" not in row[0][4]
+    assert _run(d).counts["appointments"].get("created", 0) == 0

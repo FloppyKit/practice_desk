@@ -38,15 +38,25 @@ CLIENT_COLUMNS: dict[str, list[str]] = {
     "dob": ["Date of birth"],
     "status": ["Status"],
 }
+# Confirmed against the real 2026-10-29 Calendar export (one CSV in a zip).
 APPT_COLUMNS: dict[str, list[str]] = {
-    "appointment_id": ["Id", "Appointment Id", "ID"],
-    "contact_id": ["Client Id", "Contact Id", "Attendee Id"],
-    "client_name": ["Client", "Client Name", "Attendee", "Attendees"],
-    "start": ["Start", "Start Time", "Start Date", "Date"],
-    "end": ["End", "End Time", "End Date"],
-    "service": ["Service", "Service Name", "Title"],
+    "appointment_id": ["AppointmentId"],
+    "contact_id": ["ClientId"],
+    "client_name": ["Client"],
+    "email": ["Email", "ClientEmail"],      # not in the 2026-10 export; used if present
+    "phone": ["Phone", "ClientPhone"],      # not in the 2026-10 export; used if present
+    "start": ["StartDate"],                 # wall-clock "YYYY-MM-DD HH:MM:SS" in TimeZone
+    "end": ["EndDate"],
+    "tz": ["TimeZone"],
+    "service": ["Service"],
+    "code": ["Code"],
+    "price": ["Price"],
+    "invoice": ["Invoices"],
     "status": ["Status"],
+    "duration": ["DurationInMinutes"],
+    "dx": ["DiagnosisCodes"],
 }
+APPT_DEFAULT_TZ = "America/Chicago"
 
 # Clinical / admin CSV fields kept verbatim in imported_client_clinical (side table).
 CLINICAL_FIELDS: dict[str, str] = {
@@ -148,7 +158,9 @@ def ensure_schema(con: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_imported_notes_client ON imported_notes(client_id, dos);
         CREATE TABLE IF NOT EXISTS imported_appointments (
           id TEXT PRIMARY KEY, client_id TEXT, carepatron_contact_id TEXT,
-          start_at TEXT, end_at TEXT, service TEXT, status TEXT, raw_json TEXT, imported_at TEXT);
+          carepatron_appointment_id TEXT, start_at TEXT, end_at TEXT, tz TEXT,
+          start_utc TEXT, end_utc TEXT, service TEXT, status TEXT, duration_min INTEGER,
+          lines_json TEXT, raw_json TEXT, imported_at TEXT);
         CREATE TABLE IF NOT EXISTS imported_client_clinical (
           id TEXT PRIMARY KEY, client_id TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL,
           source TEXT, imported_at TEXT);
@@ -370,21 +382,63 @@ def _appt_rows(src: Path) -> Iterable[tuple[str, dict[str, str]]]:
                 yield f"{src.name}#{i}", r
 
 
+def to_utc(local: str, tz: str) -> str:
+    from zoneinfo import ZoneInfo
+    if not local:
+        return ""
+    try:
+        dt = datetime.fromisoformat(local.strip().replace(" ", "T"))
+    except ValueError:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(tz or APPT_DEFAULT_TZ))
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
 def load_appointments(con, src: Path, rep: Report) -> None:
+    """One row per (Carepatron appointment id, client). Repeated rows for the same pair
+    (one per service/invoice line in the export) are merged into lines_json."""
     by_cp, by_name = _client_index(con)
+    by_email = {(r["email"] or "").lower(): r["carepatron_contact_id"] for r in
+                con.execute("SELECT email, carepatron_contact_id FROM clients WHERE carepatron_contact_id IS NOT NULL")}
+    by_phone = {r["phone_e164"]: r["carepatron_contact_id"] for r in
+                con.execute("SELECT phone_e164, carepatron_contact_id FROM clients WHERE carepatron_contact_id IS NOT NULL")}
+    groups: dict[tuple[str, str], list[tuple[str, dict[str, str], dict[str, str]]]] = {}
+    forbidden = {_key(c) for c in FORBIDDEN_COLUMNS}
+    now = _now()
     for ref, raw in _appt_rows(src):
+        raw = {k: v for k, v in raw.items() if k and _key(k) not in forbidden}
         rep.inc("appointments", "in")
         p = _pick(raw, APPT_COLUMNS)
-        cp = p["contact_id"] if p["contact_id"] in by_cp else by_name.get(_key(p["client_name"]), "")
         rid = p["appointment_id"] or ref
-        if not cp:
-            rep.gap("appointments", rid, "no matching client"); continue
-        aid = hashlib.sha256(f"{cp}\x1f{p['appointment_id']}\x1f{p['start']}\x1f{p['service']}".encode()).hexdigest()[:32]
+        if not p["contact_id"] and not p["client_name"] and not p["email"]:
+            rep.gap("appointments", rid, "no client on event (calendar block)"); continue
+        cp = norm_cp_id(p["contact_id"]) if norm_cp_id(p["contact_id"]) in by_cp else ""
+        cp = cp or by_email.get(p["email"].lower(), "") if p["email"] else cp
+        cp = cp or by_phone.get(norm_phone(p["phone"]), "") if p["phone"] else cp
+        cp = cp or by_name.get(_key(p["client_name"]), "")
+        if not cp or cp not in by_cp:
+            rep.gap("appointments", rid, "client id not found"); continue
+        groups.setdefault((rid, cp), []).append((ref, p, raw))
+    for (rid, cp), items in groups.items():
+        rep.inc("appointments", "deduped", len(items) - 1)
+        p = items[0][1]
+        tz = p["tz"] or APPT_DEFAULT_TZ
+        start_utc, end_utc = to_utc(p["start"], tz), to_utc(p["end"], tz)
+        if not start_utc:
+            rep.gap("appointments", rid, "unparseable start"); continue
+        lines = [{k: q[k] for k in ("service", "code", "price", "invoice", "dx")} for _, q, _ in items]
+        aid = hashlib.sha256(f"{rid}\x1f{cp}".encode()).hexdigest()[:32]
         cur = con.execute(
-            "INSERT OR IGNORE INTO imported_appointments (id,client_id,carepatron_contact_id,start_at,end_at,service,status,raw_json,imported_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
-            (aid, by_cp[cp], cp, p["start"], p["end"], p["service"], p["status"], json.dumps(raw, sort_keys=True), _now()))
+            "INSERT OR IGNORE INTO imported_appointments (id,client_id,carepatron_contact_id,carepatron_appointment_id,"
+            "start_at,end_at,tz,start_utc,end_utc,service,status,duration_min,lines_json,raw_json,imported_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (aid, by_cp[cp], cp, rid, p["start"], p["end"], tz, start_utc, end_utc, p["service"], p["status"],
+             int(p["duration"]) if p["duration"].isdigit() else None, json.dumps(lines),
+             json.dumps([r for _, _, r in items], sort_keys=True), _now()))
         rep.inc("appointments", "created" if cur.rowcount else "unchanged"); rep.inc("appointments", "out")
+        rep.inc("appointments", "status_" + (p["status"] or "blank"))
+        rep.inc("appointments", "future" if start_utc > now else "past")
 
 
 def count_pdfs(folder: Path, rep: Report) -> list[Path]:
