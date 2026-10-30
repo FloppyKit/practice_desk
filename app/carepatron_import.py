@@ -25,15 +25,17 @@ from typing import Any, Callable, Iterable
 from app import clients_db
 
 # Our field -> candidate Carepatron CSV headers (case/space-insensitive).
-# GUESSED from the help docs; adjust once the real export arrives.
+# Confirmed against the real 2026-10-29 Carepatron client export header.
+# Desk stores Carepatron ids as "cont-<guid>"; the CSV "Id" is the bare guid.
+CP_ID_PREFIX = "cont-"
 CLIENT_COLUMNS: dict[str, list[str]] = {
-    "carepatron_contact_id": ["Id", "Client Id", "Contact Id", "ID"],
-    "given_name": ["First Name", "First name", "Given Name"],
-    "family_name": ["Last Name", "Last name", "Family Name"],
-    "preferred_name": ["Preferred Name", "Nickname"],
-    "email": ["Email", "Email Address", "Primary Email"],
-    "phone": ["Phone", "Phone Number", "Mobile", "Primary Phone"],
-    "dob": ["Date of Birth", "Birth Date", "DOB", "Birthdate"],
+    "carepatron_contact_id": ["Id"],
+    "given_name": ["First name"],
+    "family_name": ["Last name"],
+    "preferred_name": ["Preferred name"],
+    "email": ["Email"],
+    "phone": ["Phone number"],  # exported as '+1... (leading apostrophe)
+    "dob": ["Date of birth"],
     "status": ["Status"],
 }
 APPT_COLUMNS: dict[str, list[str]] = {
@@ -62,7 +64,13 @@ def _pick(row: dict[str, str], cols: dict[str, list[str]]) -> dict[str, str]:
     return out
 
 
+def norm_cp_id(raw: str) -> str:
+    s = (raw or "").strip().lower()
+    return s if not s or s.startswith(CP_ID_PREFIX) else CP_ID_PREFIX + s
+
+
 def norm_phone(raw: str) -> str:
+    raw = (raw or "").strip().lstrip("'")
     d = re.sub(r"\D", "", raw or "")
     if (raw or "").strip().startswith("+") and 8 <= len(d) <= 15:
         return "+" + d
@@ -139,9 +147,9 @@ def load_clients(con, csv_path: Path, rep: Report) -> None:
     for i, raw in enumerate(rows, 1):
         rep.inc("clients", "in")
         p = _pick(raw, CLIENT_COLUMNS)
-        ref = p["carepatron_contact_id"] or f"row{i}"
+        ref = norm_cp_id(p["carepatron_contact_id"]) or f"row{i}"
         rec = {
-            "carepatron_contact_id": p["carepatron_contact_id"],
+            "carepatron_contact_id": norm_cp_id(p["carepatron_contact_id"]),
             "given_name": p["given_name"], "family_name": p["family_name"],
             "preferred_name": p["preferred_name"],
             "email": p["email"].lower(), "phone_e164": norm_phone(p["phone"]),
@@ -206,13 +214,23 @@ def note_files(folder: Path) -> list[Path]:
 
 
 def _note_owner(path: Path, folder: Path, by_cp, by_name) -> str:
-    """Carepatron contact id for a note: any path part equal to a known id, else a unique client name."""
+    """Carepatron contact id for a note.
+
+    Real export layout: <Client Name (guid[:8])>/<Note title - YYYY-MM-DD[ (n)]>.md.
+    Tries the folder's (hex8) suffix, then an exact id in the path, then a unique client name.
+    """
     parts = list(path.relative_to(folder).parts)
     parts[-1] = path.stem
+    for part in parts[:-1]:
+        m = re.search(r"\(([0-9a-f]{8})\)\s*$", part)
+        if m:
+            hits = [cp for cp in by_cp if cp[len(CP_ID_PREFIX):].startswith(m.group(1))]
+            if len(hits) == 1:
+                return hits[0]
     for part in parts:
         for tok in [part, *re.split(r"[ _\-]{1,}", part)]:
-            if tok in by_cp:
-                return tok
+            if norm_cp_id(tok) in by_cp:
+                return norm_cp_id(tok)
     for part in parts:
         k = _key(_DATE.sub("", part))
         for name, cp in by_name.items():
@@ -229,7 +247,7 @@ def load_notes(con, folder: Path, rep: Report) -> None:
         content = p.read_text(encoding="utf-8", errors="replace")
         cp = _note_owner(p, folder, by_cp, by_name)
         if not cp:
-            rep.gap("notes", rel, "no matching client"); continue
+            rep.gap("notes", rel.split("/")[0][-10:] + "/…" if "/" in rel else "(top-level)", "no matching client"); continue
         m = _DATE.search(p.stem) or _DATE.search(content[:400])
         dos = m.group(1) if m else ""
         nid = hashlib.sha256(f"{cp}\x1f{dos}\x1f{content}".encode()).hexdigest()[:32]
@@ -275,7 +293,7 @@ def load_appointments(con, src: Path, rep: Report) -> None:
 
 
 def count_pdfs(folder: Path, rep: Report) -> list[Path]:
-    pdfs = sorted(folder.rglob("*.pdf"))
+    pdfs = sorted(p for p in folder.rglob("*") if p.suffix.lower() == ".pdf")
     rep.inc("pdfs", "in", len(pdfs))
     return pdfs
 
