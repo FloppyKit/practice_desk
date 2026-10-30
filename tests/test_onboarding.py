@@ -104,7 +104,7 @@ def _env():
             main.patch_event = cal.patch
             main.delete_event = cal.delete
             main._require_staff = lambda *a, **k: None
-            main._mint_intake_url = lambda email, name="", forms=None: "https://site.example.invalid/intake/open?t=TOKEN"
+            main._mint_intake_url = lambda email, name="", forms=None, client_id="": "https://site.example.invalid/intake/open?t=TOKEN"
 
             def fx():
                 return onboarding.Effects(

@@ -459,8 +459,8 @@ def test_voice_booking_existing_client_unfinished_intake_gets_link_no_hold() -> 
             out, url = book(b"voice")
             assert out.get("intake_link_sent") is True and not out.get("held")
             assert url == "https://site.example/intake#tok"
-            out, url = book(b"")  # web: unchanged
-            assert "intake_link_sent" not in out and not url
+            out, url = book(b"")  # web: link rides in the confirmation email too (no phone-only flag)
+            assert "intake_link_sent" not in out and url == "https://site.example/intake#tok"
             onboarding.status = lambda **k: {"complete": True}
             out, url = book(b"voice")  # intake complete: unchanged
             assert "intake_link_sent" not in out and not url
@@ -523,8 +523,8 @@ def test_voice_booking_uses_consent_on_file_and_saves_an_answer() -> None:
             assert book(True) is True  # yes on file, not asked again
             assert book(True, sms_consent=False) is False  # caller retracts on the booking
             assert clients_db.sms_consent_state(clients_db.get_by_id("c-jane")) == "no"
-            assert book(False, sms_consent=True) is True  # web checkbox unchanged, not saved
-            assert clients_db.sms_consent_state(clients_db.get_by_id("c-jane")) == "no"
+            assert book(False, sms_consent=True) is True  # web checkbox is saved too
+            assert clients_db.sms_consent_state(clients_db.get_by_id("c-jane")) == "yes"
         finally:
             for k, v in saved.items():
                 setattr(main, k, v)
