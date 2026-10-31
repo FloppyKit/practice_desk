@@ -113,6 +113,10 @@ def mint_verify_token(
 
 
 def verify_patient_token(token: str) -> dict[str, Any]:
+    from . import portal_sessions
+
+    if portal_sessions.is_session_token(token):
+        return portal_sessions.check(token)
     try:
         body, sig = token.split(".", 1)
     except ValueError as e:

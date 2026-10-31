@@ -1266,6 +1266,16 @@ class PublicTokenRequest(BaseModel):
     verify_token: str
 
 
+@app.post("/api/public/logout")
+def api_public_logout(req: PublicTokenRequest):
+    """Revoke this browser's portal session. Always ok (no oracle)."""
+    from . import portal_sessions
+
+    if portal_sessions.is_session_token(req.verify_token or ""):
+        portal_sessions.revoke(req.verify_token.strip())
+    return {"ok": True}
+
+
 class PublicCancelVisitRequest(BaseModel):
     verify_token: str
     event_id: str

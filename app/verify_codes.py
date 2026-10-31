@@ -187,9 +187,10 @@ def confirm_code(
         stored["attempts"] = attempts + 1
         _write(channel, destination, stored)
         return {"ok": False, "reason": "invalid_code"}
-    from .tokens import mint_verify_token
+    from .portal_sessions import mint as mint_portal_session
 
-    token = mint_verify_token(
+    # Code-confirmed logins get a revocable 90-day rolling portal session (name/DOB-only checks stay 30 min).
+    token = mint_portal_session(
         client_id=str(stored.get("client_id") or ""),
         email=str(stored.get("email") or ""),
         name=str(stored.get("name") or ""),
