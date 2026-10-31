@@ -1059,12 +1059,9 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
 
 
 @app.post("/api/reminders/run")
-def api_reminders_run(
-    secret: str = Query(default=""),
-    dry_run: bool = Query(default=False),
-):
-    """Cron entrypoint. Protect with REMIND_CRON_SECRET when set."""
-    if REMIND_SECRET and secret != REMIND_SECRET:
+def api_reminders_run(request: Request, dry_run: bool = Query(default=False)):
+    """Cron entrypoint. x-staff-secret header only (no ?secret=, so it never lands in URLs/logs)."""
+    if not REMIND_SECRET or not hmac.compare_digest(_staff_secret("", request), REMIND_SECRET):
         raise HTTPException(401, "unauthorized")
     return process_reminders(dry_run=dry_run)
 
@@ -4069,9 +4066,13 @@ def api_desk_meta(secret: str = Query(default="")):
         "drive": True,
         "practice": True,
         "superbill": True,
-        # Local note-vault key: unchanged material so existing on-device vault data still opens.
+        # On-device note vault: own secret. vault_key_prev (rotation window) lets the browser
+        # re-encrypt data sealed under the previous key, then it is dropped from the env.
         "vault_key": (os.environ.get("DESK_VAULT_SECRET") or REMIND_SECRET),
     }
+    prev = os.environ.get("DESK_VAULT_SECRET_PREV", "").strip()
+    if prev:
+        resp["vault_key_prev"] = prev
     out = Response(
         content=json.dumps(resp),
         media_type="application/json",

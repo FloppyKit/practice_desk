@@ -4892,7 +4892,7 @@
       startScribeDraftPoll();
       officeUrl = meta.office_url || officeUrl;
       if (window.PsychartsVault) {
-        if (meta.vault_key) PsychartsVault.unlock(meta.vault_key).catch(() => {});
+        if (meta.vault_key) PsychartsVault.unlock(meta.vault_key, meta.vault_key_prev).catch(() => {});
       }
       cipherStatusRefresh();
       if (!window.__cipherPoll) window.__cipherPoll = setInterval(cipherStatusRefresh, 60000);
