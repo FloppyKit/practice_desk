@@ -156,6 +156,11 @@
     html.desk-layout-office .desk-layout-switch { display:inline-flex; }
     html.desk-unlocked #banner-unlock { display:none !important; }
     #nt-carry[hidden] { display:none !important; }
+    /* Note window: header (title, close, prefill banner) fixed; only the body scrolls. */
+    #note-pop:not([hidden]) { display:flex; flex-direction:column; overflow:hidden !important; }
+    #note-pop .nt-head { flex:0 0 auto; }
+    #note-pop .nt-head .book-pop-top { position:static; margin-bottom:0.45rem; }
+    #note-pop .nt-scroll { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; margin:0 -0.95rem; padding:0 0.95rem; }
     #nt-fields .nt-changed { outline:2px solid #d97706; outline-offset:1px; }
     #banner-unlock[hidden], .signin-form [hidden], .mail-split[hidden], #nt-fields label[hidden] { display:none !important; }
     #scribe-draft-banner[hidden] { display:none !important; }
@@ -1210,6 +1215,7 @@
   </div>
 
   <div id="note-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Note">
+    <div class="nt-head">
     <div class="book-pop-top">
       <div>
         <div class="book-pop-kicker">After-visit summary</div>
@@ -1217,6 +1223,12 @@
       </div>
       <button type="button" class="book-pop-close" id="note-close" aria-label="Close">×</button>
     </div>
+    <div id="nt-carry" class="desk-meta" hidden style="display:flex;gap:0.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px solid var(--border);border-radius:0.55rem;padding:0.4rem 0.6rem;margin:0 0 0.4rem">
+      <span id="nt-carry-label"></span>
+      <button class="btn secondary" type="button" id="nt-blank" style="width:auto">Start blank</button>
+    </div>
+    </div>
+    <div class="nt-scroll" id="note-body">
     <input type="hidden" id="nt-event" />
     <label class="field">Template
       <select id="nt-template"></select>
@@ -1240,10 +1252,6 @@
     <div id="nt-manage-box" hidden>
       <div id="nt-manage-list"></div>
     </div>
-    <div id="nt-carry" class="desk-meta" hidden style="display:flex;gap:0.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px solid var(--border);border-radius:0.55rem;padding:0.4rem 0.6rem;margin:0 0 0.5rem">
-      <span id="nt-carry-label"></span>
-      <button class="btn secondary" type="button" id="nt-blank" style="width:auto">Start blank</button>
-    </div>
     <div id="nt-fields"></div>
     <p class="desk-meta">Type <strong>.name</strong> then space or tab to insert a phrase. Add them under Settings → Dot phrases.</p>
     <label class="field">Transcript (optional)
@@ -1262,6 +1270,7 @@
         <button class="btn" type="button" id="nt-avs-send">Send AVS to patient (email + text)</button>
         <button class="btn secondary" type="button" id="nt-avs-revoke">Turn off link</button>
       </div>
+    </div>
     </div>
   </div>
 
@@ -2639,6 +2648,7 @@
       const pop = $("note-pop");
       pop.hidden = false;
       pop.scrollTop = 0;
+      $("note-body").scrollTop = 0;
       syncSheetLock();
       fitSheet(pop);
     }
