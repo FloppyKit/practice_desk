@@ -155,7 +155,7 @@
     html.desk-layout-notes .desk-layout-switch,
     html.desk-layout-office .desk-layout-switch { display:inline-flex; }
     html.desk-unlocked #banner-unlock { display:none !important; }
-    #banner-unlock[hidden], .signin-form [hidden] { display:none !important; }
+    #banner-unlock[hidden], .signin-form [hidden], .mail-split[hidden], #nt-fields label[hidden] { display:none !important; }
     #scribe-draft-banner[hidden] { display:none !important; }
     .desk-more-menu button.is-on { font-weight:600; }
     .skip-link {
@@ -844,7 +844,14 @@
       <div id="week"></div>
     </div>
     <div class="card desk-tile-wide" id="mail-card" hidden>
-      <div class="mail-split">
+      <div class="mail-spruce" style="padding:1rem;display:flex;gap:0.75rem;align-items:center;justify-content:space-between;flex-wrap:wrap">
+        <p style="margin:0">Client messages are in Spruce for now. Website chats and uploads arrive there.</p>
+        <span style="display:flex;gap:0.5rem">
+          <a class="btn" href="https://app.sprucehealth.com" target="_blank" rel="noopener">Open Spruce</a>
+          <button class="btn secondary" type="button" id="mail-show-desk" onclick="this.closest('#mail-card').querySelector('.mail-split').hidden=false;this.remove()">Show Desk mail</button>
+        </span>
+      </div>
+      <div class="mail-split" hidden>
         <div class="mail-list">
           <div class="mail-list-head">
             <strong>Desk</strong>
@@ -1358,15 +1365,16 @@
           if (r && r.ok) { closeUnlock(); load(); } else { msg("Enter your staff email."); }
           return;
         }
-        $("unlock").disabled = true;
-        await signinPost("/api/desk/auth/send", { email: em }).catch(() => null);
-        $("unlock").disabled = false;
+        // Move to the code box right away; the send finishes in the background.
         signinStage = "code";
         $("signin-code").hidden = false; $("signin-code-label").hidden = false;
         $("unlock").textContent = "Sign in";
         note.hidden = false;
-        note.textContent = "If that address is on the staff list, a code is on its way. It expires in 10 minutes.";
+        note.textContent = "Sending… If that address is on the staff list, a code is on its way. It expires in 10 minutes.";
         $("signin-code").focus();
+        signinPost("/api/desk/auth/send", { email: em }).catch(() => null).then(() => {
+          if (note.textContent.indexOf("Sending… ") === 0) note.textContent = note.textContent.slice(9);
+        });
         return;
       }
       const r = await signinPost("/api/desk/auth/verify", { email: em, code: $("signin-code").value }).catch(() => null);
@@ -1502,7 +1510,7 @@
       const pad = 12;
       const bottomPad = Math.max(pad, Math.round(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("env(safe-area-inset-bottom)")) || 0) + pad);
       const max = Math.max(240, window.innerHeight - topPad - bottomPad);
-      el.style.maxHeight = max + "px";
+      el.style.maxHeight = "min(" + max + "px, calc(100dvh - " + (topPad + bottomPad) + "px))";
       el.style.height = "auto";
       el.style.overflowY = "auto";
       el.style.bottom = "auto";
@@ -1533,10 +1541,11 @@
           el.style.overflowY = "auto";
           el.style.top = topPad + "px";
         } else {
+          // Anchor to the top (not centered): content that loads later grows down
+          // inside max-height and scrolls, so the header never leaves the screen.
           el.style.height = "auto";
           el.style.overflowY = "auto";
-          const centered = Math.round((window.innerHeight - el.offsetHeight) / 2);
-          el.style.top = Math.max(topPad, centered) + "px";
+          el.style.top = topPad + "px";
         }
       });
     }
@@ -2555,12 +2564,13 @@
       closePractice();
       closeSuperbill();
       $("files-pop").hidden = true;
-      if (!dos && homeCurrent) {
+      noteVisit = null;
+      if (homeCurrent && focusEventId) {
         const vis = ((homeCurrent.visits || {}).upcoming || []).concat((homeCurrent.visits || {}).past || []);
-        const hit = vis.find((v) => v.event_id && v.event_id === focusEventId);
-        if (hit && hit.start_iso) dos = String(hit.start_iso).slice(0, 10);
+        noteVisit = vis.find((v) => v.event_id && v.event_id === focusEventId) || null;
+        if (!dos && noteVisit && noteVisit.start_iso) dos = String(noteVisit.start_iso).slice(0, 10);
       }
-      noteDosPrefill = dos || new Date().toISOString().slice(0, 10);
+      noteDosPrefill = dos || ymd(new Date());
       $("nt-event").value = focusEventId || "";
       $("note-status").textContent = "";
       avsShareShow(null);
@@ -3749,6 +3759,7 @@
     $("sd-copy-btn").onclick = () => deskSend(false);
     let noteSpecs = {};
     let noteDosPrefill = "";
+    let noteVisit = null;  // visit this note is opened under (event_id + dos sent on sign)
     async function fillNoteTemplates() {
       const sel = $("nt-template");
       if (!sel) return;
@@ -3806,7 +3817,15 @@
         box.innerHTML = "<p class='desk-meta'>No sections on this template.</p>";
         return;
       }
-      const today = new Date().toISOString().slice(0, 10);
+      const today = ymd(new Date());
+      if (noteVisit) {
+        const d = new Date(noteVisit.start_iso || "");
+        const p = document.createElement("p");
+        p.className = "desk-meta"; p.id = "nt-visit-line";
+        p.textContent = "For visit: " + (Number.isNaN(d.getTime()) ? noteDosPrefill
+          : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
+        box.appendChild(p);
+      }
       sections.forEach((sec) => {
         const lab = document.createElement("label");
         lab.className = "field";
@@ -3814,9 +3833,11 @@
         let start = prev[sec.id] || "";
         if (sec.id === "dos" && !start) start = noteDosPrefill || today;
         if (sec.type === "date" && sec.id !== "return_visit" && !start) start = today;
+        if (sec.id === "dos" && noteVisit) start = noteDosPrefill;
         const inp = noteFieldInput(sec, start);
         inp.dataset.fid = sec.id;
         lab.appendChild(inp);
+        if (sec.id === "dos" && noteVisit) lab.hidden = true;  // set by the visit
         box.appendChild(lab);
       });
     }
@@ -4106,7 +4127,7 @@
       }
       document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
         const fid = el.dataset.fid;
-        if (fid === "dos" && !el.value) el.value = new Date().toISOString().slice(0, 10);
+        if (fid === "dos" && !el.value) el.value = ymd(new Date());
         if (fields && fields[fid]) el.value = fields[fid];
         else if (fid === "body" && raw) el.value = raw;
         else if (fid === "plan" && fields && fields.plan) el.value = fields.plan;
@@ -4243,17 +4264,21 @@
         box.appendChild(b);
       });
     }
+    let homeSeq = 0;
     async function openHome(ref) {
-      $("home-empty").textContent = "Loading…";
+      const seq = ++homeSeq;
+      $("home-empty").textContent = "Loading" + (ref.name ? " " + ref.name : "") + "…";
       $("home-empty").hidden = false;
       $("home-body").hidden = true;
       setHomeHint("");
+      openClientTile();  // open now with the loading state; the fetch fills it in
       const q = new URLSearchParams();
       if (ref.id) q.set("id", ref.id);
       if (ref.email) q.set("email", ref.email);
       if (ref.name) q.set("name", ref.name);
       const res = await deskFetch("/api/desk/client?" + q.toString());
       const data = await res.json().catch(() => ({}));
+      if (seq !== homeSeq) return;  // a newer click won
       if (!res.ok || !data.ok) {
         $("home-empty").textContent = data.detail || "Client not found.";
         return;

@@ -1859,7 +1859,7 @@ def api_desk_auth_send(req: DeskAuthEmail, request: Request):
     from . import desk_auth
 
     try:
-        desk_auth.send_code(req.email, _client_ip(request))
+        desk_auth.send_code(req.email, _client_ip(request), background=True)
     except Exception:
         pass
     return {"ok": True, "detail": "If that address is on the staff list, a code is on its way."}

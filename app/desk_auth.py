@@ -76,7 +76,7 @@ def _limited(con: sqlite3.Connection, key: str, limit: tuple[int, int]) -> bool:
     return False
 
 
-def send_code(email: str, ip: str, *, sender=None) -> None:
+def send_code(email: str, ip: str, *, sender=None, background: bool = False) -> None:
     em = (email or "").strip().lower()
     with _con() as con:
         if _limited(con, "ip-send:" + ip, SEND_PER_IP) or _limited(con, "em-send:" + em, SEND_PER_EMAIL):
@@ -90,9 +90,14 @@ def send_code(email: str, ip: str, *, sender=None) -> None:
         )
     if sender is None:
         from .notify import send_email as sender
-    sender(em, f"Practice desk sign-in code: {code}",
-           f"Your practice desk sign-in code is {code}.\n\nIt works once and expires in 10 minutes. "
-           "If you didn't ask for it, ignore this email.\n")
+    args = (em, f"Practice desk sign-in code: {code}",
+            f"Your practice desk sign-in code is {code}.\n\nIt works once and expires in 10 minutes. "
+            "If you didn't ask for it, ignore this email.\n")
+    if background:  # the relay takes ~2-3 s; don't hold the HTTP reply on it
+        import threading
+        threading.Thread(target=sender, args=args, daemon=True).start()
+    else:
+        sender(*args)
 
 
 def verify_code(email: str, code: str, ip: str) -> str | None:
