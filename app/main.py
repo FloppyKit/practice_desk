@@ -5105,7 +5105,7 @@ def _page(name: str, cache: bool = True) -> FileResponse:
 
 
 _BOOK_DESCRIPTIONS = {
-    "new-client": "Book a new-patient video evaluation (about 90 minutes, $600) with Matt Brown, DO, MBA. Times are shown in Central Time.",
+    "new-client": "Book a new-patient video evaluation (about 90–100 minutes, $600) with Matt Brown, DO, MBA. Times are shown in Central Time.",
     "follow-up": "Book a follow-up video visit with Matt Brown, DO, MBA (current patients). Times are shown in Central Time.",
 }
 

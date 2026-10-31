@@ -191,8 +191,8 @@
       ],
       "tool": "portal.book.open",
       "replies": {
-        "hand_booker": "Here’s the booking link — pick a time that works: {book_url}\n\nNew patient evaluations are ~90–100 minutes ($600). Telehealth only for Illinois, Kansas, or Missouri.",
-        "overview_then_state": "Thanks for reaching out — glad you’re here.\n\nA few things most people like to know:\n\n• All visits are online by video.\n• Appointments are Monday through Thursday.\n• New patients: evaluation visit (~90–100 minutes, $600).\n• Follow-ups are 30 minutes ($265) or 60 minutes ($420).\n• Cancel anytime; under 24 hours’ notice is charged in full.\n• Out-of-network: HSA/FSA welcome. Pay at the visit; receipt/superbill for PPO reimbursement (check your plan).\n• Telehealth only for Illinois, Kansas, or Missouri.\n\nTo book, I’ll need to confirm you’ll be in Illinois, Kansas, or Missouri for visits — which state?",
+        "hand_booker": "Here’s the booking link — pick a time that works: {book_url}\n\nNew patient evaluations are about 90–100 minutes ($600). Telehealth only for Illinois, Kansas, or Missouri.",
+        "overview_then_state": "Thanks for reaching out — glad you’re here.\n\nA few things most people like to know:\n\n• All visits are online by video.\n• Appointments are Monday through Thursday.\n• New patients: evaluation visit (about 90–100 minutes, $600).\n• Follow-ups are 30 minutes ($265) or 60 minutes ($420).\n• Cancel anytime; under 24 hours’ notice is charged in full.\n• Out-of-network: HSA/FSA welcome. Pay at the visit; receipt/superbill for PPO reimbursement (check your plan).\n• Telehealth only for Illinois, Kansas, or Missouri.\n\nTo book, I’ll need to confirm you’ll be in Illinois, Kansas, or Missouri for visits — which state?",
         "ready": "Ready to book? {book_url}"
       }
     },
@@ -462,17 +462,17 @@
       "slots": [],
       "tool": "portal.faq",
       "replies": {
-        "new-patients": "Yes — telehealth in Illinois, Kansas, and Missouri. New patients book a full video evaluation (~90–100 minutes). The first visit is a consultation; ongoing care begins after a second visit. Use chat for questions, then book online when ready: {book_url}",
+        "new-patients": "Yes — telehealth in Illinois, Kansas, and Missouri. New patients book a full video evaluation (about 90–100 minutes). The first visit is a consultation; ongoing care begins after a second visit. Use chat for questions, then book online when ready: {book_url}",
         "hours": "Visits are scheduled Monday through Thursday.",
         "approach": "Dr. Brown does not provide ERP himself. He often works with people who have already done ERP or understand the ideas and still feel stuck — combining medication, dynamic therapy, and lifestyle support, coordinated with ERP therapists when you have one.",
         "after-erp": "Yes — that is a common reason people reach out. When skills make sense but symptoms, sleep, mood, focus, or daily follow-through still get in the way, a psychiatry visit can help sort the next layer.",
         "directories": "Dr. Brown is listed in the International OCD Foundation directory, and on Psychology Today for Illinois and Kansas. Links are on the About and OCD pages of this site.",
         "meds-therapy": "Yes. As a psychiatrist, Dr. Brown prescribes and manages medications and also offers ongoing dynamic talk therapy when that is a good fit — not refill-only visits for everyone.",
         "insurance": "Out-of-network for all plans. HSA/FSA debit cards are welcome. Payment is collected at the visit; you receive a receipt/superbill to submit to a PPO for possible reimbursement. Dr. Brown does not bill insurance companies directly. Contact your insurer for your out-of-network rate. CPT codes often used: new patient 90792; 30 min follow-up 99213 and 90833; 60 min 99213 and 90838.",
-        "fees": "New patient evaluation (~90–100 min) $600; 60 min follow-up $420; 30 min follow-up $265. FSA/HSA debit, credit card, ACH, or Bitcoin (visit-by-visit — not stored on file). Payment is due at the appointment (or anytime before).",
+        "fees": "New patient evaluation (about 90–100 minutes) $600; 60 min follow-up $420; 30 min follow-up $265. FSA/HSA debit, credit card, ACH, or Bitcoin (visit-by-visit — not stored on file). Payment is due at the appointment (or anytime before).",
         "superbill": "After payment you receive a superbill/receipt to submit yourself. Ask your insurer how they want claims filed and what your out-of-network benefits are.",
         "privacy": "Personal and health information is stored with encrypted practice systems and clinical tools used for care. This website chat does not access your medical record.",
-        "intro-call": "Most questions are answered in website chat (same information as a typical intake email). The first appointment is a 90-minute new-client video visit — you can ask anything there.",
+        "intro-call": "Most questions are answered in website chat (same information as a typical intake email). The first appointment is a new-client video visit of about 90–100 minutes — you can ask anything there.",
         "cancellation": "You may cancel or reschedule anytime. With less than 24 hours’ notice, the visit is charged in full to the payment method on file.",
         "join-visit": "All visits are online video. Current patients use Join visit ({join_url}) — that is the waiting room. Bookmark it for easy access.",
         "states": "Secure telehealth for residents of Illinois, Kansas, and Missouri only.",
