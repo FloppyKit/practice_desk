@@ -88,20 +88,33 @@ def test_match_rules_and_last_visit() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         _db(tmp)
         with clients_db.connect() as con:
-            assert refills.match_client(con, phones=["+15550000001"], email="", name="Synth Alpha",
-                                        dob="1990-01-02")[1] == "matched"
-            assert refills.match_client(con, phones=["+15550000001"], email="", name="Synth Alpha", dob="")[1] == "needs_dob"
-            assert refills.match_client(con, phones=["+15550000001"], email="", name="Synth Alpha",
-                                        dob="1990-01-03")[1] == "needs_dob"
-            # name only (no contact) never matches
-            assert refills.match_client(con, phones=[], email="", name="Synth Alpha", dob="1990-01-02")[1] == "unmatched"
-            # one contact shared by two same-name records -> needs_dob
-            con.execute("UPDATE clients SET phone_e164='+15550000002' WHERE id='c2'")
-            assert refills.match_client(con, phones=["+15550000002"], email="", name="Synth Beta",
-                                        dob="2012-05-05")[1] == "needs_dob"
+            m = lambda **k: refills.match_client(con, **dict(dict(phones=[], email="", name="", dob=""), **k))
+            assert m(phones=["+15550000001"], name="Synth Alpha")[:2] == ("c0", "matched")  # no DOB needed
+            assert m(email="s0@example.invalid", name="Synth Alpha")[1] == "matched"
+            assert m(phones=["+15550000001"], name="Synth Alpha", dob="1990-01-02")[2] == "contact+name+dob"
+            assert m(phones=[], name="Synth Alpha")[1] == "unmatched"  # name only never matches
+            assert m(phones=["+15550000001"], name="Someone Else")[1] == "ambiguous_match"
             lv, src = refills.last_visit(con, "c0", now=datetime(2026, 10, 30, tzinfo=timezone.utc),
                                          calendar_past=[{"start_iso": "2026-09-20T10:00:00-05:00", "no_show": True}])
             assert (lv, src) == (date(2026, 8, 1), "imported_appointments")
+
+
+def test_dob_conflict_is_flagged_not_ignored() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        _db(tmp)
+        with clients_db.connect() as con:
+            cid, st, _b, flags = refills.match_client(con, phones=["+15550000001"], email="",
+                                                      name="Synth Alpha", dob="1990-01-03")
+            assert (cid, st, flags) == ("c0", "matched", ["dob_mismatch"])
+
+
+def test_shared_family_contact_is_ambiguous() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        _db(tmp)
+        with clients_db.connect() as con:
+            con.execute("UPDATE clients SET phone_e164='+15550000001' WHERE id='c1'")  # parent + child share a phone
+            cid, st, _b, _f = refills.match_client(con, phones=["+15550000001"], email="", name="Synth Alpha", dob="")
+            assert (cid, st) == ("", "ambiguous_match")
 
 
 def test_ingest_and_summary_has_no_phi() -> None:

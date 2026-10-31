@@ -2467,8 +2467,8 @@
       if (!rows.length) { box.innerHTML = "<p class='desk-meta'>No refill requests yet.</p>"; return; }
       const pend = "MDToolbox check pending";
       const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? (iso || "—") : d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
-      box.innerHTML = rows.map((r) => "<div class='rf-row'><div class='rf-top'><strong>" + esc(r.client_name || "Unmatched") + "</strong>"
-        + "<span class='rf-chip'>" + esc(r.status || "new") + "</span></div>"
+      box.innerHTML = rows.map((r) => "<div class='rf-row'><div class='rf-top'><strong>" + esc(r.client_name || (r.status === "ambiguous_match" ? "Several possible clients" : "Unmatched")) + "</strong>"
+        + "<span class='rf-chip'>" + esc(({ ambiguous_match: "ambiguous match: pick client", needs_dob: "needs DOB", unmatched: "no match", overdue: "needs visit", controlled: "controlled: Matt signs" })[r.status] || r.status || "new") + "</span></div>"
         + "<dl><dt>Received</dt><dd>" + esc(when(r.received_at)) + " · " + (r.source === "spruce" ? "Spruce text" : "Website chat") + "</dd>"
         + "<dt>Recommendation</dt><dd>" + esc((r.recommendation || "—").replace(/_/g, " ")) + "</dd>"
         + "<dt>Flags</dt><dd>" + esc(((r.flags || []).concat(r.notes || [])).join(", ").replace(/_/g, " ") || "—") + "</dd>"

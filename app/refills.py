@@ -183,8 +183,9 @@ def _digits(s: str) -> str:
 
 
 def match_client(con: sqlite3.Connection, *, phones: list[str], email: str, name: str, dob: str
-                 ) -> tuple[str, str, str]:
-    """-> (client_id, status, basis). Contact (phone/email) + name + DOB. Never name only."""
+                 ) -> tuple[str, str, str, list[str]]:
+    """-> (client_id, status, basis, flags). Name + contact (email/phone) to exactly one client.
+    DOB optional (Matt 11:35 PM); a given DOB that conflicts is flagged dob_mismatch. Never name only."""
     cands: dict[str, sqlite3.Row] = {}
     for ph in phones:
         d = _digits(ph)
@@ -195,24 +196,19 @@ def match_client(con: sqlite3.Connection, *, phones: list[str], email: str, name
         for r in con.execute("SELECT * FROM clients WHERE lower(email)=?", (email.strip().lower(),)):
             cands[r["id"]] = r
     if not cands:
-        return "", "unmatched", "no contact match"
+        return "", "unmatched", "no contact match", []
+    if len(cands) > 1:
+        return "", "ambiguous_match", f"contact shared by {len(cands)} clients", []
     want = _norm_name(name)
-
-    def name_ok(r: sqlite3.Row) -> bool:
-        if not want:
-            return len(cands) == 1  # the contact itself is the identity; DOB still required
-        full = {_norm_name(r["display_name"]), _norm_name(f"{r['given_name'] or ''} {r['family_name'] or ''}"),
-                _norm_name(f"{r['preferred_name'] or ''} {r['family_name'] or ''}")}
-        return want in full
-    named = [r for r in cands.values() if name_ok(r)]
-    if len(named) != 1:
-        return "", "needs_dob", "name clash or no name match on contact"
-    r = named[0]
-    if not dob or not r["dob"]:
-        return r["id"], "needs_dob", "dob missing"
-    if str(r["dob"])[:10] != dob[:10]:
-        return "", "needs_dob", "dob mismatch"
-    return r["id"], "matched", "contact+name+dob"
+    r = next(iter(cands.values()))
+    full = {_norm_name(r["display_name"]), _norm_name(f"{r['given_name'] or ''} {r['family_name'] or ''}"),
+            _norm_name(f"{r['preferred_name'] or ''} {r['family_name'] or ''}")}
+    if not want or want not in full:
+        return "", "ambiguous_match", "name missing or differs from the contact's client", []
+    flags = []
+    if dob and r["dob"] and str(r["dob"])[:10] != dob[:10]:
+        flags.append("dob_mismatch")
+    return r["id"], "matched", "contact+name" + ("+dob" if dob and "dob_mismatch" not in flags and r["dob"] else ""), flags
 
 
 # ---------------------------------------------------------------- visits
@@ -302,8 +298,8 @@ def ingest(*, source: str, source_ref: str, text: str, phones: list[str] | None 
     today = now.astimezone().date()
     rid = uuid.uuid4().hex[:16]
     with connect() as con:
-        cid, status, basis = match_client(con, phones=phones or [], email=email,
-                                          name=ex.get("name") or name, dob=ex.get("dob") or "")
+        cid, status, basis, mflags = match_client(con, phones=phones or [], email=email,
+                                                  name=ex.get("name") or name, dob=ex.get("dob") or "")
         age = lv = nv = None
         src = ""
         rec: dict[str, Any] = {"recommendation": "", "flags": [], "notes": [], "max_supply_days": None}
@@ -322,6 +318,7 @@ def ingest(*, source: str, source_ref: str, text: str, phones: list[str] | None 
             rec = recommend(controlled="unknown", age_years=age, last_visit=lv, next_visit=nv, today=today,
                             cfg=config())
             status = rec["status"]
+            rec["flags"] = mflags + rec["flags"]
         con.execute(
             "INSERT INTO refill_requests (id, source, source_ref, received_at, client_id, match_basis, status,"
             " recommendation, flags_json, notes_json, max_supply_days, med_text, controlled, pharmacy_requested,"
@@ -360,7 +357,9 @@ def list_requests(limit: int = 100) -> list[dict[str, Any]]:
     return out
 
 
-SUMMARY_STATUSES = ("new", "matched", "pass", "overdue", "controlled", "needs_dob", "unmatched")
+# needs_dob kept readable for older rows; v0.1 uses ambiguous_match for matching and needs_dob only
+# when the matched record has no DOB (age unknown for the minor/adult rule).
+SUMMARY_STATUSES = ("new", "matched", "pass", "overdue", "controlled", "ambiguous_match", "needs_dob", "unmatched")
 AGE_BUCKETS = ("lt_1d", "1_3d", "3_7d", "gt_7d")
 
 
