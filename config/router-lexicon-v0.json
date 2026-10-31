@@ -472,7 +472,7 @@
         "fees": "New patient evaluation (~90–100 min) $600; 60 min follow-up $420; 30 min follow-up $265. FSA/HSA debit, credit card, ACH, or Bitcoin (visit-by-visit — not stored on file). Payment is due at the appointment (or anytime before).",
         "superbill": "After payment you receive a superbill/receipt to submit yourself. Ask your insurer how they want claims filed and what your out-of-network benefits are.",
         "privacy": "Personal and health information is stored with encrypted practice systems and clinical tools used for care. This website chat does not access your medical record.",
-        "intro-call": "Most questions are answered in website chat (same information as a typical intake email). The first appointment is a 90-minute new-client video visit — you can ask anything there. A separate short intro call is not the usual path.",
+        "intro-call": "Most questions are answered in website chat (same information as a typical intake email). The first appointment is a 90-minute new-client video visit — you can ask anything there.",
         "cancellation": "You may cancel or reschedule anytime. With less than 24 hours’ notice, the visit is charged in full to the payment method on file.",
         "join-visit": "All visits are online video. Current patients use Join visit ({join_url}) — that is the waiting room. Bookmark it for easy access.",
         "states": "Secure telehealth for residents of Illinois, Kansas, and Missouri only.",

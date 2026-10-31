@@ -5167,7 +5167,8 @@ def page_follow():
 
 @app.get("/intro-15")
 def page_intro():
-    return _book_page("intro-15")
+    # No intro calls offered; keep old links working.
+    return RedirectResponse("/new-client", status_code=301)
 
 
 @app.get("/thanks")
