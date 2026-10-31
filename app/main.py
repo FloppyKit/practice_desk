@@ -2468,6 +2468,18 @@ def api_desk_refills(secret: str = Query(default="")):
     return {"ok": True, "requests": refills.list_requests(), "mdtoolbox": "pending"}
 
 
+@app.post("/api/desk/refills/{rid}/sent")
+def api_desk_refill_sent(rid: str):
+    """Matt marks a refill sent -> one patient text (Spruce). Desk session or staff header only."""
+    _require_staff()
+    from . import refills
+
+    out = refills.mark_sent(rid, actor=_desk_session_email() or "staff")
+    if not out.get("ok") and out.get("error") == "not_found":
+        raise HTTPException(404, "not found")
+    return out
+
+
 @app.get("/api/desk/refills/summary")
 def api_desk_refills_summary(secret: str = Query(default="")):
     """PHI-free counts for bots: by status and age bucket only."""

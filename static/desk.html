@@ -669,6 +669,7 @@
     .rf-top { display:flex; justify-content:space-between; gap:0.5rem; align-items:baseline; flex-wrap:wrap; }
     .rf-chip { display:inline-block; border:1px solid var(--border); border-radius:999px; padding:0.05rem 0.5rem; font-size:0.75rem; }
     .rf-row dl { display:grid; grid-template-columns:7.5rem 1fr; gap:0.15rem 0.5rem; margin:0.4rem 0; }
+    .rf-acts { display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; }
     .rf-row dt { color:var(--muted); } .rf-row dd { margin:0; }
     #note-pop, #superbill-pop, #files-pop {
       width:min(28rem, calc(100vw - 1.25rem));
@@ -2495,8 +2496,21 @@
         + "<dt>Next visit</dt><dd>" + esc(r.next_visit_at || "none booked") + "</dd>"
         + "<dt>Asked for</dt><dd>" + esc(r.med_text || "—") + "</dd>"
         + "<dt>Medication</dt><dd>" + pend + "</dd><dt>Controlled</dt><dd>" + pend + "</dd><dt>Pharmacy</dt><dd>" + pend + "</dd></dl>"
-        + "<button class='btn secondary' type='button' disabled title='Coming later; nothing sends'>Draft booking text</button></div>").join("");
+        + "<div class='rf-acts'>" + (r.texted ? "<span class='rf-chip'>Sent · patient texted</span>"
+          : (r.client_id && (r.source === "spruce" || r.source === "chat") ? "<button class='btn' type='button' data-rf-sent='" + esc(r.id) + "'>Mark sent · text patient</button>" : ""))
+        + " <button class='btn secondary' type='button' disabled title='Coming later; nothing sends'>Draft booking text</button></div></div>").join("");
+      box.querySelectorAll("[data-rf-sent]").forEach((b) => { b.onclick = () => markRefillSent(b); });
       fitSheet(pop);
+    }
+    async function markRefillSent(btn) {
+      const row = btn.closest(".rf-row"), who = row ? row.querySelector("strong").textContent : "the patient";
+      if (!confirm("Mark this refill sent and text " + who + " once?")) return;
+      btn.disabled = true; btn.textContent = "Sending…";
+      const res = await deskFetch("/api/desk/refills/" + encodeURIComponent(btn.dataset.rfSent) + "/sent", { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) { btn.outerHTML = "<span class='rf-chip'>" + (d.already ? "Already texted" : "Sent · patient texted") + "</span>"; return; }
+      btn.disabled = false; btn.textContent = "Mark sent · text patient";
+      alert("Not sent: " + String(d.error || d.detail || res.status).replace(/_/g, " "));
     }
     function closeRefills() { $("refills-pop").hidden = true; syncSheetLock(); }
     if ($("refills-close")) $("refills-close").onclick = closeRefills;

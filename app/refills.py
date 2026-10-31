@@ -258,6 +258,8 @@ def _init(con: sqlite3.Connection) -> None:
     CREATE INDEX IF NOT EXISTS refill_requests_received ON refill_requests(received_at);
     CREATE TABLE IF NOT EXISTS refill_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT, at TEXT, actor TEXT, action TEXT, detail_json TEXT);
+    CREATE UNIQUE INDEX IF NOT EXISTS refill_events_one_sent_text
+      ON refill_events(request_id) WHERE action = 'sent_text';
     """)
 
 
@@ -346,7 +348,8 @@ def ingest_bg(**kw: Any) -> None:
 def list_requests(limit: int = 100) -> list[dict[str, Any]]:
     with connect() as con:
         rows = con.execute(
-            "SELECT r.*, c.display_name AS client_name FROM refill_requests r "
+            "SELECT r.*, c.display_name AS client_name, EXISTS(SELECT 1 FROM refill_events e WHERE e.request_id = r.id"
+            " AND e.action = 'sent_text') AS texted FROM refill_requests r "
             "LEFT JOIN clients c ON c.id = r.client_id ORDER BY received_at DESC LIMIT ?", (limit,)).fetchall()
     out = []
     for r in rows:
@@ -359,7 +362,7 @@ def list_requests(limit: int = 100) -> list[dict[str, Any]]:
 
 # needs_dob kept readable for older rows; v0.1 uses ambiguous_match for matching and needs_dob only
 # when the matched record has no DOB (age unknown for the minor/adult rule).
-SUMMARY_STATUSES = ("new", "matched", "pass", "overdue", "controlled", "ambiguous_match", "needs_dob", "unmatched")
+SUMMARY_STATUSES = ("new", "sent", "matched", "pass", "overdue", "controlled", "ambiguous_match", "needs_dob", "unmatched")
 AGE_BUCKETS = ("lt_1d", "1_3d", "3_7d", "gt_7d")
 
 
@@ -379,3 +382,65 @@ def summary(now: float | None = None) -> dict[str, Any]:
             b = "lt_1d" if age_d < 1 else "1_3d" if age_d < 3 else "3_7d" if age_d < 7 else "gt_7d"
             by_age[b] += 1
     return {"ok": True, "total": sum(by_age.values()), "by_status": by_status, "by_age": by_age}
+
+
+# ---------------------------------------------------------------- mark sent (Matt's click only)
+INBOUND_SOURCES = ("spruce", "chat")
+
+
+def sent_text(first_name: str, med: str, pharmacy: str) -> str:
+    """Matt-approved wording 2026-10-31. Unknown pharmacy drops ' to [pharmacy]'."""
+    to = f" to {pharmacy.strip()}" if (pharmacy or "").strip() else ""
+    return f"Hi {first_name.strip()}, your refill of {med.strip()} has been sent{to}. \u2014 Dr. Brown's office"
+
+
+def mark_sent(rid: str, *, actor: str = "matt", send: Callable[..., dict[str, Any]] | None = None
+              ) -> dict[str, Any]:
+    """Mark a refill sent and text the patient once. Only for an inbound request matched to one client.
+    One text per request: a unique index on refill_events(request_id) WHERE action='sent_text' is the claim."""
+    from .notify import normalize_e164
+
+    with connect() as con:
+        r = con.execute("SELECT * FROM refill_requests WHERE id=?", (rid,)).fetchone()
+        if not r:
+            return {"ok": False, "error": "not_found"}
+        if r["source"] not in INBOUND_SOURCES or not con.execute(
+                "SELECT 1 FROM refill_events WHERE request_id=? AND action='ingest'", (rid,)).fetchone():
+            return {"ok": False, "error": "not_inbound_request"}
+        if con.execute("SELECT 1 FROM refill_events WHERE request_id=? AND action='sent_text'", (rid,)).fetchone():
+            return {"ok": True, "already": True, "sent": False}
+        if not r["client_id"]:
+            return {"ok": False, "error": "no_matched_client"}
+        c = con.execute("SELECT * FROM clients WHERE id=?", (r["client_id"],)).fetchone()
+        e164 = normalize_e164((c["phone_e164"] if c else "") or "") or ""
+        first = ((c["preferred_name"] or c["given_name"] or (c["display_name"] or "").split(" ")[0]) if c else "").strip()
+        med = (r["med_text"] or "").strip()
+        if not e164:
+            return {"ok": False, "error": "no_phone"}
+        if c["sms_consent"] == 0:
+            return {"ok": False, "error": "sms_opted_out"}
+        if not first or not med:
+            return {"ok": False, "error": "missing_name_or_med"}
+        pharmacy = (r["pharmacy_on_file"] or r["pharmacy_requested"] or "").strip()
+        body = sent_text(first, med, pharmacy)
+        try:
+            _event(con, rid, actor, "sent_text", {"state": "claimed"})
+            con.commit()
+        except sqlite3.IntegrityError:
+            return {"ok": True, "already": True, "sent": False}
+    if send is None:
+        from .spruce_api import send_spruce_sms as send
+    res = send(e164, body, idempotency_key="refill-sent-" + rid)
+    ok = bool(res.get("ok") and res.get("sent"))
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as con:
+        if ok:
+            con.execute("UPDATE refill_events SET detail_json=? WHERE request_id=? AND action='sent_text'",
+                        (json.dumps({"state": "sent", "via": "spruce_api", "to_last4": e164[-4:],
+                                     "pharmacy_known": bool(pharmacy),
+                                     "request_id": str(res.get("request_id") or "")[:80]}), rid))
+            con.execute("UPDATE refill_requests SET status='sent', updated_at=? WHERE id=?", (now, rid))
+        else:  # release the claim so Matt can retry; Spruce idempotency key still guards a late success
+            con.execute("DELETE FROM refill_events WHERE request_id=? AND action='sent_text'", (rid,))
+            _event(con, rid, actor, "sent_text_failed", {"detail": str(res.get("detail") or "")[:80]})
+    return {"ok": ok, "sent": ok, "already": False, **({} if ok else {"error": "send_failed"})}

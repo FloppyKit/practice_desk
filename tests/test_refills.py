@@ -134,3 +134,33 @@ def test_ingest_and_summary_has_no_phi() -> None:
         for leak in ("synth", "alpha", "1990", "sertraline", "pharmacy", "555", "c0", "example"):
             assert leak not in blob, leak
         assert refills.summary()["by_status"]["controlled"] == 1
+
+
+def test_mark_sent_texts_once_only_for_inbound() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        _db(tmp)
+        fake = lambda _t: {"is_refill": True, "name": "Synth Alpha", "dob": "", "meds": ["sertraline 50 mg"],
+                           "pharmacy": "Synthetic Pharmacy"}
+        rid = refills.ingest(source="spruce", source_ref="s1", text="refill please", phones=["+15550000001"],
+                             extract_fn=fake, visits_fn=lambda c: [])
+        sent: list = []
+        send = lambda to, body, idempotency_key="": sent.append((to, body, idempotency_key)) or {"ok": True, "sent": True}
+        assert refills.mark_sent(rid, send=send) == {"ok": True, "sent": True, "already": False}
+        assert refills.mark_sent(rid, send=send)["already"] is True
+        assert len(sent) == 1 and sent[0][0] == "+15550000001" and sent[0][2] == "refill-sent-" + rid
+        assert sent[0][1] == "Hi Synth, your refill of sertraline 50 mg has been sent to Synthetic Pharmacy. \u2014 Dr. Brown's office"
+        assert refills.list_requests()[0]["texted"] == 1 and refills.list_requests()[0]["status"] == "sent"
+        with refills.connect() as con:  # a row with no inbound ingest event never texts
+            con.execute("INSERT INTO refill_requests (id, source, client_id, med_text) VALUES ('x', 'manual', 'c0', 'a')")
+        assert refills.mark_sent("x", send=send)["error"] == "not_inbound_request" and len(sent) == 1
+        assert refills.sent_text("Al", "a", "") == "Hi Al, your refill of a has been sent. \u2014 Dr. Brown's office"
+
+
+def test_mark_sent_failure_releases_claim() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        _db(tmp)
+        fake = lambda _t: {"is_refill": True, "name": "Synth Alpha", "meds": ["x"], "pharmacy": ""}
+        rid = refills.ingest(source="chat", source_ref="t", text="refill", phones=["+15550000001"],
+                             extract_fn=fake, visits_fn=lambda c: [])
+        assert refills.mark_sent(rid, send=lambda *a, **k: {"ok": False})["error"] == "send_failed"
+        assert refills.mark_sent(rid, send=lambda *a, **k: {"ok": True, "sent": True})["sent"] is True
