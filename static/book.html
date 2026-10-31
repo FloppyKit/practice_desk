@@ -176,7 +176,7 @@
   <script src="/static/js/cipher-envelope.js?v=1"></script>
   <script src="/static/js/cipher-booker.js?v=1"></script>
   <script type="module">
-    import { initBooker } from "/static/js/booker.js?v=hold1";
+    import { initBooker } from "/static/js/booker.js?v=len1";
     const slug = location.pathname.replace(/^\/+|\/+$/g, "") || "";
     const types = await fetch("/api/types").then((r) => r.json()).catch(() => ({ types: [] }));
     const t = (types.types || []).find((x) => x.slug === slug);
