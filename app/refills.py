@@ -34,8 +34,10 @@ DEFAULTS: dict[str, Any] = {
     "controlled_window_days": 92,
     "max_supply_days": 90,        # one 90-day fill or 3x30
     "bridge_days": 30,
-    # UNCONFIRMED interpretation: past the window -> needs_visit, Matt decides any bridge.
-    "past_window": "needs_visit",
+    # Matt 2026-10-30 11:28 PM: minors get a 1-month grace (3-4 months -> bridge 30 then visit).
+    # Adults: no grace (over 6 months -> needs_visit, no refill).
+    "minor_grace_days": 31,
+    "adult_grace_days": 0,
     "completed_statuses": ["Attended", "Confirmed"],  # imported history; past start only
 }
 
@@ -95,11 +97,17 @@ def recommend(
     if within:
         return {"recommendation": "bridge_30_and_schedule", "status": "pass",
                 "flags": flags + ["booking_text_needed"], "notes": notes, "max_supply_days": c["bridge_days"]}
+    grace = c["minor_grace_days"] if age_years < c["minor_age"] else c["adult_grace_days"]
+    if since is not None and since <= window + grace:
+        if booked_note:
+            notes.append(booked_note)
+        return {"recommendation": "bridge_30_then_visit", "status": "pass",
+                "flags": flags + ["visit_needed_before_more"] + ([] if next_visit else ["booking_text_needed"]),
+                "notes": notes, "max_supply_days": c["bridge_days"]}
     if booked_note:
         notes.append(booked_note)
     if since is None:
         flags.append("no_completed_visit")
-    # c["past_window"] == "needs_visit" is the only mode in v0 (unconfirmed with Matt).
     return {"recommendation": "needs_visit", "status": "overdue", "flags": flags, "notes": notes,
             "max_supply_days": None}
 

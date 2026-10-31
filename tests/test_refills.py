@@ -29,8 +29,19 @@ def test_adult_within_window_no_visit_bridges() -> None:
 
 
 def test_minor_window_is_3_months() -> None:
-    assert R(age_years=15, last_visit=date(2026, 6, 1))["recommendation"] == "needs_visit"
+    assert R(age_years=15, last_visit=date(2026, 8, 15))["recommendation"] == "bridge_30_and_schedule"
     assert R(age_years=30, last_visit=date(2026, 6, 1))["recommendation"] == "bridge_30_and_schedule"
+
+
+def test_minor_grace_3_to_4_months_bridges_then_visit() -> None:
+    r = R(age_years=15, last_visit=date(2026, 7, 15))  # 107 days
+    assert r["recommendation"] == "bridge_30_then_visit" and r["max_supply_days"] == 30
+    assert "visit_needed_before_more" in r["flags"]
+    assert R(age_years=15, last_visit=date(2026, 6, 1))["recommendation"] == "needs_visit"  # >4 months
+
+
+def test_adult_no_grace() -> None:
+    assert R(age_years=30, last_visit=date(2026, 4, 20))["recommendation"] == "needs_visit"  # 193 days
 
 
 def test_past_window_with_booking_notes_bucket() -> None:
