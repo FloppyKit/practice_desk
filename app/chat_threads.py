@@ -275,6 +275,10 @@ def post_message(
     _write(row)
     if not _push_spruce(row, text, opener=opener):
         _email_spruce(row, text)
+    from . import refills  # keyword prefilter first; only hits reach Bedrock
+
+    refills.ingest_bg(source="chat", source_ref=row["token"], text=text,
+                      phones=[row.get("phone") or ""], email=row.get("email") or "", name=row.get("name") or "")
     return public_thread(row)
 
 
@@ -440,6 +444,13 @@ def handle_spruce_webhook(raw: bytes, signature_b64: str) -> dict[str, Any]:
         return {"ok": True, "accepted": 0}
     consent = apply_sms_keyword(obj)
     result = ingest_spruce_item(obj)
+    if result == "unlinked" and str(obj.get("direction") or "").lower() == "inbound":
+        from . import refills  # Spruce SMS (not a website-chat echo); prefilter before Bedrock
+
+        conv = obj.get("conversation") if isinstance(obj.get("conversation"), dict) else {}
+        refills.ingest_bg(source="spruce", source_ref=str(obj.get("id") or ""), text=_item_text(obj),
+                          phones=_phones_in(conv.get("externalParticipants") or [], []),
+                          spruce_conversation_id=str(obj.get("conversationId") or conv.get("id") or ""))
     out = {"ok": True, "accepted": 1 if result == "reply" else 0, "result": result}
     if consent:
         out["sms_consent"] = consent

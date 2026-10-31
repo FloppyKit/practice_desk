@@ -2442,6 +2442,41 @@ def _desk_cal_ids() -> set[str]:
     return ids
 
 
+def _refill_visits(client: dict[str, Any]) -> list[dict[str, Any]]:
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    c = dict(client)
+    c.setdefault("name", c.get("display_name") or "")
+    c.setdefault("phone", c.get("phone_e164") or "")
+    return _visits_for_client(c, tz)
+
+
+def _wire_refills() -> None:
+    from . import refills
+
+    refills.VISITS_FN = _refill_visits
+
+
+_wire_refills()
+
+
+@app.get("/api/desk/refills")
+def api_desk_refills(secret: str = Query(default="")):
+    """Read-only Refills queue (desk session). MDToolbox fields are pending."""
+    _require_staff(secret)
+    from . import refills
+
+    return {"ok": True, "requests": refills.list_requests(), "mdtoolbox": "pending"}
+
+
+@app.get("/api/desk/refills/summary")
+def api_desk_refills_summary(secret: str = Query(default="")):
+    """PHI-free counts for bots: by status and age bucket only."""
+    _require_staff(secret)
+    from . import refills
+
+    return refills.summary()
+
+
 def _warm_client_window() -> None:
     """Desk load: pre-read the drawer's visit window so the first client click is warm."""
     def run() -> None:

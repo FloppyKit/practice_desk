@@ -29,6 +29,7 @@ from tests import (  # noqa: E402
     test_verify_codes,
     test_week_people,
     test_uploads,
+    test_refills,
 )
 
 
@@ -55,6 +56,7 @@ def main() -> int:
         test_spruce_api,
         test_verify_codes,
         test_public_portal,
+        test_refills,
     ):
         for name in sorted(dir(mod)):
             if not name.startswith("test_"):

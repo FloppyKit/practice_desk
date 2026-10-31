@@ -657,6 +657,12 @@
     .book-pop-top {
       position:sticky; top:0; z-index:3; background:var(--surface, #fff);
     }
+    #refills-pop { width:min(34rem, calc(100vw - 1.25rem)); box-sizing:border-box; }
+    .rf-row { border:1px solid var(--border); border-radius:0.6rem; padding:0.55rem 0.65rem; margin:0 0 0.5rem; font-size:0.85rem; }
+    .rf-top { display:flex; justify-content:space-between; gap:0.5rem; align-items:baseline; flex-wrap:wrap; }
+    .rf-chip { display:inline-block; border:1px solid var(--border); border-radius:999px; padding:0.05rem 0.5rem; font-size:0.75rem; }
+    .rf-row dl { display:grid; grid-template-columns:7.5rem 1fr; gap:0.15rem 0.5rem; margin:0.4rem 0; }
+    .rf-row dt { color:var(--muted); } .rf-row dd { margin:0; }
     #note-pop, #superbill-pop, #files-pop {
       width:min(28rem, calc(100vw - 1.25rem));
       max-width:calc(100vw - 1.25rem);
@@ -783,6 +789,7 @@
           <button type="button" id="open-unlock" hidden>Sign out</button>
           <button type="button" id="open-client">Client</button>
           <button type="button" id="open-books">Books</button>
+          <button type="button" id="open-refills">Refills</button>
           <button type="button" id="open-practice">Settings</button>
         </div>
       </div>
@@ -1149,6 +1156,18 @@
     </form>
   </div>
 
+  <div id="refills-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Refills">
+    <div class="book-pop-top">
+      <div>
+        <div class="book-pop-kicker">Read-only · nothing sends</div>
+        <p class="book-pop-time">Refills</p>
+      </div>
+      <button type="button" class="book-pop-close" id="refills-close" aria-label="Close" title="Close">×</button>
+    </div>
+    <p class="desk-meta">Requests found in Spruce texts and website chat. Med, pharmacy and controlled status: MDToolbox check pending.</p>
+    <div id="refills-list"></div>
+  </div>
+
   <div id="files-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Practice files">
     <div class="book-pop-top">
       <div>
@@ -1448,12 +1467,12 @@
     }
 
     function sheetOpen() {
-      return ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop"]
+      return ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop", "refills-pop"]
         .some((id) => $(id) && !$(id).hidden);
     }
     function syncSheetLock() {
       document.documentElement.classList.toggle("desk-sheet-open", sheetOpen());
-      const open = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop"]
+      const open = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop", "refills-pop"]
         .map((id) => $(id)).find((el) => el && !el.hidden);
       if (open) trapFocus(open);
       else releaseFocus();
@@ -2437,6 +2456,34 @@
       try { await loadBooks(booksMonth); }
       catch (e) { if ($("books-status")) $("books-status").textContent = e.message || "failed"; }
     }
+    async function openRefills() {
+      const pop = $("refills-pop"), box = $("refills-list");
+      box.innerHTML = "<p class='desk-meta'>Loading…</p>";
+      pop.hidden = false; syncSheetLock(); fitSheet(pop);
+      const res = await deskFetch("/api/desk/refills");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) { box.innerHTML = "<p class='desk-meta'>Could not load refills.</p>"; return; }
+      const rows = data.requests || [];
+      if (!rows.length) { box.innerHTML = "<p class='desk-meta'>No refill requests yet.</p>"; return; }
+      const pend = "MDToolbox check pending";
+      const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? (iso || "—") : d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); };
+      box.innerHTML = rows.map((r) => "<div class='rf-row'><div class='rf-top'><strong>" + esc(r.client_name || "Unmatched") + "</strong>"
+        + "<span class='rf-chip'>" + esc(r.status || "new") + "</span></div>"
+        + "<dl><dt>Received</dt><dd>" + esc(when(r.received_at)) + " · " + (r.source === "spruce" ? "Spruce text" : "Website chat") + "</dd>"
+        + "<dt>Recommendation</dt><dd>" + esc((r.recommendation || "—").replace(/_/g, " ")) + "</dd>"
+        + "<dt>Flags</dt><dd>" + esc(((r.flags || []).concat(r.notes || [])).join(", ").replace(/_/g, " ") || "—") + "</dd>"
+        + "<dt>Match</dt><dd>" + esc(r.match_basis || "—") + "</dd>"
+        + "<dt>Last visit</dt><dd>" + esc(r.last_visit_at ? r.last_visit_at + " (" + String(r.last_visit_source || "").replace(/_/g, " ") + ")" : "none found") + "</dd>"
+        + "<dt>Next visit</dt><dd>" + esc(r.next_visit_at || "none booked") + "</dd>"
+        + "<dt>Asked for</dt><dd>" + esc(r.med_text || "—") + "</dd>"
+        + "<dt>Medication</dt><dd>" + pend + "</dd><dt>Controlled</dt><dd>" + pend + "</dd><dt>Pharmacy</dt><dd>" + pend + "</dd></dl>"
+        + "<button class='btn secondary' type='button' disabled title='Coming later; nothing sends'>Draft booking text</button></div>").join("");
+      fitSheet(pop);
+    }
+    function closeRefills() { $("refills-pop").hidden = true; syncSheetLock(); }
+    if ($("refills-close")) $("refills-close").onclick = closeRefills;
+    if ($("open-refills")) $("open-refills").onclick = () => { closeMoreMenu(); if (needUnlock()) return; openRefills(); };
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("refills-pop").hidden) closeRefills(); });
     if ($("open-books")) $("open-books").onclick = () => { closeMoreMenu(); if (needUnlock()) return; openBooks(); };
     if ($("books-close")) $("books-close").onclick = closeBooks;
     let booksMonth = "";
@@ -3270,7 +3317,7 @@
         applyFloatRect({ left: fr.left, top: fr.top, width: fr.width, height: fr.height });
       }
       sizeWeekTile();
-      const ids = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop"];
+      const ids = ["unlock-pop", "book-pop", "send-pop", "note-pop", "superbill-pop", "bill-pop", "files-pop", "refills-pop"];
       ids.forEach((id) => {
         const el = $(id);
         if (!el || el.hidden) return;
