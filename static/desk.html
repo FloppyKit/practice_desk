@@ -155,6 +155,8 @@
     html.desk-layout-notes .desk-layout-switch,
     html.desk-layout-office .desk-layout-switch { display:inline-flex; }
     html.desk-unlocked #banner-unlock { display:none !important; }
+    #nt-carry[hidden] { display:none !important; }
+    #nt-fields .nt-changed { outline:2px solid #d97706; outline-offset:1px; }
     #banner-unlock[hidden], .signin-form [hidden], .mail-split[hidden], #nt-fields label[hidden] { display:none !important; }
     #scribe-draft-banner[hidden] { display:none !important; }
     .desk-more-menu button.is-on { font-weight:600; }
@@ -1238,6 +1240,10 @@
     <div id="nt-manage-box" hidden>
       <div id="nt-manage-list"></div>
     </div>
+    <div id="nt-carry" class="desk-meta" hidden style="display:flex;gap:0.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px solid var(--border);border-radius:0.55rem;padding:0.4rem 0.6rem;margin:0 0 0.5rem">
+      <span id="nt-carry-label"></span>
+      <button class="btn secondary" type="button" id="nt-blank" style="width:auto">Start blank</button>
+    </div>
     <div id="nt-fields"></div>
     <p class="desk-meta">Type <strong>.name</strong> then space or tab to insert a phrase. Add them under Settings → Dot phrases.</p>
     <label class="field">Transcript (optional)
@@ -1245,6 +1251,8 @@
     </label>
     <p class="desk-meta" id="note-status"></p>
     <div class="desk-actions" style="margin-top:0.4rem">
+      <button class="btn secondary" type="button" id="nt-update" disabled title="No transcript for this visit">Update from transcript</button>
+      <button class="btn secondary" type="button" id="nt-undo" hidden>Undo transcript changes</button>
       <button class="btn secondary" type="button" id="nt-draft">Draft from transcript</button>
       <button class="btn" type="button" id="nt-sign">Sign to Visit notes</button>
     </div>
@@ -2625,7 +2633,7 @@
         renderNoteFields();
         const c = (homeCurrent && homeCurrent.client) || {};
         applyVaultToNoteFields(c);
-        applyLastAvs(c);
+        applyCarry(c).finally(() => applyLastAvs(c));
         fitSheet($("note-pop"));
       });
       const pop = $("note-pop");
@@ -4444,16 +4452,86 @@
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok || !data.note) return;
         avsShareShow(data.note, data.share);
-        if (skipPrefill) return;
-        const pre = data.prefill || {};
-        let n = 0;
-        document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
-          const k = el.dataset.fid;
-          if (!el.value && pre[k]) { el.value = pre[k]; n++; }
-        });
-        if (n) $("note-status").textContent = "Prefilled from the last signed AVS (" + data.note.dos + "). Edit before signing.";
       } catch (e) {}
     }
+    // Carry forward: most recent note (signed, else imported) into empty sections. Never signs.
+    let carried = {};
+    async function applyCarry(c) {
+      const skip = !!window.__noteSkipPrefill;
+      carried = {};
+      $("nt-carry").hidden = true;
+      $("nt-undo").hidden = true;
+      $("nt-update").disabled = true;
+      $("nt-update").title = "No transcript for this visit";
+      if (!c || !c.id) return;
+      const res = await deskFetch("/api/desk/note/carry?client_id=" + encodeURIComponent(c.id));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) return;
+      noteTranscriptAvail = !!data.transcript_available;
+      syncUpdateBtn();
+      const pre = (data.carry && data.carry.fields) || {};
+      if (skip) return;
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        const k = el.dataset.fid;
+        if (k !== "dos" && !el.value && pre[k]) { el.value = pre[k]; carried[k] = pre[k]; }
+      });
+      if (Object.keys(carried).length) {
+        $("nt-carry-label").textContent = "Prefilled from note of " + (data.carry.dos || "last visit") + " — review before signing";
+        $("nt-carry").hidden = false;
+      }
+    }
+    let noteTranscriptAvail = false;
+    function syncUpdateBtn() {
+      const pasted = $("nt-transcript") && $("nt-transcript").value.trim().length >= 20;
+      const ok = noteTranscriptAvail || pasted;
+      $("nt-update").disabled = !ok;
+      $("nt-update").title = ok ? "Revise this draft from the visit transcript" : "No transcript for this visit";
+    }
+    if ($("nt-transcript")) $("nt-transcript").addEventListener("input", syncUpdateBtn);
+    $("nt-blank").onclick = () => {
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        if (carried[el.dataset.fid] !== undefined && el.value === carried[el.dataset.fid]) el.value = "";
+      });
+      carried = {};
+      $("nt-carry").hidden = true;
+    };
+    let undoValues = null;
+    $("nt-update").onclick = async () => {
+      const status = $("note-status");
+      const values = collectNoteValues();
+      const c = (homeCurrent && homeCurrent.client) || {};
+      status.textContent = "Updating from transcript…";
+      $("nt-update").disabled = true;
+      const res = await deskFetch("/api/desk/note/update-from-transcript", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: c.id || "", fields: values,
+          transcript: $("nt-transcript") ? $("nt-transcript").value.trim() : "" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      syncUpdateBtn();
+      if (!res.ok || !data.ok) { status.textContent = data.detail || "Update failed."; return; }
+      const ch = data.changed || {};
+      undoValues = {};
+      const names = [];
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        const k = el.dataset.fid;
+        el.classList.remove("nt-changed");
+        if (ch[k] !== undefined) {
+          undoValues[k] = el.value; el.value = ch[k]; el.classList.add("nt-changed");
+          el.addEventListener("input", () => el.classList.remove("nt-changed"), { once: true });
+          names.push((el.closest("label") || {}).firstChild ? el.closest("label").firstChild.textContent.trim() : k);
+        }
+      });
+      $("nt-undo").hidden = !names.length;
+      status.textContent = names.length ? "Updated (highlighted): " + names.join(", ") + ". Review, then Sign." : "Transcript didn't change anything.";
+    };
+    $("nt-undo").onclick = () => {
+      if (!undoValues) return;
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        if (undoValues[el.dataset.fid] !== undefined) { el.value = undoValues[el.dataset.fid]; el.classList.remove("nt-changed"); }
+      });
+      undoValues = null; $("nt-undo").hidden = true; $("note-status").textContent = "Transcript changes undone.";
+    };
     $("nt-avs-send").onclick = async () => {
       if (!avsNoteId) return;
       const c = (homeCurrent && homeCurrent.client) || {};

@@ -3179,6 +3179,39 @@ def api_desk_note_last_avs(client_id: str = Query(default=""), secret: str = Que
     }
 
 
+@app.get("/api/desk/note/carry")
+def api_desk_note_carry(client_id: str = Query(default=""), secret: str = Query(default="")):
+    """Most recent note (signed first, else imported) mapped for the next draft. Bodies never logged."""
+    _require_staff(secret)
+    from . import note_carry
+
+    cid = client_id.strip()
+    return {"ok": True, "carry": note_carry.carry(cid),
+            "transcript_available": bool(note_carry.latest_transcript(cid))}
+
+
+class DeskNoteUpdateRequest(BaseModel):
+    client_id: str = ""
+    fields: dict[str, str] = {}
+    transcript: str = ""
+
+
+@app.post("/api/desk/note/update-from-transcript")
+def api_desk_note_update_from_transcript(req: DeskNoteUpdateRequest, secret: str = Query(default="")):
+    """Button click only: revise the draft from the visit transcript (Bedrock, AWS BAA). Never signs."""
+    _require_staff(secret)
+    from . import note_carry
+
+    tr = (req.transcript or "").strip() or note_carry.latest_transcript(req.client_id.strip())
+    if len(tr) < 20:
+        raise HTTPException(400, "No transcript for this visit")
+    try:
+        changed = note_carry.update_from_transcript(dict(req.fields or {}), tr)
+    except Exception as e:
+        raise HTTPException(502, "Update failed: " + type(e).__name__) from e
+    return {"ok": True, "changed": changed}
+
+
 class AvsShareRequest(BaseModel):
     note_id: str
     send_email: bool = True

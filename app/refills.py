@@ -155,7 +155,7 @@ def extract(text: str, *, call: Callable[[str, str], str] | None = None) -> dict
     }
 
 
-def _bedrock_text(system: str, text: str) -> str:
+def _bedrock_text(system: str, text: str, max_tokens: int = 300) -> str:
     from .desk_agent import BEDROCK_TOKEN, BEDROCK_URL
 
     if not BEDROCK_TOKEN:
@@ -163,11 +163,11 @@ def _bedrock_text(system: str, text: str) -> str:
     body = json.dumps({
         "system": [{"text": system}],
         "messages": [{"role": "user", "content": [{"text": text}]}],
-        "inferenceConfig": {"temperature": 0, "maxTokens": 300},
+        "inferenceConfig": {"temperature": 0, "maxTokens": max_tokens},
     }).encode()
     req = urllib.request.Request(BEDROCK_URL, data=body, method="POST", headers={
         "Content-Type": "application/json", "Authorization": "Bearer " + BEDROCK_TOKEN})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=90) as r:
         out = json.loads(r.read().decode() or "{}")
     blocks = (((out.get("output") or {}).get("message") or {}).get("content") or [])
     return "".join(b.get("text", "") for b in blocks if isinstance(b, dict))
