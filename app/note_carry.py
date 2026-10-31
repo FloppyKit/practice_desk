@@ -46,6 +46,43 @@ def carry(client_id: str) -> dict[str, Any] | None:
     return {"source": "imported", "dos": r["dos"] or "", "fields": fields}
 
 
+def transcript_for(client_id: str, event_id: str = "", transcript_id: str = "") -> tuple[str, str]:
+    """-> (text, source). source: picked | linked | recent (newest within 48 h) | none."""
+    from . import scribe_drafts
+
+    with scribe_drafts._connect() as con:
+        if transcript_id:
+            r = con.execute("SELECT transcript FROM scribe_drafts WHERE id=? AND transcript!='' "
+                            "AND (client_id=? OR client_id='')", (transcript_id, client_id)).fetchone()
+            if r:
+                return r[0], "picked"
+        if event_id:
+            r = con.execute("SELECT transcript FROM scribe_drafts WHERE event_id=? AND transcript!='' "
+                            "ORDER BY created DESC LIMIT 1", (event_id,)).fetchone()
+            if r:
+                return r[0], "linked"
+    t = latest_transcript(client_id)
+    return (t, "recent") if t else ("", "none")
+
+
+def unlinked_on_day(client_id: str, day_start_utc: datetime, day_end_utc: datetime) -> list[dict[str, Any]]:
+    """This client's (or client-less) unlinked transcripts recorded on the visit's CT day. No text."""
+    from . import scribe_drafts
+    from .visit_link import recording_window
+
+    out = []
+    with scribe_drafts._connect() as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT id, created, ended_at, duration_minutes, client_id, link_status FROM scribe_drafts "
+            "WHERE event_id='' AND transcript!='' AND (client_id=? OR client_id='')", (client_id,))]
+    for r in rows:
+        st, en = recording_window(r)
+        if en and day_start_utc <= en < day_end_utc:
+            out.append({"id": r["id"], "end_utc": en.isoformat(), "minutes": int(r["duration_minutes"] or 0),
+                        "status": r["link_status"] or "unlinked"})
+    return sorted(out, key=lambda x: x["end_utc"])
+
+
 def latest_transcript(client_id: str, *, hours: int = 48) -> str:
     if not client_id:
         return ""

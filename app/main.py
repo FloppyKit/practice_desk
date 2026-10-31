@@ -3179,19 +3179,97 @@ def api_desk_note_last_avs(client_id: str = Query(default=""), secret: str = Que
     }
 
 
+def _scribe_link_visits(row: dict[str, Any], rs: datetime, re_: datetime) -> tuple[str, list[dict[str, Any]]]:
+    """Candidate calendar visits around a recording. -> (client_id used, visits)."""
+    from .visit_link import parse_ts
+
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    cid = str(row.get("client_id") or "")
+    if not cid and row.get("email"):
+        c = client_by_email(str(row["email"]))
+        cid = str((c or {}).get("id") or "")
+    out: list[dict[str, Any]] = []
+    if cid:
+        c = client_by_id(cid)
+        for v in _refill_visits(dict(c)) if c else []:
+            out.append({"event_id": v.get("event_id"), "client_id": cid,
+                        "start": parse_ts(v.get("start_iso") or ""), "end": parse_ts(v.get("end_iso") or "")})
+        return cid, out
+    for cal_id in _desk_cal_ids():
+        try:
+            evs = list_events(cal_id, (rs - timedelta(hours=12)).astimezone(), (re_ + timedelta(hours=12)).astimezone())
+        except Exception:
+            continue
+        for ev in evs:
+            if ev.get("status") == "cancelled":
+                continue
+            f = _event_mail_fields(ev, cal_id, tz)
+            if not (f.get("email") or f.get("name")):
+                continue  # not a patient visit (meetings, holds)
+            out.append({"event_id": f.get("event_id"), "client_id": "",
+                        "start": parse_ts(f.get("start_iso") or ""), "end": parse_ts(f.get("end_iso") or "")})
+    return "", out
+
+
+def link_scribe_row(row: dict[str, Any]) -> str:
+    from . import scribe_drafts
+    from .visit_link import match, recording_window
+
+    rs, re_ = recording_window(row)
+    if not rs:
+        scribe_drafts.set_link(row["id"], "", "none")
+        return "none"
+    cid, visits = _scribe_link_visits(row, rs, re_)
+    eid, status = match(rs, re_, cid, visits)
+    scribe_drafts.set_link(row["id"], eid, status)
+    return status
+
+
+def backfill_scribe_links(only_unset: bool = True) -> dict[str, int]:
+    from . import scribe_drafts
+
+    counts = {"linked": 0, "ambiguous": 0, "none": 0}
+    for r in scribe_drafts.rows_for_link(only_unset):
+        st = link_scribe_row(r)
+        counts[st] = counts.get(st, 0) + 1
+    return counts
+
+
+def _ct_day_bounds(event_start_iso: str) -> tuple[datetime, datetime] | None:
+    from .visit_link import parse_ts
+
+    st = parse_ts(event_start_iso)
+    if not st:
+        return None
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    local = st.astimezone(tz)
+    d0 = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return d0.astimezone(timezone.utc), (d0 + timedelta(days=1)).astimezone(timezone.utc)
+
+
 @app.get("/api/desk/note/carry")
-def api_desk_note_carry(client_id: str = Query(default=""), secret: str = Query(default="")):
-    """Most recent note (signed first, else imported) mapped for the next draft. Bodies never logged."""
+def api_desk_note_carry(client_id: str = Query(default=""), event_id: str = Query(default=""),
+                        visit_start: str = Query(default=""), secret: str = Query(default="")):
+    """Most recent note (signed first, else imported) mapped for the next draft, plus which transcript
+    'Update from transcript' would use (linked to this visit, else newest within 48 h). Bodies never logged."""
     _require_staff(secret)
     from . import note_carry
 
     cid = client_id.strip()
-    return {"ok": True, "carry": note_carry.carry(cid),
-            "transcript_available": bool(note_carry.latest_transcript(cid))}
+    text, source = note_carry.transcript_for(cid, event_id.strip())
+    picks: list[dict[str, Any]] = []
+    if source != "linked" and visit_start:
+        b = _ct_day_bounds(visit_start)
+        if b:
+            picks = note_carry.unlinked_on_day(cid, *b)
+    return {"ok": True, "carry": note_carry.carry(cid), "transcript_available": bool(text),
+            "transcript_source": source, "transcript_choices": picks}
 
 
 class DeskNoteUpdateRequest(BaseModel):
     client_id: str = ""
+    event_id: str = ""
+    transcript_id: str = ""
     fields: dict[str, str] = {}
     transcript: str = ""
 
@@ -3202,7 +3280,9 @@ def api_desk_note_update_from_transcript(req: DeskNoteUpdateRequest, secret: str
     _require_staff(secret)
     from . import note_carry
 
-    tr = (req.transcript or "").strip() or note_carry.latest_transcript(req.client_id.strip())
+    tr = (req.transcript or "").strip()
+    if not tr:
+        tr, _src = note_carry.transcript_for(req.client_id.strip(), req.event_id.strip(), req.transcript_id.strip())
     if len(tr) < 20:
         raise HTTPException(400, "No transcript for this visit")
     try:
@@ -3571,6 +3651,18 @@ def api_desk_note_scribe_ingest(
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+
+    def _link() -> None:
+        try:
+            from . import scribe_drafts
+
+            r = next((x for x in scribe_drafts.rows_for_link(False) if x["id"] == row["id"]), None)
+            if r:
+                link_scribe_row(r)
+        except Exception as e:
+            print("scribe_link_fail", type(e).__name__, flush=True)
+
+    threading.Thread(target=_link, name="scribe-link", daemon=True).start()
     return {"ok": True, "id": row["id"]}
 
 

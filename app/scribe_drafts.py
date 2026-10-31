@@ -45,7 +45,24 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(_db_path()))
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(scribe_drafts)")}
+    if "event_id" not in cols:  # visit link (2026-10-30)
+        conn.execute("ALTER TABLE scribe_drafts ADD COLUMN event_id TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE scribe_drafts ADD COLUMN link_status TEXT NOT NULL DEFAULT ''")
     return conn
+
+
+def set_link(draft_id: str, event_id: str, status: str) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE scribe_drafts SET event_id=?, link_status=? WHERE id=?", (event_id, status, draft_id))
+
+
+def rows_for_link(only_unset: bool = True) -> list[dict[str, Any]]:
+    q = "SELECT id, created, ended_at, duration_minutes, client_id, email, event_id, link_status FROM scribe_drafts"
+    if only_unset:
+        q += " WHERE link_status=''"
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(q)]
 
 
 def _now() -> str:

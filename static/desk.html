@@ -155,7 +155,7 @@
     html.desk-layout-notes .desk-layout-switch,
     html.desk-layout-office .desk-layout-switch { display:inline-flex; }
     html.desk-unlocked #banner-unlock { display:none !important; }
-    #nt-carry[hidden], #nt-undo[hidden] { display:none !important; }
+    #nt-carry[hidden], #nt-undo[hidden], #nt-tpick[hidden] { display:none !important; }
     /* Note window: header (title, close, prefill banner) fixed; only the body scrolls. */
     #note-pop:not([hidden]) { display:flex; flex-direction:column; overflow:hidden !important; }
     #note-pop .nt-head { flex:0 0 auto; }
@@ -1259,6 +1259,7 @@
     </label>
     <p class="desk-meta" id="note-status"></p>
     <div class="desk-actions" style="margin-top:0.4rem">
+      <select id="nt-tpick" hidden aria-label="Pick this visit's transcript" title="Unlinked transcripts from this visit's day"></select>
       <button class="btn secondary" type="button" id="nt-update" disabled title="No transcript for this visit">Update from transcript</button>
       <button class="btn secondary" type="button" id="nt-undo" hidden>Undo transcript changes</button>
       <button class="btn secondary" type="button" id="nt-draft">Draft from transcript</button>
@@ -4474,10 +4475,21 @@
       $("nt-update").disabled = true;
       $("nt-update").title = "No transcript for this visit";
       if (!c || !c.id) return;
-      const res = await deskFetch("/api/desk/note/carry?client_id=" + encodeURIComponent(c.id));
+      const q = new URLSearchParams({ client_id: c.id, event_id: $("nt-event").value || "",
+        visit_start: (noteVisit && noteVisit.start_iso) || "" });
+      const res = await deskFetch("/api/desk/note/carry?" + q.toString());
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) return;
       noteTranscriptAvail = !!data.transcript_available;
+      noteTranscriptSource = data.transcript_source || "none";
+      const pick = $("nt-tpick");
+      const choices = data.transcript_choices || [];
+      pick.innerHTML = "<option value=''>Pick this visit's transcript…</option>" + choices.map((t) => {
+        const d = new Date(t.end_utc);
+        return "<option value='" + esc(t.id) + "'>Ended " + esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))
+          + (t.minutes ? " · " + t.minutes + " min" : "") + (t.status === "ambiguous" ? " · ambiguous" : "") + "</option>";
+      }).join("");
+      pick.hidden = !choices.length;
       syncUpdateBtn();
       const pre = (data.carry && data.carry.fields) || {};
       if (skip) return;
@@ -4491,13 +4503,20 @@
       }
     }
     let noteTranscriptAvail = false;
+    let noteTranscriptSource = "none";
     function syncUpdateBtn() {
       const pasted = $("nt-transcript") && $("nt-transcript").value.trim().length >= 20;
-      const ok = noteTranscriptAvail || pasted;
+      const picked = !!($("nt-tpick") && $("nt-tpick").value);
+      const ok = noteTranscriptAvail || pasted || picked;
       $("nt-update").disabled = !ok;
-      $("nt-update").title = ok ? "Revise this draft from the visit transcript" : "No transcript for this visit";
+      $("nt-update").title = pasted ? "Revise this draft from the pasted transcript"
+        : picked ? "Revise this draft from the picked transcript"
+        : noteTranscriptSource === "linked" ? "Revise this draft from this visit's transcript"
+        : noteTranscriptSource === "recent" ? "No transcript linked to this visit; uses the newest from the last 48 hours"
+        : "No transcript for this visit";
     }
     if ($("nt-transcript")) $("nt-transcript").addEventListener("input", syncUpdateBtn);
+    if ($("nt-tpick")) $("nt-tpick").addEventListener("change", syncUpdateBtn);
     $("nt-blank").onclick = () => {
       document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
         if (carried[el.dataset.fid] !== undefined && el.value === carried[el.dataset.fid]) el.value = "";
@@ -4514,7 +4533,8 @@
       $("nt-update").disabled = true;
       const res = await deskFetch("/api/desk/note/update-from-transcript", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: c.id || "", fields: values,
+        body: JSON.stringify({ client_id: c.id || "", fields: values, event_id: $("nt-event").value || "",
+          transcript_id: ($("nt-tpick") && $("nt-tpick").value) || "",
           transcript: $("nt-transcript") ? $("nt-transcript").value.trim() : "" }),
       });
       const data = await res.json().catch(() => ({}));
