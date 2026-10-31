@@ -2442,10 +2442,24 @@ def _desk_cal_ids() -> set[str]:
     return ids
 
 
+def _warm_client_window() -> None:
+    """Desk load: pre-read the drawer's visit window so the first client click is warm."""
+    def run() -> None:
+        try:
+            tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+            _visits_for_client({}, tz)
+        except Exception:
+            pass
+
+    threading.Thread(target=run, name="client-window-warm", daemon=True).start()
+
+
 def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, Any]]:
     now = datetime.now(tz)
-    tmin = (now - timedelta(days=180)).astimezone()
-    tmax = (now + timedelta(days=90)).astimezone()
+    # Day-aligned window: a stable cache key, so every drawer open reuses one CalDAV read.
+    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tmin = (day - timedelta(days=180)).astimezone()
+    tmax = (day + timedelta(days=91)).astimezone()
     email = (client.get("email") or "").strip().lower()
     name = (client.get("name") or "").strip().lower()
     out: list[dict[str, Any]] = []
@@ -3872,6 +3886,7 @@ async def api_twilio_desk_voice(request: Request):
 def api_desk_meta(secret: str = Query(default="")):
     """Staff links — office + guest waiting room."""
     _require_staff(secret)
+    _warm_client_window()
     resp = {
         "ok": True,
         "office_url": os.environ.get("LIVEKIT_OFFICE_URL", "").strip(),

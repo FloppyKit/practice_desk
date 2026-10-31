@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -35,6 +36,11 @@ def _client():
 _cal = None
 _list_cache: dict[tuple[str, str], tuple[float, list]] = {}
 _LIST_TTL = 12.0
+# Wide windows (client drawer: 270 days, ~500 events) take 3-5 s to REPORT+expand.
+# Serve a stale copy up to _STALE_MAX old while one background thread refreshes it.
+_STALE_MAX = 600.0
+_WIDE_DAYS = 30
+_refreshing: set[tuple[str, str]] = set()
 
 
 def _calendar(force_principal: bool = False):
@@ -77,7 +83,44 @@ def reset() -> None:
 
 
 def _bump_lists() -> None:
+    wide = [k for k in _list_cache if _is_wide(k)]
     _list_cache.clear()
+    for k in wide:  # re-warm the drawer window so the next click stays fast
+        _refresh_bg(k)
+
+
+def _is_wide(key: tuple[str, str]) -> bool:
+    try:
+        a, b = (datetime.fromisoformat(x) for x in key)
+        return (b - a).days >= _WIDE_DAYS
+    except Exception:
+        return False
+
+
+def _fetch_list(key: tuple[str, str]) -> list[dict[str, Any]]:
+    tmin, tmax = (datetime.fromisoformat(x) for x in key)
+    out = [_vevent_to_google(comp) for _item, comp in _iter_events(tmin, tmax)]
+    out.sort(key=lambda e: (e.get("start") or {}).get("dateTime") or "")
+    if len(_list_cache) > 40:
+        _list_cache.clear()
+    _list_cache[key] = (time.monotonic(), out)
+    return out
+
+
+def _refresh_bg(key: tuple[str, str]) -> None:
+    if key in _refreshing:
+        return
+    _refreshing.add(key)
+
+    def run() -> None:
+        try:
+            _fetch_list(key)
+        except Exception as e:
+            log.warning("caldav bg refresh failed: %s", e)
+        finally:
+            _refreshing.discard(key)
+
+    threading.Thread(target=run, name="caldav-list-refresh", daemon=True).start()
 
 
 def _prop_key(k: str) -> str:
@@ -275,14 +318,10 @@ def list_events(
     hit = _list_cache.get(key)
     if hit and now - hit[0] < _LIST_TTL:
         return list(hit[1])
-    out = []
-    for _item, comp in _iter_events(time_min, time_max):
-        out.append(_vevent_to_google(comp))
-    out.sort(key=lambda e: (e.get("start") or {}).get("dateTime") or "")
-    if len(_list_cache) > 40:
-        _list_cache.clear()
-    _list_cache[key] = (now, out)
-    return list(out)
+    if hit and _is_wide(key) and now - hit[0] < _STALE_MAX:
+        _refresh_bg(key)
+        return list(hit[1])
+    return list(_fetch_list(key))
 
 
 def list_booker_events(
