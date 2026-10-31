@@ -11,16 +11,7 @@
   var KEY = "dmb-desk";
 
   function secret() {
-    try {
-      return localStorage.getItem(KEY) || "";
-    } catch (_) {
-      return "";
-    }
-  }
-  function setSecret(s) {
-    try {
-      localStorage.setItem(KEY, s);
-    } catch (_) {}
+    return "";
   }
   function esc(s) {
     return String(s || "").replace(/[&<>"']/g, function (c) {
@@ -61,10 +52,7 @@
     '<button type="button" id="sa-close" aria-label="Close">×</button></div></div>' +
     '<div id="sa-log"></div>' +
     '<div id="sa-lock">' +
-    "<p>Same staff secret as the desk.</p>" +
-    '<div id="sa-form" style="padding:0;border:0">' +
-    '<input id="sa-secret" type="password" placeholder="Staff secret" autocomplete="off" />' +
-    '<button type="button" id="sa-unlock">Unlock</button></div></div>' +
+    "<p>Sign in to the desk first.</p></div>" +
     '<form id="sa-ask" class="sa-hidden">' +
     '<div id="sa-form">' +
     '<input id="sa-q" placeholder="Call, open, send, book…" autocomplete="off" />' +
@@ -139,7 +127,7 @@
   }
 
   function unlocked() {
-    return !!secret();
+    return !!window.__deskSignedIn;
   }
   function syncLock() {
     if (unlocked()) {
@@ -157,24 +145,16 @@
     root.classList.toggle("is-open");
     root.querySelector("#sa-btn").setAttribute("aria-expanded", root.classList.contains("is-open") ? "true" : "false");
     if (root.classList.contains("is-open")) {
-      var focus = unlocked() ? root.querySelector("#sa-q") : root.querySelector("#sa-secret");
+      var focus = unlocked() ? root.querySelector("#sa-q") : null;
       if (focus) focus.focus();
     }
   };
   root.querySelector("#sa-close").onclick = function () {
     root.classList.remove("is-open");
   };
-  root.querySelector("#sa-unlock").onclick = function () {
-    var s = root.querySelector("#sa-secret").value.trim();
-    if (!s) return;
-    setSecret(s);
+  window.addEventListener("dmb-desk-unlocked", function () {
     syncLock();
-    try {
-      window.dispatchEvent(new Event("dmb-desk-unlocked"));
-    } catch (_) {}
-    line("Pa", "Unlocked.");
-    root.querySelector("#sa-q").focus();
-  };
+  });
 
   askEl.addEventListener("submit", function (e) {
     e.preventDefault();
@@ -199,9 +179,7 @@
           var reply = (x.d && (x.d.reply || x.d.detail || x.d.error)) || "No reply";
           if (x.d && x.d.ok) hist.push({ role: "assistant", content: reply });
           if (x.ok === false && /unauthor/i.test(String(reply))) {
-            try {
-              localStorage.removeItem(KEY);
-            } catch (_) {}
+            window.__deskSignedIn = false;
             syncLock();
           }
           line("Pa", reply, { speakable: true, auto: true });

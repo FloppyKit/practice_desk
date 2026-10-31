@@ -19,11 +19,7 @@
     try {
       if (window.__HOST_BOOT && window.__HOST_BOOT.secret) return window.__HOST_BOOT.secret;
     } catch (_) {}
-    try {
-      return localStorage.getItem("dmb-desk") || "";
-    } catch (_) {
-      return "";
-    }
+    return "";
   }
   function apiFetch(url, opts) {
     if (window.deskFetch) return window.deskFetch(url, opts);

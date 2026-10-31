@@ -1,6 +1,6 @@
 /**
  * Staff fetches: header, never ?secret=.
- * Secret stays in the unlock field / localStorage — not the URL.
+ * Desk browsers: session cookie only. Host page: its own host secret in the header.
  */
 (function (global) {
   "use strict";
@@ -9,8 +9,7 @@
   var HEADER = "X-Staff-Secret";
 
   function secret() {
-    var el = document.getElementById("secret");
-    if (el && String(el.value || "").trim()) return String(el.value).trim();
+    // Desk browsers use the httpOnly session cookie. Only the LiveKit host page passes a secret.
     try {
       if (window.__HOST_BOOT && window.__HOST_BOOT.secret) return window.__HOST_BOOT.secret;
     } catch (_) {}
@@ -18,11 +17,7 @@
       var ct = window.CLIENT_TILE || {};
       if (ct.secret) return ct.secret;
     } catch (_) {}
-    try {
-      return localStorage.getItem(KEY) || "";
-    } catch (_) {
-      return "";
-    }
+    return "";
   }
 
   function stripSecret(url) {

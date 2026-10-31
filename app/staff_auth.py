@@ -1,4 +1,4 @@
-"""Staff secret from header or cookie. Query is a leftover fallback."""
+"""Server-to-server staff secret: x-staff-secret header only (no cookie, no ?secret=). Browsers use desk_auth sessions."""
 from __future__ import annotations
 
 from typing import Any
@@ -25,10 +25,4 @@ def secret_from_request(request: Any, query: str = "") -> str:
     cookie = ""
     if request is not None:
         header = request.headers.get(HEADER) or request.headers.get("X-Staff-Secret") or ""
-        cookie = request.cookies.get(COOKIE) or ""
-        if not query:
-            try:
-                query = request.query_params.get("secret") or ""
-            except Exception:
-                query = ""
-    return pick_staff_secret(header=header, cookie=cookie, query=query)
+    return pick_staff_secret(header=header)

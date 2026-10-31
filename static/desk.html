@@ -26,6 +26,10 @@
     label.field { display:flex; flex-direction:column; gap:0.25rem; font-size:0.8rem; color:var(--muted); margin:0 0 0.75rem; }
     label.field input, label.field select, label.field textarea { font:inherit; color:var(--foreground); background:var(--background); border:1px solid var(--border); border-radius:0.6rem; padding:0.55rem 0.7rem; }
     .secret-bar { display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem; }
+    .signin-form { display:flex; flex-direction:column; gap:0.45rem; margin:0.35rem 0 0.5rem; min-width:0; }
+    .signin-form input { width:100%; box-sizing:border-box; font-size:16px; min-height:2.75rem; }
+    .signin-form .btn { width:100%; min-height:2.75rem; }
+    .signin-label { font-size:0.8rem; color:var(--muted, #666); }
     .secret-bar input { flex:1; font-size:16px; min-height:2.75rem; }
     #msg { margin:0.75rem 0; font-size:0.9rem; }
     html, body { height: 100%; }
@@ -750,15 +754,15 @@
   <header class="desk-banner" id="desk-banner">
     <div class="desk-banner-left">
       <h1 class="desk-banner-title">Practice desk</h1>
-      <button class="btn secondary desk-icon-btn" type="button" id="open-calendar" aria-pressed="false" aria-label="Calendar">
+      <button class="btn secondary desk-icon-btn" type="button" id="open-calendar" aria-pressed="false" aria-label="Calendar" title="Calendar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M8 3.5v3M16 3.5v3M3.5 10h17"/></svg>
         <span class="desk-icon-label">Calendar</span>
       </button>
-      <button class="btn secondary desk-icon-btn" type="button" id="open-office" aria-pressed="false" aria-label="Live office">
+      <button class="btn secondary desk-icon-btn" type="button" id="open-office" aria-pressed="false" aria-label="Live office" title="Live office">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2.5" y="6.5" width="13" height="11" rx="1.6"/><path d="M15.5 10.5l6-3v9l-6-3z"/></svg>
         <span class="desk-icon-label">Office</span>
       </button>
-      <button class="btn secondary desk-icon-btn" type="button" id="open-mail" aria-pressed="false" aria-label="Messages">
+      <button class="btn secondary desk-icon-btn" type="button" id="open-mail" aria-pressed="false" aria-label="Messages" title="Messages">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4.5 6.5h15v11h-15z"/><path d="M4.5 6.5l7.5 6 7.5-6"/></svg>
         <span class="desk-icon-label">Messages</span>
       </button>
@@ -769,13 +773,13 @@
         <button type="button" id="layout-notes" aria-pressed="false">Notes</button>
         <button type="button" id="layout-office" aria-pressed="false">Office</button>
       </div>
-      <button class="btn" type="button" id="banner-unlock">Unlock</button>
+      <button class="btn" type="button" id="banner-unlock">Sign in</button>
       <div class="desk-more">
         <button class="btn secondary desk-more-btn" type="button" id="open-more" aria-haspopup="true" aria-expanded="false" aria-controls="more-menu" aria-label="More">
           <span class="desk-more-icon" aria-hidden="true"><i></i><i></i><i></i></span>
         </button>
         <div class="desk-more-menu" id="more-menu" hidden>
-          <button type="button" id="open-unlock">Unlock</button>
+          <button type="button" id="open-unlock" hidden>Sign out</button>
           <button type="button" id="open-client">Client</button>
           <button type="button" id="open-books">Books</button>
           <button type="button" id="open-practice">Settings</button>
@@ -1030,7 +1034,7 @@
       <summary>Sealed intake</summary>
       <div class="prac-acc-body">
         <p class="desk-meta">Cipher P1 — sealed booking envelopes waiting on the server. Drain opens them and keeps the detail in this device's encrypted vault.</p>
-        <p class="desk-meta" id="cipher-status">Unlock to check sealed intake.</p>
+        <p class="desk-meta" id="cipher-status">Sign in to check sealed intake.</p>
         <div class="desk-actions" style="margin:0.35rem 0 0.15rem">
           <button class="btn secondary" type="button" id="cipher-refresh">Refresh</button>
           <button class="btn secondary" type="button" id="cipher-drain">Drain sealed intake</button>
@@ -1044,7 +1048,7 @@
         </div>
       </div>
     </details>
-    <p class="desk-meta">Install this desk from the browser for a local encrypted last-note store. Unlock decrypts it on this device.</p>
+    <p class="desk-meta">Install this desk from the browser for a local encrypted last-note store. Signing in decrypts it on this device.</p>
     <p class="desk-meta" id="practice-status"></p>
     <div class="desk-actions" style="margin-top:0.4rem">
       <button class="btn" type="button" id="prac-save">Save practice</button>
@@ -1067,18 +1071,22 @@
   </main>
   <div id="home-scrim" class="desk-client-scrim" aria-hidden="true"></div>
 
-  <div id="unlock-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Unlock desk">
+  <div id="unlock-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Sign in to the desk">
     <div class="book-pop-top">
       <div>
         <div class="book-pop-kicker">Desk</div>
-        <p class="book-pop-time">Unlock</p>
+        <p class="book-pop-time">Sign in</p>
       </div>
       <button type="button" class="book-pop-close" id="unlock-close" aria-label="Close">×</button>
     </div>
-    <div class="secret-bar">
-      <input id="secret" type="password" placeholder="Staff secret" autocomplete="off" enterkeyhint="go" autocapitalize="off" spellcheck="false" />
-      <button class="btn" type="button" id="unlock">Unlock</button>
-    </div>
+    <form class="signin-form" id="signin-form" novalidate>
+      <label class="signin-label" for="signin-email">Staff email</label>
+      <input id="signin-email" type="text" inputmode="email" autocomplete="username" placeholder="you@drmattbrown.com" autocapitalize="off" spellcheck="false" />
+      <label class="signin-label" for="signin-code" id="signin-code-label" hidden>6-digit code from your email</label>
+      <input id="signin-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" hidden />
+      <button class="btn" type="submit" id="unlock">Send code</button>
+      <p class="desk-meta" id="signin-note" hidden></p>
+    </form>
     <div id="msg" hidden role="status" aria-live="polite"></div>
     <div id="scribe-draft-banner" class="desk-banner" hidden role="status" style="margin:0.5rem 0;padding:0.55rem 0.75rem;border:1px solid var(--border);border-radius:0.55rem;display:flex;gap:0.75rem;align-items:center;justify-content:space-between;flex-wrap:wrap">
       <span id="scribe-draft-label">Visit draft ready</span>
@@ -1309,7 +1317,7 @@
       document.head.appendChild(s);
     })();
   </script>
-  <script src="/static/js/desk-auth.js?v=1"></script>
+  <script src="/static/js/desk-auth.js?v=2"></script>
   <script src="/static/js/desk-layout.js?v=1"></script>
   <script src="/static/js/desk-vault.js?v=3"></script>
   <script src="/static/js/desk-books.js?v=3"></script>
@@ -1323,10 +1331,48 @@
       el.className = ok ? "msg ok" : "msg err";
       el.textContent = t || "";
     };
-    const secret = () => $("secret").value.trim();
-    $("secret").value = localStorage.getItem("dmb-desk") || "";
+    // Browser auth is the httpOnly session cookie; the shared secret is never kept in the page or storage.
+    const secret = () => "";
+    try { localStorage.removeItem("dmb-desk"); } catch (e) {}
     $("unlock").onclick = load;
-    $("secret").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+    let signinStage = "email";
+    async function signinPost(path, body) {
+      return fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    }
+    function signinReset() {
+      signinStage = "email";
+      $("signin-code").hidden = true; $("signin-code-label").hidden = true; $("signin-code").value = "";
+      $("unlock").textContent = "Send code";
+    }
+    $("signin-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const em = $("signin-email").value.trim();
+      const note = $("signin-note");
+      if (signinStage === "email") {
+        if (!em) { msg("Enter your staff email."); return; }
+        if (!em.includes("@")) {
+          // Transitional: old shared secret, accepted only until the first emailed-code sign-in.
+          const r = await signinPost("/api/desk/auth/legacy", { secret: em }).catch(() => null);
+          $("signin-email").value = "";
+          if (r && r.ok) { closeUnlock(); load(); } else { msg("Enter your staff email."); }
+          return;
+        }
+        $("unlock").disabled = true;
+        await signinPost("/api/desk/auth/send", { email: em }).catch(() => null);
+        $("unlock").disabled = false;
+        signinStage = "code";
+        $("signin-code").hidden = false; $("signin-code-label").hidden = false;
+        $("unlock").textContent = "Sign in";
+        note.hidden = false;
+        note.textContent = "If that address is on the staff list, a code is on its way. It expires in 10 minutes.";
+        $("signin-code").focus();
+        return;
+      }
+      const r = await signinPost("/api/desk/auth/verify", { email: em, code: $("signin-code").value }).catch(() => null);
+      if (r && r.ok) { signinReset(); note.hidden = true; closeUnlock(); load(); return; }
+      msg("That code didn't work. Check it, or start over to get a new one.");
+    });
+    $("signin-email").addEventListener("input", () => { if (signinStage === "code") signinReset(); });
     let weekStart = mondayOf(new Date());
     let dayFocus = new Date();
     dayFocus.setHours(0,0,0,0);
@@ -1772,7 +1818,7 @@
       const moreBtn = $("open-more");
       if (moreBtn) moreBtn.classList.toggle("is-on", !!(showC || showS || showB));
       const unlockBtn = $("open-unlock");
-      if (unlockBtn) unlockBtn.hidden = !!isUnlocked();
+      if (unlockBtn) unlockBtn.hidden = !isUnlocked();
       const bannerUnlock = $("banner-unlock");
       if (bannerUnlock) bannerUnlock.hidden = !!isUnlocked();
       syncLayoutButtons();
@@ -1988,6 +2034,7 @@
     function closeUnlock() {
       const pop = $("unlock-pop");
       if (pop) pop.hidden = true;
+      if ($("banner-unlock")) $("banner-unlock").hidden = !!isUnlocked();
       syncSheetLock();
     }
     function openUnlock() {
@@ -1997,7 +2044,8 @@
       pop.hidden = false;
       syncSheetLock();
       fitSheet(pop);
-      if ($("secret")) $("secret").focus();
+      if ($("banner-unlock")) $("banner-unlock").hidden = true;
+      if ($("signin-email")) $("signin-email").focus();
     }
     function needUnlock() {
       if (isUnlocked()) return false;
@@ -2143,7 +2191,11 @@
       applyTiles();
     }
     if ($("open-office")) $("open-office").onclick = () => { closeMoreMenu(); toggleOffice(); };
-    if ($("open-unlock")) $("open-unlock").onclick = () => openUnlock();
+    if ($("open-unlock")) $("open-unlock").onclick = async () => {
+      closeMoreMenu();
+      await fetch("/api/desk/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => null);
+      location.reload();
+    };
     if ($("banner-unlock")) $("banner-unlock").onclick = () => openUnlock();
     if ($("layout-notes")) $("layout-notes").onclick = () => { closeMoreMenu(); setLayout("notes"); };
     if ($("layout-office")) $("layout-office").onclick = () => { closeMoreMenu(); if (needUnlock()) return; setLayout("office"); };
@@ -4626,14 +4678,14 @@
     }
 
     async function load() {
-      const s = secret();
-      if (!s) { msg("Enter the staff secret."); openUnlock(); return; }
-      localStorage.setItem("dmb-desk", s);
-      msg("Loading…", true);
       let meta;
       try {
         const res = await deskFetch("/api/desk/meta");
-        if (!res.ok) { msg("Unlock failed."); openUnlock(); return; }
+        if (res.status === 401) { openUnlock(); return; }
+        if (!res.ok) { msg("Sign-in check failed."); openUnlock(); return; }
+        window.__deskSignedIn = true;
+        try { window.dispatchEvent(new Event("dmb-desk-unlocked")); } catch (e) {}
+        msg("Loading…", true);
         meta = await res.json();
       } catch (e) {
         msg("Unlock failed: network.");
@@ -4645,7 +4697,7 @@
       startScribeDraftPoll();
       officeUrl = meta.office_url || officeUrl;
       if (window.PsychartsVault) {
-        PsychartsVault.unlock(s).catch(() => {});
+        if (meta.vault_key) PsychartsVault.unlock(meta.vault_key).catch(() => {});
       }
       cipherStatusRefresh();
       if (!window.__cipherPoll) window.__cipherPoll = setInterval(cipherStatusRefresh, 60000);
@@ -4683,7 +4735,7 @@
       const st = $("cipher-status");
       if (!st) return;
       if (!window.PsychartsVault || !PsychartsVault.ready()) {
-        st.textContent = "Unlock to check sealed intake.";
+        st.textContent = "Sign in to check sealed intake.";
         return;
       }
       try {
@@ -4811,19 +4863,15 @@
     if ($("vault-export")) $("vault-export").onclick = vaultExportSnapshot;
     if ($("vault-import-btn")) $("vault-import-btn").onclick = () => { const f = $("vault-import-file"); if (f) f.click(); };
     if ($("vault-import-file")) $("vault-import-file").addEventListener("change", vaultImportSnapshotFile);
-    if (secret()) {
-      load();
-    } else {
-      openUnlock();
-    }
+    load();
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/desk-sw.js", { scope: "/" }).catch(function () {});
     }
   </script>
   <script src="/static/js/theme.js"></script>
-  <script src="/static/js/desk-call.js?v=3"></script>
-  <script src="/static/js/pa-router.js?v=1"></script>
-  <script src="/static/js/staff-agent.js?v=5"></script>
-  <script src="/static/js/proton-drive.js?v=9"></script>
+  <script src="/static/js/desk-call.js?v=4"></script>
+  <script src="/static/js/pa-router.js?v=2"></script>
+  <script src="/static/js/staff-agent.js?v=6"></script>
+  <script src="/static/js/proton-drive.js?v=10"></script>
 </body>
 </html>

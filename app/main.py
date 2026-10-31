@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import threading
@@ -1782,23 +1783,128 @@ def _host_secret() -> str:
 
 
 def _staff_secret(secret: str = "", request: Request | None = None) -> str:
-    return secret_from_request(request or _current_request.get(), secret)
+    """x-staff-secret header (cron / server-to-server). The `secret` query/body value is ignored for staff."""
+    return secret_from_request(request or _current_request.get())
+
+
+def _desk_session_email(request: Request | None = None) -> str:
+    from . import desk_auth
+
+    req = request or _current_request.get()
+    tok = req.cookies.get(desk_auth.COOKIE, "") if req is not None else ""
+    return desk_auth.check(tok) or ""
+
+
+def _staff_ok(request: Request | None = None) -> bool:
+    if REMIND_SECRET and hmac.compare_digest(_staff_secret("", request), REMIND_SECRET):
+        return True
+    return bool(_desk_session_email(request))
 
 
 def _require_staff(secret: str = "", request: Request | None = None) -> None:
-    if not REMIND_SECRET or _staff_secret(secret, request) != REMIND_SECRET:
+    if not _staff_ok(request):
         raise HTTPException(401, "unauthorized")
 
 
 def _require_staff_or_host(secret: str = "", request: Request | None = None) -> None:
     """Desk secret or LiveKit host-link secret (office page)."""
-    got = _staff_secret(secret, request)
-    if REMIND_SECRET and got == REMIND_SECRET:
+    if _staff_ok(request):
         return
+    got = _staff_secret("", request) or (secret or "").strip()
     host = _host_secret()
     if host and got == host:
         return
     raise HTTPException(401, "unauthorized")
+
+
+def _desk_cookie_refresh(resp: Response) -> None:
+    """Re-send the session cookie (rolling 90 days) and drop the old raw-secret cookie."""
+    from . import desk_auth
+
+    req = _current_request.get()
+    tok = req.cookies.get(desk_auth.COOKIE, "") if req is not None else ""
+    if tok and desk_auth.check(tok):
+        _set_desk_cookie(resp, tok)
+    resp.delete_cookie(STAFF_COOKIE, path="/")
+
+
+def _set_desk_cookie(resp: Response, token: str) -> None:
+    from . import desk_auth
+
+    resp.set_cookie(desk_auth.COOKIE, token, httponly=True, secure=True, samesite="strict",
+                    max_age=desk_auth.SESSION_TTL, path="/")
+
+
+def _client_ip(request: Request) -> str:
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return fwd or (request.client.host if request.client else "")
+
+
+class DeskAuthEmail(BaseModel):
+    email: str = Field(default="", max_length=200)
+
+
+class DeskAuthCode(BaseModel):
+    email: str = Field(default="", max_length=200)
+    code: str = Field(default="", max_length=20)
+
+
+class DeskAuthLegacy(BaseModel):
+    secret: str = Field(default="", max_length=400)
+
+
+@app.post("/api/desk/auth/send")
+def api_desk_auth_send(req: DeskAuthEmail, request: Request):
+    """Same reply for any email (no allowlist oracle)."""
+    from . import desk_auth
+
+    try:
+        desk_auth.send_code(req.email, _client_ip(request))
+    except Exception:
+        pass
+    return {"ok": True, "detail": "If that address is on the staff list, a code is on its way."}
+
+
+@app.post("/api/desk/auth/verify")
+def api_desk_auth_verify(req: DeskAuthCode, request: Request):
+    from . import desk_auth
+
+    tok = desk_auth.verify_code(req.email, req.code, _client_ip(request))
+    if not tok:
+        raise HTTPException(401, "That code didn't work. Request a new one if it expired.")
+    out = Response(content=json.dumps({"ok": True}), media_type="application/json")
+    _set_desk_cookie(out, tok)
+    out.delete_cookie(STAFF_COOKIE, path="/")
+    return out
+
+
+@app.post("/api/desk/auth/legacy")
+def api_desk_auth_legacy(req: DeskAuthLegacy, request: Request):
+    """Old shared secret -> session, only until the first emailed-code sign-in."""
+    from . import desk_auth
+
+    ip = _client_ip(request)
+    with desk_auth._con() as con:
+        limited = desk_auth._limited(con, "ip-verify:" + ip, desk_auth.VERIFY_PER_IP)
+    ok = (not limited and desk_auth.legacy_allowed() and REMIND_SECRET
+          and hmac.compare_digest((req.secret or "").strip(), REMIND_SECRET))
+    if not ok:
+        raise HTTPException(401, "unauthorized")
+    out = Response(content=json.dumps({"ok": True}), media_type="application/json")
+    _set_desk_cookie(out, desk_auth.mint("legacy-secret"))
+    out.delete_cookie(STAFF_COOKIE, path="/")
+    return out
+
+
+@app.post("/api/desk/auth/logout")
+def api_desk_auth_logout(request: Request):
+    from . import desk_auth
+
+    desk_auth.revoke(request.cookies.get(desk_auth.COOKIE, ""))
+    out = Response(content=json.dumps({"ok": True}), media_type="application/json")
+    out.delete_cookie(desk_auth.COOKIE, path="/")
+    out.delete_cookie(STAFF_COOKIE, path="/")
+    return out
 
 
 def _set_staff_cookie(resp: Response, secret: str) -> None:
@@ -3776,14 +3882,14 @@ def api_desk_meta(secret: str = Query(default="")):
         "drive": True,
         "practice": True,
         "superbill": True,
+        # Local note-vault key: unchanged material so existing on-device vault data still opens.
+        "vault_key": (os.environ.get("DESK_VAULT_SECRET") or REMIND_SECRET),
     }
     out = Response(
         content=json.dumps(resp),
         media_type="application/json",
     )
-    got = _staff_secret(secret)
-    if REMIND_SECRET and got == REMIND_SECRET:
-        _set_staff_cookie(out, got)
+    _desk_cookie_refresh(out)
     return out
 
 

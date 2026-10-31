@@ -22,11 +22,7 @@
     try {
       if (window.__HOST_BOOT && window.__HOST_BOOT.secret) return window.__HOST_BOOT.secret;
     } catch (_) {}
-    try {
-      return localStorage.getItem("dmb-desk") || "";
-    } catch (_) {
-      return "";
-    }
+    return "";
   }
   function esc(s) {
     return String(s || "").replace(/[&<>"']/g, function (c) {
@@ -466,9 +462,9 @@
     }
     function load() {
       var box = root.querySelector("#pdrive-list");
-      if (!secret()) {
+      if (!secret() && !window.__deskSignedIn) {
         box.textContent =
-          "Unlock Pa once, or open this office from your secret host link.";
+          "Sign in to the desk, or open this office from your secret host link.";
         return;
       }
       var reqPath = path;

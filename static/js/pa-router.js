@@ -51,11 +51,7 @@
     return String(cfg.apiBase || "").replace(/\/$/, "");
   }
   function secret() {
-    try {
-      return localStorage.getItem(KEY) || "";
-    } catch (_) {
-      return "";
-    }
+    return "";
   }
   function yesLine(s) {
     return /^(yes|y|ok|okay|do it|confirm|go)$/i.test(String(s || "").trim());
@@ -336,10 +332,10 @@
 
   function openDrive(client, target) {
     if (target === "home") return Promise.resolve();
-    var q = new URLSearchParams({ secret: secret() });
+    var q = new URLSearchParams();
     if (client.id) q.set("id", client.id);
     if (client.email) q.set("email", client.email);
-    return fetch(apiBase() + "/api/desk/client/drive?" + q.toString())
+    return (global.deskFetch || fetch)(apiBase() + "/api/desk/client/drive?" + q.toString())
       .then(function (r) {
         return r.json();
       })
