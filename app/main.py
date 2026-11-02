@@ -2532,6 +2532,14 @@ def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, A
     tmax = (day + timedelta(days=91)).astimezone()
     email = (client.get("email") or "").strip().lower()
     name = (client.get("name") or "").strip().lower()
+    client_phone = "".join(ch for ch in str(client.get("phone") or "") if ch.isdigit())
+    # Family members can share an email or phone. Then the contact alone is not this client: the name must match too.
+    from .patients import normalize_phone as _norm_phone
+
+    e164 = _norm_phone(client_phone) if len(client_phone) >= 10 else None
+    shared = (bool(email) and len(clients_db.list_by_email(email)) > 1) or (
+        bool(e164) and len(clients_db.list_by_phone(e164)) > 1
+    )
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for cid in _desk_cal_ids():
@@ -2546,14 +2554,14 @@ def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, A
             ev_email = (fields.get("email") or "").strip().lower()
             ev_name = (fields.get("name") or "").strip().lower()
             summary = str(ev.get("summary") or "").lower()
+            named = bool(name) and (ev_name == name or (len(name) > 4 and name in summary))
             hit = bool(email and ev_email == email)
-            if not hit and name and ev_name == name:
-                hit = True
             ev_phone = "".join(ch for ch in str(fields.get("phone") or "") if ch.isdigit())
-            client_phone = "".join(ch for ch in str(client.get("phone") or "") if ch.isdigit())
             if not hit and len(client_phone) >= 10 and ev_phone[-10:] == client_phone[-10:]:
                 hit = True
-            if not hit and name and len(name) > 4 and name in summary:
+            if shared and not named:
+                hit = False
+            if named:
                 hit = True
             eid = str(fields.get("event_id") or "")
             if not hit or not eid or eid in seen:
