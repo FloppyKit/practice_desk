@@ -20,6 +20,19 @@ def _secret() -> bytes:
     return raw.encode("utf-8")
 
 
+def _book_secrets() -> list[bytes]:
+    """Current secret first, then an optional previous one so links already sent keep working after a rotation."""
+    keys = [_secret()]
+    prev = os.environ.get("CANCEL_SECRET_PREV_FILE", "/secrets/booker-cancel.prev.secret")
+    try:
+        raw = Path(prev).read_text(encoding="utf-8").strip()
+        if raw:
+            keys.append(raw.encode("utf-8"))
+    except OSError:
+        pass
+    return keys
+
+
 def _b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
@@ -149,12 +162,23 @@ def mint_book_token(*, client_id: str, version: int = 0, slug: str = "follow-up"
 
 def verify_book_token(token: str) -> dict[str, Any]:
     """Signature + shape only. Caller must also check payload['v'] against the client's book_link_v."""
+    # Links get mangled in transit: %-encoding, trailing "." or ")" from a sentence, whitespace, line wraps.
+    import re as _re
+    from urllib.parse import unquote
+    token = _re.sub(r"\s+", "", unquote(str(token or "")))
     try:
         body, sig = token.split(".", 1)
     except ValueError as e:
         raise ValueError("malformed token") from e
-    expect = _b64(hmac.new(_secret(), body.encode("ascii"), hashlib.sha256).digest())
-    if not hmac.compare_digest(expect, sig):
+    body = _re.sub(r"[^A-Za-z0-9_-]", "", body)
+    sig = _re.sub(r"[^A-Za-z0-9_-]", "", sig)[:43]  # HMAC-SHA256 urlsafe b64, no padding = 43 chars
+    ok = False
+    for key in _book_secrets():
+        expect = _b64(hmac.new(key, body.encode("ascii"), hashlib.sha256).digest())
+        if hmac.compare_digest(expect, sig):
+            ok = True
+            break
+    if not ok:
         raise ValueError("invalid signature")
     payload = json.loads(_b64d(body))
     if payload.get("k") != "bk" or not payload.get("id") or not payload.get("s"):
