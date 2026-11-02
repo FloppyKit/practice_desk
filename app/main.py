@@ -2668,7 +2668,10 @@ def api_desk_client(
         raw_name = name.strip()
         # Calendar titles carry extras ("Follow-up · Jane Doe (30 min)"): try the bare name too.
         bare = re.sub(r"\(.*?\)", " ", raw_name.split("·")[-1].split(" - ")[-1]).strip()
-        for q in dict.fromkeys([raw_name, bare]):
+        # deskfix12: titles are "First Last - 30 Min Follow Up", so the name is usually the FIRST segment.
+        from .cal_reminders import _candidates
+
+        for q in dict.fromkeys([raw_name, *_candidates(raw_name), bare]):
             if row or not q:
                 continue
             hits = search_clients(q, limit=8)
@@ -5371,6 +5374,13 @@ def api_desk_send(req: DeskSendRequest, secret: str = Query(default="")):
             raise HTTPException(404, "client not found")
         name = name or row["name"]
         email = email or row["email"]
+    if not email and name:
+        # deskfix12: drawer opened from a calendar name without an id -> use the directory record's email.
+        from .cal_reminders import match_client
+
+        hit, _how = match_client(name, name)
+        if hit and hit.get("email"):
+            email = str(hit["email"])
     if not email:
         raise HTTPException(400, "need an email (pick a client or type one)")
 

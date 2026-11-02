@@ -3893,6 +3893,11 @@
         .map((el) => el.value);
     }
     function openSendPop() {
+      const hc = (homeCurrent && homeCurrent.client) || {};
+      if (!$("sd-email").value.trim() && hc.email) {
+        $("sd-client").value = hc.id || ""; $("sd-name").value = hc.name || ""; $("sd-email").value = hc.email;
+        $("sd-phone").value = hc.phone || "";
+      }
       closeHomeDrawer();
       if (!$("send-list").children.length) fillSendList();
       const pop = $("send-pop");
@@ -3933,8 +3938,12 @@
     }
     async function deskSend(doEmail) {
       const status = $("send-status");
+      const hc = (homeCurrent && homeCurrent.client) || {};
+      if (!$("sd-email").value.trim() && hc.email && (!$("sd-name").value.trim() || $("sd-name").value.trim() === (hc.name || ""))) {
+        $("sd-email").value = hc.email; if (!$("sd-client").value) $("sd-client").value = hc.id || "";
+      }
       const email = $("sd-email").value.trim();
-      if (!email) { status.textContent = "Need an email."; return; }
+      if (!email && !$("sd-client").value && !$("sd-name").value.trim()) { status.textContent = "Need an email."; return; }
       const items = selectedSendItems();
       if (!items.length) { status.textContent = "Check at least one form."; return; }
       status.textContent = doEmail ? "Sending…" : "Making link…";
@@ -3945,7 +3954,7 @@
           items,
           client_id: $("sd-client").value,
           name: $("sd-name").value.trim(),
-          email,
+          email: email || "",
           notes: $("sd-notes").value.trim(),
           send_email: doEmail,
         }),

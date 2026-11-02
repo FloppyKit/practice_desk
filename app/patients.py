@@ -105,6 +105,8 @@ def _staff_view(row: dict[str, Any]) -> dict[str, Any]:
         "family_name": row.get("family_name") or "",
         "email": row.get("email") or "",
         "phone": row.get("phone_e164") or "",
+        "sms_consent": row.get("sms_consent"),
+        "sms_consent_source": row.get("sms_consent_source") or "",
         "dob": row.get("dob") or "",
         "status": row.get("status") or "",
         "card_on_file": bool(row.get("card_on_file")),
