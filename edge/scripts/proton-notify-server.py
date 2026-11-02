@@ -49,7 +49,7 @@ def _proton_env() -> dict:
 SHARE_URL_RE = re.compile(r"https://drive\.proton\.me/urls/[A-Za-z0-9]+#[A-Za-z0-9_-]+")
 SHLINK_ENV = os.environ.get("SHLINK_ENV", "/home/deploy/edge/secrets/shlink.env")
 SHLINK_BASE = os.environ.get("SHLINK_BASE", "http://127.0.0.1:8081").rstrip("/")
-SHLINK_DOMAIN = os.environ.get("SHLINK_DOMAIN", "go.psycharts.org")
+SHLINK_DOMAIN = os.environ.get("SHLINK_DOMAIN", "go.drmattbrown.com")
 
 
 def _shlink_key() -> str:
@@ -596,7 +596,7 @@ def build_html_eml(*, to: str, subject: str, html: str, logo_path: str | None) -
     else:
         # Hosted fallback if the file is missing
         body_html = body_html.replace(
-            "cid:logo.png", "https://book.psycharts.org/api/practice/logo"
+            "cid:logo.png", "https://book.drmattbrown.com/api/practice/logo"
         )
         parts.append("Content-Type: text/html; charset=utf-8")
         parts.append("Content-Transfer-Encoding: 8bit")

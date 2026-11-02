@@ -19,7 +19,7 @@ TITLES = {"book": "Booking link", "pay": "Payment link", "forms": "Forms link",
 
 
 def shlink_domain() -> str:
-    return (os.environ.get("SHLINK_DOMAIN") or "go.psycharts.org").strip()
+    return (os.environ.get("SHLINK_DOMAIN") or "go.drmattbrown.com").strip()
 
 
 def shlink_key() -> str:
