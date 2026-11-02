@@ -421,6 +421,15 @@
       .desk-tile-wide { min-width:0; min-height:min(70dvh, 42rem); max-height:none; position:static; overflow:auto; }
       #week-card, #video-card { flex:1 1 auto; }
     }
+    @media (max-width: 979px) {
+      /* Phone: whole page scrolls (body was pinned to 100dvh with overflow hidden). */
+      html, body { height:auto; }
+      body { max-height:none; overflow-y:auto; }
+      html.desk-sheet-open body, html.desk-overlay-open body { overflow:hidden; }
+      .wrap-desk { flex:0 0 auto; overflow:visible; }
+      #week-card { flex:0 0 auto; }
+      #week { overscroll-behavior:contain; }
+    }
     #video-card .host-tile { position:relative; background:#18181b; min-height:0; overflow:hidden; }
     #video-card .host-tile-media, #video-card .host-tile video {
       width:100%; height:100%; object-fit:cover; background:#000; display:block;
@@ -3488,6 +3497,20 @@
       return window.innerHeight;
     }
     function sizeWeekTile() {
+      if (window.matchMedia && window.matchMedia("(max-width: 979px)").matches) {
+        // Phone: the page scrolls. Do not pin tiles to the viewport; the calendar keeps its own scroll.
+        ["week-card", "video-card", "mail-card"].forEach((id) => {
+          const el = $(id);
+          if (el) { el.style.height = ""; el.style.maxHeight = ""; }
+        });
+        const wk = $("week");
+        if (wk) {
+          wk.style.height = "";
+          wk.style.maxHeight = Math.max(320, Math.round(viewportHeight() * 0.72)) + "px";
+          wk.style.overflowY = "auto";
+        }
+        return;
+      }
       const wrap = document.querySelector(".wrap-desk");
       const floor = wrap ? (parseFloat(getComputedStyle(wrap).paddingBottom) || 8) : 8;
       const card = $("week-card");
