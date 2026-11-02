@@ -435,6 +435,11 @@
       width:100%; height:100%; object-fit:cover; background:#000; display:block;
     }
     #video-card .host-tile.is-local video { transform:scaleX(-1); }
+    /* Touch/tablet: show the whole frame (no crop), tile sized by the video, not a clipped parent. */
+    @media (max-width: 979px), (pointer: coarse), (hover: none), (max-height: 700px) {
+      #video-card .host-tile { aspect-ratio:16/9; height:auto; max-height:75dvh; }
+      #video-card .host-tile-media, #video-card .host-tile video { height:100%; object-fit:contain; }
+    }
     #video-card .host-tile-label {
       position:absolute; left:0.5rem; bottom:0.5rem; padding:0.15rem 0.45rem; border-radius:999px;
       font-size:0.72rem; background:rgba(0,0,0,.55); color:#fafafa;
