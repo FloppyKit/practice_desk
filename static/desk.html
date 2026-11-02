@@ -421,8 +421,8 @@
       .desk-tile-wide { min-width:0; min-height:min(70dvh, 42rem); max-height:none; position:static; overflow:auto; }
       #week-card, #video-card { flex:1 1 auto; }
     }
-    @media (max-width: 979px) {
-      /* Phone: whole page scrolls (body was pinned to 100dvh with overflow hidden). */
+    /* Phones, tablets (touch), and short windows: whole page scrolls (body was pinned to 100dvh with overflow hidden). */
+    @media (max-width: 979px), (pointer: coarse), (hover: none), (max-height: 700px) {
       html, body { height:auto; }
       body { max-height:none; overflow-y:auto; }
       html.desk-sheet-open body, html.desk-overlay-open body { overflow:hidden; }
@@ -3497,7 +3497,7 @@
       return window.innerHeight;
     }
     function sizeWeekTile() {
-      if (window.matchMedia && window.matchMedia("(max-width: 979px)").matches) {
+      if (window.matchMedia && window.matchMedia("(max-width: 979px), (pointer: coarse), (hover: none), (max-height: 700px)").matches) {
         // Phone: the page scrolls. Do not pin tiles to the viewport; the calendar keeps its own scroll.
         ["week-card", "video-card", "mail-card"].forEach((id) => {
           const el = $(id);
