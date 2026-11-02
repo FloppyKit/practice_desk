@@ -139,7 +139,8 @@ def plan(now: datetime | None = None, days: float = 2.0) -> list[dict[str, Any]]
         email = str(f.get("email") or (client or {}).get("email") or "")
         phone = str(f.get("phone") or (client or {}).get("phone_e164") or "")
         raw_c = (client or {}).get("sms_consent")
-        opted_out = raw_c in (0, "0")
+        # Only a STOP reply (recorded by the Spruce webhook) blocks texts; an unchecked web box does not (Matt t234u).
+        opted_out = raw_c in (0, "0") and str((client or {}).get("sms_consent_source") or "") == "spruce"
         consent = not opted_out and (bool(f.get("sms_consent")) or raw_c in (1, "1", True) or ASSUME_SMS_CONSENT)
         base = {"ev": _h(f["event_id"]), "event_id": f["event_id"], "start": start.isoformat(), "match": how,
                 "title": title, "when_label": f.get("when_label") or "", "duration": f.get("duration_minutes"),

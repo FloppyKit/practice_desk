@@ -471,6 +471,16 @@
       position:absolute; right:0.5rem; bottom:0.5rem; padding:0.15rem 0.45rem; border-radius:999px;
       font-size:0.7rem; background:rgba(0,0,0,.6); color:#e4e4e7; font-variant-numeric:tabular-nums;
     }
+    /* deskfix11: call timer + CT clock top-left of the stage (Pa + self-view own the bottom-right) */
+    #video-card .host-tile-timer { display:none !important; }
+    #video-card #office-clock { position:absolute; top:0.6rem; left:0.6rem; z-index:6; padding:0.2rem 0.6rem;
+      border-radius:999px; font-size:0.78rem; background:rgba(0,0,0,.6); color:#f4f4f5;
+      font-variant-numeric:tabular-nums; pointer-events:none; white-space:nowrap; }
+    #video-card #office-clock[hidden] { display:none; }
+    .home-chip.texts-off { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    #optout-panel { padding:0.75rem 1rem; border-top:1px solid var(--border); }
+    #optout-panel ul { margin:0.4rem 0 0; padding-left:1.1rem; }
+    #optout-panel button.linklike { background:none; border:0; padding:0; color:inherit; text-decoration:underline; cursor:pointer; font:inherit; }
     #video-card .stage-empty {
       position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
       color:#71717a; font-size:0.9rem; pointer-events:none;
@@ -872,6 +882,7 @@
               <button type="button" class="btn" id="office-join-placeholder">Join office</button>
             </div>
           </div>
+          <div id="office-clock" aria-live="off" hidden></div>
           <div id="stage-err" class="err host-stage-err hidden"></div>
         </div>
       </div>
@@ -901,9 +912,11 @@
         <p style="margin:0">Client messages are in Spruce for now. Website chats and uploads arrive there.</p>
         <span style="display:flex;gap:0.5rem">
           <a class="btn" href="https://app.sprucehealth.com" target="_blank" rel="noopener">Open Spruce</a>
+          <button class="btn secondary" type="button" id="optout-btn">Text opt-outs</button>
           <button class="btn secondary" type="button" id="mail-show-desk" onclick="this.closest('#mail-card').querySelector('.mail-split').hidden=false;this.remove()">Show Desk mail</button>
         </span>
       </div>
+      <div id="optout-panel" hidden></div>
       <div class="mail-split" hidden>
         <div class="mail-list">
           <div class="mail-list-head">
@@ -4816,6 +4829,7 @@
           <p class="home-kv">${esc(bits.join(" · "))}</p>
           <div class="home-chips">
             <span class="home-chip${cardOk ? " ok" : ""}">${esc(cardLabel)}</span>
+            ${(c.sms_consent === 0 || c.sms_consent === "0") && c.sms_consent_source === "spruce" ? '<span class="home-chip texts-off" title="Replied STOP in Spruce">Texts off (replied STOP)</span>' : ""}
             ${intakeChips(data.intake)}
             ${window.DeskBooks ? DeskBooks.chip(data.books) : ""}
           </div>
@@ -5211,5 +5225,45 @@
   <script src="/static/js/pa-router.js?v=2"></script>
   <script src="/static/js/staff-agent.js?v=6"></script>
   <script src="/static/js/proton-drive.js?v=10"></script>
+<script>
+/* deskfix11: office clock (In call + CT time) and Text opt-outs list */
+(function () {
+  var fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
+  var ct = "", ctAt = 0;
+  function tick() {
+    var el = document.getElementById("office-clock");
+    if (!el) return;
+    var now = Date.now();
+    if (!ct || now - ctAt > 15000) { ct = fmt.format(new Date(now)) + " CT"; ctAt = now; }
+    var t = document.querySelector("#video-grid .host-tile.is-remote:not(.is-screen) .host-tile-timer:not(.hidden)");
+    var call = t && /\d/.test(t.textContent) ? t.textContent.trim() : "";
+    var live = document.querySelector("#video-grid .host-tile");
+    el.textContent = call ? call + " \u00b7 " + ct : ct;
+    el.hidden = !live;
+  }
+  setInterval(tick, 1000); tick();
+
+  function esc(x) { return String(x || "").replace(/[&<>"']/g, function (m) { return "&#" + m.charCodeAt(0) + ";"; }); }
+  document.addEventListener("click", async function (ev) {
+    var b = ev.target.closest && ev.target.closest("#optout-btn");
+    var o = ev.target.closest && ev.target.closest("#optout-panel [data-cid]");
+    if (o && typeof openHome === "function") { openHome({ id: o.getAttribute("data-cid"), name: o.textContent }); return; }
+    if (!b) return;
+    var p = document.getElementById("optout-panel");
+    if (!p.hidden) { p.hidden = true; return; }
+    p.hidden = false; p.innerHTML = "<p class='desk-meta'>Loading…</p>";
+    try {
+      var f = typeof deskFetch === "function" ? deskFetch : fetch;
+      var r = await f("/api/desk/sms-optouts"); var d = await r.json();
+      var li = function (x) { return "<li><button type='button' class='linklike' data-cid='" + esc(x.id) + "'>" + esc(x.name || "Client") +
+        "</button> <span class='desk-meta'>" + esc((x.at || "").slice(0, 10)) + (x.source ? " · " + esc(x.source) : "") + "</span></li>"; };
+      p.innerHTML = "<strong>Replied STOP (texts off)</strong> <span class='desk-meta'>" + d.stop.length + "</span>" +
+        (d.stop.length ? "<ul>" + d.stop.map(li).join("") + "</ul>" : "<p class='desk-meta'>No one has replied STOP.</p>") +
+        "<p style='margin-top:0.6rem'><strong>Left the text box unchecked on a form</strong> <span class='desk-meta'>" + d.unchecked.length +
+        " · not a STOP; reminders still text them</span></p>" + (d.unchecked.length ? "<ul>" + d.unchecked.map(li).join("") + "</ul>" : "");
+    } catch (e) { p.innerHTML = "<p class='desk-meta'>Could not load opt-outs.</p>"; }
+  });
+})();
+</script>
 </body>
 </html>

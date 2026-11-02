@@ -5693,6 +5693,20 @@ def api_desk_book_link_revoke(req: DeskBookLinkRevoke):
     return {"ok": True, "url": _book_link(req.client_id)["url"]}
 
 
+@app.get("/api/desk/sms-optouts")
+def api_desk_sms_optouts(request: Request):
+    """Desk only: clients with texts off. stop = replied STOP in Spruce; unchecked = form box left off."""
+    _require_staff("", request)
+    with clients_db.connect() as con:
+        rows = con.execute("SELECT id, display_name, sms_consent_at, sms_consent_source FROM clients "
+                           "WHERE sms_consent = 0 ORDER BY sms_consent_at DESC").fetchall()
+    out: dict[str, list[dict[str, Any]]] = {"stop": [], "unchecked": []}
+    for r in rows:
+        item = {"id": r[0], "name": r[1] or "", "at": r[2] or "", "source": r[3] or ""}
+        out["stop" if (r[3] or "") == "spruce" else "unchecked"].append(item)
+    return JSONResponse({"ok": True, **out}, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/{slug}")
 def page_book_slug(slug: str):
     """Public book page for any enabled service."""
