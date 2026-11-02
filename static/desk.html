@@ -457,7 +457,9 @@
       #video-card .host-tile { aspect-ratio:16/9; height:auto; max-height:75dvh; }
       #video-card .host-tile-media, #video-card .host-tile video { height:100%; object-fit:contain; }
       /* With a patient: patient fills the box, self-view is a small inset. */
-      #video-card .host-video-grid.has-remote { position:relative; display:block; width:100%; aspect-ratio:16/9; max-height:80dvh; }
+      #video-card .video-stage { aspect-ratio:16/9; height:auto; max-height:80dvh; min-height:12rem; flex:0 0 auto; }
+      #video-card .host-video-grid.has-remote { position:relative; display:block; width:100%; height:100%; }
+      html.office-full #video-card .video-stage { aspect-ratio:auto; max-height:none; height:100%; flex:1 1 auto; }
       #video-card .host-video-grid.has-remote .host-tile.is-remote, #video-card .host-video-grid.has-remote .host-tile.is-screen { position:absolute; inset:0; aspect-ratio:auto; max-height:none; width:100%; height:100%; }
       #video-card .host-video-grid.has-remote .host-tile.is-local:not(.is-screen) { position:absolute; right:0.5rem; bottom:0.5rem; width:26%; min-width:6.5rem; height:auto; aspect-ratio:16/9; z-index:3; border-radius:8px; border:1px solid #3f3f46; }
     }
