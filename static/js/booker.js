@@ -583,6 +583,21 @@ export async function initBooker(opts) {
     }
   }
   applyPrefill();
+  // Personal link (/b/<token> -> #bt=<token>): swap the token for the prefill, then clear the address bar.
+  (function tokenPrefill() {
+    const m = /(?:^#|&)bt=([A-Za-z0-9_.-]+)/.exec(window.location.hash || "");
+    if (!m) return;
+    history.replaceState(null, "", window.location.pathname);
+    fetch("/api/public/book-prefill", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: m[1] }), cache: "no-store" })
+      .then((r) => r.json()).then((d) => {
+        if (!d || !d.ok || !formEl) return;
+        [["name", d.name], ["email", d.email], ["phone", d.phone]].forEach(([k, v]) => {
+          const el = formEl.querySelector('[name="' + k + '"]');
+          if (el && v && !el.value) el.value = v;
+        });
+      }).catch(() => {});
+  })();
 
   if (durationEl) {
     durationEl.querySelectorAll("[data-duration]").forEach((btn) => {

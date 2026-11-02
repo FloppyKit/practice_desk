@@ -112,6 +112,23 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "booking_link",
+            "description": "Get a client's personal booking link (book.drmattbrown.com/b/..., never expires; "
+                           "prefills their details). Give the url to Matt. send_email=true also emails it to the "
+                           "client. Find client_id with search_clients first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "client_id": {"type": "string"},
+                    "send_email": {"type": "boolean"},
+                },
+                "required": ["client_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "book_visit",
             "description": "Book a follow-up on the calendar. start is ISO datetime.",
             "parameters": {
@@ -306,7 +323,9 @@ def _client_visits(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _run_tool(name: str, args: dict[str, Any], book_fn, send_fn, mail_fn) -> Any:
+def _run_tool(name: str, args: dict[str, Any], book_fn, send_fn, mail_fn, link_fn=None) -> Any:
+    if name == "booking_link":
+        return link_fn(args) if link_fn else {"error": "booking links unavailable"}
     if name == "client_visits":
         return _client_visits(args)
     if name == "search_clients":
@@ -402,6 +421,7 @@ def run_desk_agent(
     book_fn,
     send_fn,
     mail_fn,
+    link_fn=None,
 ) -> dict[str, Any]:
     messages = _history(history)
     if not messages:
@@ -427,7 +447,7 @@ def run_desk_agent(
             args = call.get("input") if isinstance(call.get("input"), dict) else {}
             used.append(name)
             try:
-                result = _run_tool(name, args, book_fn, send_fn, mail_fn)
+                result = _run_tool(name, args, book_fn, send_fn, mail_fn, link_fn)
             except Exception as e:
                 result = {"error": str(e)[:200]}
             if isinstance(result, dict) and result.get("action") == "confirm_call":

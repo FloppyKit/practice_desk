@@ -4726,6 +4726,7 @@
           <button class="btn secondary" type="button" id="hm-book">Book next</button>
           <a class="btn secondary" id="hm-mail" ${mail ? "href='" + esc(mail) + "'" : "hidden"}>Email</a>
           <button class="btn secondary" type="button" id="hm-pay">Copy pay link</button>
+          ${c.id ? '<button class="btn secondary" type="button" id="hm-booklink">Copy booking link</button>' : ""}
           <button class="btn secondary" type="button" id="hm-files">Files</button>
           ${layoutMode === "office" ? "" : '<button class="btn secondary" type="button" id="hm-note">Note</button>'}
           <button class="btn secondary" type="button" id="hm-superbill">Superbill</button>
@@ -4839,6 +4840,14 @@
         if (!links.pay) return;
         try { await navigator.clipboard.writeText(links.pay); } catch (e) {}
         msg("Pay link copied.", true);
+      };
+      if ($("hm-booklink")) $("hm-booklink").onclick = async () => {
+        const res = await deskFetch("/api/desk/book-link", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_id: c.id }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok || !d.ok || !d.url) { msg("Could not make a booking link.", false); return; }
+        try { await navigator.clipboard.writeText(d.url); } catch (e) {}
+        msg("Booking link copied (prefilled, no expiry).", true);
       };
       if ($("hm-join")) $("hm-join").onclick = () => joinOfficePlaceholder();
       if ($("hm-note")) $("hm-note").onclick = () => openNotePop("");

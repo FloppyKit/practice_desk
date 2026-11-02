@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
@@ -184,6 +184,31 @@ def _prefilled_book_url(
     if duration:
         q["duration"] = str(int(duration))
     return f"{PUBLIC_BASE}/{slug}" + (("?" + urlencode(q)) if q else "")
+
+
+def _book_link(client_id: str, *, slug: str = "follow-up", duration: int | None = None) -> dict[str, Any]:
+    """Signed, client-bound booking link on the booker host (/b/<token>). No PHI in the URL, no expiry.
+    Matt 2026-11-02: stays on book.drmattbrown.com (never Shlink); revoke via book_link_v."""
+    from .tokens import mint_book_token
+
+    row = clients_db.get_by_id(str(client_id)) or {}
+    tok = mint_book_token(client_id=client_id, version=int(row.get("book_link_v") or 0), slug=slug,
+                          duration=duration)
+    return {"url": f"{PUBLIC_BASE}/b/{tok}"}
+
+
+def _book_token_client(token: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Valid signature + client exists + version current -> (payload, client row)."""
+    from .tokens import verify_book_token
+
+    try:
+        p = verify_book_token(token)
+    except Exception:
+        return None
+    row = clients_db.get_by_id(str(p["id"]))
+    if not row or int(p.get("v") or 0) != int(row.get("book_link_v") or 0):
+        return None
+    return p, row
 
 
 def _mint_intake_url(email: str, name: str = "", forms: list[str] | None = None, client_id: str = "") -> str:
@@ -2681,12 +2706,7 @@ def api_desk_client(
         "links": {
             "pay": pay_url,
             "forms": f"{SITE_PUBLIC}/forms",
-            "book": _prefilled_book_url(
-                "follow-up",
-                name=row.get("name") or "",
-                email=row.get("email") or "",
-                phone=row.get("phone") or "",
-            ),
+            "book": _book_link(str(row["id"]))["url"] if row.get("id") else f"{PUBLIC_BASE}/follow-up",
             "mailto": f"mailto:{row['email']}" if row.get("email") else "",
         },
     }
@@ -2873,12 +2893,7 @@ def api_desk_fees_no_show(req: DeskFeeRequest, secret: str = Query(default="")):
                 "title": "Visit",
                 "start_iso": dos,
                 "duration_minutes": req.duration_minutes or 30,
-                "rebook_url": _prefilled_book_url(
-                    "follow-up",
-                    name=row.get("display_name") or "",
-                    email=row.get("email") or "",
-                    phone=row.get("phone_e164") or "",
-                ),
+                "rebook_url": _book_link(str(row["id"]))["url"],
             },
         )
         mailed = bool(mail.get("ok"))
@@ -5222,8 +5237,13 @@ def api_desk_agent(
         }
         return send_named_email(kind=kind, to=to, fields=fields)
 
+    def link_fn(args: dict) -> dict:
+        return _desk_book_link(str(args.get("client_id") or ""), send_email=bool(args.get("send_email")),
+                               dry_run=bool(args.get("dry_run")))
+
     try:
-        return run_desk_agent(req.messages, book_fn=book_fn, send_fn=send_fn, mail_fn=mail_fn)
+        return run_desk_agent(req.messages, book_fn=book_fn, send_fn=send_fn, mail_fn=mail_fn,
+                              link_fn=link_fn)
     except Exception as e:
         raise HTTPException(502, str(e)[:200]) from e
 
@@ -5512,6 +5532,89 @@ def page_intro():
 @app.get("/thanks")
 def page_thanks():
     return _page("thanks.html")
+
+
+_NO_INDEX = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"}
+
+
+@app.get("/b/{token}")
+def page_book_token(token: str):
+    """Personal booking link. Redirects to the service page with the token in the #fragment
+    (never sent to servers/logs); booker.js swaps it for the prefill, then clears the address bar."""
+    hit = _book_token_client(token)
+    if not hit:
+        return HTMLResponse("<!doctype html><meta name=robots content=noindex><title>Link not valid</title>"
+                            "<p>This booking link is no longer valid. "
+                            f"<a href='{PUBLIC_BASE}/follow-up'>Book here</a> instead.</p>",
+                            status_code=410, headers=_NO_INDEX)
+    return RedirectResponse(f"/{hit[0]['s']}#bt={token}", status_code=303, headers=_NO_INDEX)
+
+
+class BookPrefillRequest(BaseModel):
+    token: str
+
+
+@app.post("/api/public/book-prefill")
+def api_book_prefill(req: BookPrefillRequest):
+    """Token -> current name/email/phone for the client it is bound to. no-store."""
+    hit = _book_token_client(req.token)
+    if not hit:
+        return JSONResponse({"ok": False}, status_code=410, headers=_NO_INDEX)
+    p, row = hit
+    return JSONResponse({"ok": True, "slug": p["s"], "duration": p.get("d"),
+                         "name": row.get("display_name") or "", "email": row.get("email") or "",
+                         "phone": row.get("phone_e164") or ""}, headers=_NO_INDEX)
+
+
+class DeskBookLinkRequest(BaseModel):
+    client_id: str
+    duration: int | None = None
+    send_email: bool = False
+    dry_run: bool = False
+
+
+def _desk_book_link(client_id: str, *, duration: int | None = None, send_email: bool = False,
+                    dry_run: bool = False) -> dict[str, Any]:
+    row = clients_db.get_by_id(str(client_id or "")) if client_id else None
+    if not row:
+        return {"ok": False, "error": "client not found"}
+    link = _book_link(row["id"], duration=duration)
+    out: dict[str, Any] = {"ok": True, "url": link["url"], "email": {"skipped": True}}
+    if send_email:
+        to = str(row.get("email") or "")
+        if not to:
+            out["email"] = {"ok": False, "detail": "no email on file"}
+        elif dry_run:
+            out["email"] = {"ok": True, "dry_run": True, "sent": False}
+        else:
+            from .notify import send_named_email
+
+            r = send_named_email(kind="book_link", to=to, fields={
+                "name": row.get("display_name") or "", "url": link["url"], "title": "a follow-up visit"})
+            out["email"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("ok"))}
+    return out
+
+
+@app.post("/api/desk/book-link")
+def api_desk_book_link(req: DeskBookLinkRequest):
+    """Desk: mint a client's personal booking link (book host /b/<token>); optional email."""
+    _require_staff()
+    return _desk_book_link(req.client_id, duration=req.duration, send_email=req.send_email,
+                           dry_run=req.dry_run)
+
+
+class DeskBookLinkRevoke(BaseModel):
+    client_id: str
+
+
+@app.post("/api/desk/book-link/revoke")
+def api_desk_book_link_revoke(req: DeskBookLinkRevoke):
+    """Kill the client's current booking link (e.g. forwarded) and return the reissued one."""
+    _require_staff()
+    if not clients_db.get_by_id(req.client_id):
+        raise HTTPException(404, "client not found")
+    clients_db.bump_book_link_version(req.client_id)
+    return {"ok": True, "url": _book_link(req.client_id)["url"]}
 
 
 @app.get("/{slug}")

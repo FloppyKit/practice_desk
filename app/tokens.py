@@ -132,3 +132,31 @@ def verify_patient_token(token: str) -> dict[str, Any]:
     if not payload.get("id"):
         raise ValueError("incomplete token")
     return payload
+
+
+
+def mint_book_token(*, client_id: str, version: int = 0, slug: str = "follow-up",
+                    duration: int | None = None) -> str:
+    """Client-bound booking link token, no expiry (Matt 2026-11-02). No name/email/phone inside.
+    Revoke = bump the client's book_link_v; tokens carrying an older v stop working."""
+    payload: dict[str, Any] = {"k": "bk", "id": str(client_id), "s": str(slug)[:40], "v": int(version)}
+    if duration:
+        payload["d"] = int(duration)
+    body = _b64(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+    sig = _b64(hmac.new(_secret(), body.encode("ascii"), hashlib.sha256).digest())
+    return f"{body}.{sig}"
+
+
+def verify_book_token(token: str) -> dict[str, Any]:
+    """Signature + shape only. Caller must also check payload['v'] against the client's book_link_v."""
+    try:
+        body, sig = token.split(".", 1)
+    except ValueError as e:
+        raise ValueError("malformed token") from e
+    expect = _b64(hmac.new(_secret(), body.encode("ascii"), hashlib.sha256).digest())
+    if not hmac.compare_digest(expect, sig):
+        raise ValueError("invalid signature")
+    payload = json.loads(_b64d(body))
+    if payload.get("k") != "bk" or not payload.get("id") or not payload.get("s"):
+        raise ValueError("wrong token type")
+    return payload

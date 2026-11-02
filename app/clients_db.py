@@ -112,7 +112,7 @@ def _init(con: sqlite3.Connection) -> None:
     if "standing_dx" not in cols:
         # Standing ICD-10 codes (JSON list) that default the Bill visit sheet.
         con.execute("ALTER TABLE clients ADD COLUMN standing_dx TEXT")
-    for col, typ in (("sms_consent", "INTEGER"), ("sms_consent_at", "TEXT"), ("sms_consent_source", "TEXT")):
+    for col, typ in (("book_link_v", "INTEGER"), ("sms_consent", "INTEGER"), ("sms_consent_at", "TEXT"), ("sms_consent_source", "TEXT")):
         if col not in cols:
             # Text consent on file: NULL unknown, 1 yes, 0 no (when and where it was given).
             con.execute(f"ALTER TABLE clients ADD COLUMN {col} {typ}")
@@ -340,3 +340,11 @@ def count() -> int:
     with connect() as con:
         row = con.execute("SELECT COUNT(*) AS n FROM clients").fetchone()
     return int(row["n"] if row else 0)
+
+
+def bump_book_link_version(client_id: str) -> int:
+    """Revoke the client's current booking link; the next minted link uses the new version."""
+    with connect() as con:
+        con.execute("UPDATE clients SET book_link_v = coalesce(book_link_v, 0) + 1 WHERE id = ?", (client_id,))
+        r = con.execute("SELECT book_link_v FROM clients WHERE id = ?", (client_id,)).fetchone()
+    return int(r[0]) if r else 0
