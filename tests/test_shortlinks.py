@@ -21,34 +21,47 @@ def _env(tmp: str) -> None:
                     "('syn1', 'Synth Booker', 'synth@example.invalid', '+15550000009')")
 
 
-def test_token_valid_tampered_revoked_and_route() -> None:
+def test_short_code_valid_revoked_stable_and_route() -> None:
     from app import main
 
     with tempfile.TemporaryDirectory() as tmp:
         _env(tmp)
+        os.environ["BOOKER_LOG_DIR"] = tmp
+        main._BOOK_FAIL_LOG = Path(tmp) / "booklink-failures.jsonl"
         url = main._book_link("syn1")["url"]
-        assert url.startswith("https://book.drmattbrown.com/b/")
-        tok = url.rsplit("/", 1)[1]
-        for leak in ("Synth", "synth@", "5550000009"):
-            assert leak not in url
-        p = tokens.verify_book_token(tok)
-        assert p["id"] == "syn1" and "x" not in p  # no expiry
-        r = main.page_book_token(tok)
-        assert r.status_code == 303 and r.headers["location"] == "/follow-up#bt=" + tok
+        code = url.rsplit("/", 1)[1]
+        assert url == "https://book.drmattbrown.com/b/" + code and len(code) == 8 and code.isalnum()
+        assert len(url) == 39
+        assert main._book_link("syn1")["url"] == url  # reused per client
+        r = main.page_book_token(code)
+        assert r.status_code == 303 and r.headers["location"] == "/follow-up#bt=" + code
         assert r.headers["cache-control"] == "no-store" and "noindex" in r.headers["x-robots-tag"]
-        d = json.loads(main.api_book_prefill(main.BookPrefillRequest(token=tok)).body)
-        assert d["ok"] and d["name"] == "Synth Booker" and d["email"] == "synth@example.invalid"
-        body, sig = tok.split(".")
-        bad = body[:-2] + ("AA" if body[-2:] != "AA" else "BB") + "." + sig
-        assert main.page_book_token(bad).status_code == 410
-        assert main.page_book_token(body + "." + sig[::-1]).status_code == 410
+        assert main.page_book_token(code + ".").status_code == 303  # sentence punctuation
+        d = json.loads(main.api_book_prefill(main.BookPrefillRequest(token=code)).body)
+        assert d["ok"] and d["name"] == "Synth Booker" and d["phone"] == "+15550000009"
+        assert main.page_book_token("zzzzzzzz").status_code == 410
         assert main.page_book_token("garbage").status_code == 410
+        # legacy long tokens keep working until revoked
+        tok = tokens.mint_book_token(client_id="syn1")
+        assert main.page_book_token(tok).status_code == 303
+        body, sig = tok.split(".")
+        assert main.page_book_token(body + "." + sig[:22] + sig[24:] + "A").status_code == 410
         clients_db.bump_book_link_version("syn1")
-        assert main.page_book_token(tok).status_code == 410  # revoked
-        assert json.loads(main.api_book_prefill(main.BookPrefillRequest(token=tok)).body)["ok"] is False
+        assert main.page_book_token(code).status_code == 410  # revoked -> 410
+        assert main.page_book_token(tok).status_code == 410
         new = main._book_link("syn1")["url"]
         assert new != url and main.page_book_token(new.rsplit("/", 1)[1]).status_code == 303
-        assert main._book_link("syn1")["url"] == new  # stable until revoked
+        log = [json.loads(x) for x in main._BOOK_FAIL_LOG.read_text().splitlines()]
+        assert {"unknown code", "revoked code", "invalid signature", "bad version (revoked)"} <= {x["reason"] for x in log}
+        assert code not in main._BOOK_FAIL_LOG.read_text() and sig not in main._BOOK_FAIL_LOG.read_text()
+
+
+def test_b_rate_limit() -> None:
+    from app import main
+
+    main._B_HITS.clear()
+    assert all(main._b_rate_ok("9.9.9.9") for _ in range(30))
+    assert not main._b_rate_ok("9.9.9.9")
 
 
 def test_cancel_and_patient_tokens_reject_book_tokens() -> None:

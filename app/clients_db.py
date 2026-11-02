@@ -120,6 +120,11 @@ def _init(con: sqlite3.Connection) -> None:
         if col not in cols:
             # Per-client intake link (+ when minted); card_shared_from = family member whose card we use.
             con.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS book_codes (code TEXT PRIMARY KEY, client_id TEXT NOT NULL, "
+        "created_at TEXT, revoked_at TEXT)"
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_book_codes_client ON book_codes(client_id)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_email ON clients(email)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone_e164)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(display_name)")
@@ -342,9 +347,44 @@ def count() -> int:
     return int(row["n"] if row else 0)
 
 
-def bump_book_link_version(client_id: str) -> int:
-    """Revoke the client's current booking link; the next minted link uses the new version."""
+BOOK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"  # base62 minus look-alikes (0O1Il)
+BOOK_CODE_LEN = 8
+
+
+def book_code_for(client_id: str) -> str:
+    """Short booking-link code for a client: reused until revoked, never expires."""
+    import secrets as _s
+
+    now = datetime.now(timezone.utc).isoformat()
     with connect() as con:
+        r = con.execute("SELECT code FROM book_codes WHERE client_id = ? AND revoked_at IS NULL "
+                        "ORDER BY created_at LIMIT 1", (client_id,)).fetchone()
+        if r:
+            return str(r[0])
+        for _ in range(10):
+            code = "".join(_s.choice(BOOK_CODE_ALPHABET) for _ in range(BOOK_CODE_LEN))
+            try:
+                con.execute("INSERT INTO book_codes (code, client_id, created_at) VALUES (?, ?, ?)",
+                            (code, client_id, now))
+                con.commit()
+                return code
+            except sqlite3.IntegrityError:
+                continue
+    raise RuntimeError("could not allocate booking code")
+
+
+def book_code_lookup(code: str) -> tuple[str, bool] | None:
+    """code -> (client_id, revoked) or None if unknown."""
+    with connect() as con:
+        r = con.execute("SELECT client_id, revoked_at FROM book_codes WHERE code = ?", (code,)).fetchone()
+    return (str(r[0]), r[1] is not None) if r else None
+
+
+def bump_book_link_version(client_id: str) -> int:
+    """Revoke the client's current booking link (old long tokens and the short code); next mint is new."""
+    with connect() as con:
+        con.execute("UPDATE book_codes SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL",
+                    (datetime.now(timezone.utc).isoformat(), client_id))
         con.execute("UPDATE clients SET book_link_v = coalesce(book_link_v, 0) + 1 WHERE id = ?", (client_id,))
         r = con.execute("SELECT book_link_v FROM clients WHERE id = ?", (client_id,)).fetchone()
     return int(r[0]) if r else 0

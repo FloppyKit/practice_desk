@@ -4,6 +4,7 @@ import re
 import hmac
 import json
 import os
+import time
 import threading
 import uuid
 from contextvars import ContextVar
@@ -190,26 +191,75 @@ def _prefilled_book_url(
 
 
 def _book_link(client_id: str, *, slug: str = "follow-up", duration: int | None = None) -> dict[str, Any]:
-    """Signed, client-bound booking link on the booker host (/b/<token>). No PHI in the URL, no expiry.
-    Matt 2026-11-02: stays on book.drmattbrown.com (never Shlink); revoke via book_link_v."""
-    from .tokens import mint_book_token
-
-    row = clients_db.get_by_id(str(client_id)) or {}
-    tok = mint_book_token(client_id=client_id, version=int(row.get("book_link_v") or 0), slug=slug,
-                          duration=duration)
-    return {"url": f"{PUBLIC_BASE}/b/{tok}"}
+    """Short client-bound booking link: book.drmattbrown.com/b/<8-char code>. No PHI, no expiry,
+    reused per client until revoked (Matt 2026-11-02: long HMAC links got mangled when relayed).
+    slug/duration kept for callers; the code always opens follow-up."""
+    code = clients_db.book_code_for(str(client_id))
+    return {"url": f"{PUBLIC_BASE}/b/{code}"}
 
 
-def _book_token_client(token: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
-    """Valid signature + client exists + version current -> (payload, client row)."""
+_BOOK_FAIL_LOG = Path(os.environ.get("BOOKER_LOG_DIR", "/data/logs")) / "booklink-failures.jsonl"
+_B_HITS: dict[str, list[float]] = {}
+
+
+def _b_rate_ok(ip: str, limit: int = 30, window: float = 60.0) -> bool:
+    now = time.time()
+    hits = [t for t in _B_HITS.get(ip, []) if now - t < window]
+    hits.append(now)
+    _B_HITS[ip] = hits[-limit - 1:]
+    if len(_B_HITS) > 5000:
+        _B_HITS.clear()
+    return len(hits) <= limit
+
+
+def _log_book_fail(token: str, reason: str, where: str) -> None:
+    """No PHI, never the token: length, shape, reason, and which minter's format it looks like."""
+    t = str(token or "")
+    src = ("short-code" if "." not in t and len(t) <= 16 else
+           "long-hmac (booker _book_link, pre-short)" if t.count(".") == 1 else "unknown")
+    try:
+        _BOOK_FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _BOOK_FAIL_LOG.open("a") as f:
+            f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "where": where, "len": len(t),
+                                "parts": [len(x) for x in t.split(".")][:3], "reason": reason,
+                                "source": src}) + "\n")
+    except Exception:
+        pass
+
+
+def _book_token_client(token: str, where: str = "b") -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Short code or legacy long token -> (payload, client row). Failures are logged without the token."""
+    import re as _re
+    from urllib.parse import unquote
+
     from .tokens import verify_book_token
 
+    raw = _re.sub(r"\s+", "", unquote(str(token or "")))
+    code = _re.sub(r"[^A-Za-z0-9]", "", raw)
+    if "." not in raw.rstrip(".)!,;:'\"") and 6 <= len(code) <= 16:
+        hit = clients_db.book_code_lookup(code[:clients_db.BOOK_CODE_LEN])
+        if not hit:
+            _log_book_fail(raw, "unknown code", where)
+            return None
+        if hit[1]:
+            _log_book_fail(raw, "revoked code", where)
+            return None
+        row = clients_db.get_by_id(hit[0])
+        if not row:
+            _log_book_fail(raw, "unknown client", where)
+            return None
+        return {"k": "bk", "id": hit[0], "s": "follow-up", "v": int(row.get("book_link_v") or 0)}, row
     try:
-        p = verify_book_token(token)
-    except Exception:
+        p = verify_book_token(raw)
+    except Exception as e:
+        _log_book_fail(raw, str(e)[:60] or "decode error", where)
         return None
     row = clients_db.get_by_id(str(p["id"]))
-    if not row or int(p.get("v") or 0) != int(row.get("book_link_v") or 0):
+    if not row:
+        _log_book_fail(raw, "unknown client", where)
+        return None
+    if int(p.get("v") or 0) != int(row.get("book_link_v") or 0):
+        _log_book_fail(raw, "bad version (revoked)", where)
         return None
     return p, row
 
@@ -5556,15 +5606,23 @@ _NO_INDEX = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "
 
 
 @app.get("/b/{token}")
-def page_book_token(token: str):
-    """Personal booking link. Redirects to the service page with the token in the #fragment
-    (never sent to servers/logs); booker.js swaps it for the prefill, then clears the address bar."""
-    hit = _book_token_client(token)
+def page_book_token(token: str, request: Request = None):  # type: ignore[assignment]
+    """Personal booking link. Redirects to the service page with the code in the #fragment;
+    booker.js swaps it for the prefill, then clears the address bar."""
+    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip() or
+          (request.client.host if request.client else "")) if request is not None else ""
+    if ip and not _b_rate_ok(ip):
+        return HTMLResponse("Too many tries. Wait a minute and try again.", status_code=429, headers=_NO_INDEX)
+    hit = _book_token_client(token, "b")
     if not hit:
-        return HTMLResponse("<!doctype html><meta name=robots content=noindex><title>Link not valid</title>"
-                            "<p>This booking link is no longer valid. "
-                            f"<a href='{PUBLIC_BASE}/follow-up'>Book here</a> instead.</p>",
-                            status_code=410, headers=_NO_INDEX)
+        return HTMLResponse(
+            "<!doctype html><meta name=robots content=noindex><meta name=viewport content='width=device-width'>"
+            "<title>Booking link didn't work</title><body style='font-family:system-ui;max-width:32em;margin:3em auto;"
+            "padding:0 1em;line-height:1.5'><h1 style='font-size:1.3em'>This booking link didn't work</h1>"
+            "<p>It may have been cut off when it was copied, or replaced with a newer one.</p>"
+            f"<p><a href='{PUBLIC_BASE}/follow-up'>Book a follow-up here</a>. You'll type your name, email "
+            "and phone yourself. Or ask the office for a new link.</p></body>",
+            status_code=410, headers=_NO_INDEX)
     return RedirectResponse(f"/{hit[0]['s']}#bt={token}", status_code=303, headers=_NO_INDEX)
 
 
@@ -5575,7 +5633,7 @@ class BookPrefillRequest(BaseModel):
 @app.post("/api/public/book-prefill")
 def api_book_prefill(req: BookPrefillRequest):
     """Token -> current name/email/phone for the client it is bound to. no-store."""
-    hit = _book_token_client(req.token)
+    hit = _book_token_client(req.token, "prefill")
     if not hit:
         return JSONResponse({"ok": False}, status_code=410, headers=_NO_INDEX)
     p, row = hit
