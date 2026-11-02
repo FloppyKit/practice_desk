@@ -97,6 +97,8 @@ app.add_middleware(
     allow_origins=[
         "https://book.drmattbrown.com",
         "https://live.psycharts.org",
+        "https://live.drmattbrown.com",
+        "https://meet.drmattbrown.com",
         "https://drmattbrown.com",
         "https://drmattbrown.com",
         "https://www.drmattbrown.com",
@@ -673,7 +675,7 @@ def _send_booking_notices(
     notes: str,
     sms_consent: bool,
     price_label: str = "",
-    location_line: str = "Video visit · https://meet.drmattbrown.com/guest",
+    location_line: str = "Video visit · https://meet.drmattbrown.com",
     extra_notify: list[str] | None = None,
     rebook_url: str = "",
     duration_minutes: int | None = None,
@@ -4109,7 +4111,7 @@ def api_desk_meta(secret: str = Query(default="")):
         "ok": True,
         "office_url": os.environ.get("LIVEKIT_OFFICE_URL", "").strip(),
         "guest_url": os.environ.get(
-            "LIVEKIT_GUEST_URL", "https://meet.drmattbrown.com/guest"
+            "LIVEKIT_GUEST_URL", "https://meet.drmattbrown.com"
         ).strip(),
         "agent": True,
         "drive": True,
@@ -5419,7 +5421,7 @@ def desk_page():
         if 'data-demo="' not in html:
             html = html.replace("<html", '<html data-demo="1"', 1)
         html = html.replace(
-            'src="https://live.psycharts.org/static/js/host-office.js?v=12"',
+            'src="https://live.drmattbrown.com/static/js/host-office.js?v=12"',
             'src="" data-stripped-demo-host-office="1"',
         )
     return Response(
