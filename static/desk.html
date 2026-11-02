@@ -1701,6 +1701,10 @@
       }
       officeOn = true;
       applyTiles();
+      // Real office on this device (tap = user gesture, so iOS/Android allow the camera). Demo stays a placeholder.
+      let demo = false;
+      try { demo = document.documentElement.getAttribute("data-demo") === "1"; } catch (_) {}
+      if (!demo) startOffice().then(paintOfficePlaceholder).catch(() => {});
     }
     function setLayout(next) {
       if (!window.deskLayout) return;
