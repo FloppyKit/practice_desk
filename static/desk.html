@@ -435,6 +435,23 @@
       width:100%; height:100%; object-fit:cover; background:#000; display:block;
     }
     #video-card .host-tile.is-local video { transform:scaleX(-1); }
+    /* Full-screen office (button, or auto on touch landscape with calendar closed): patient large, self-view inset. */
+    html.office-full body { overflow:hidden; }
+    html.office-full #video-card { position:fixed; inset:0; z-index:80; margin:0; border-radius:0; max-height:none !important; height:100dvh !important; width:100vw; display:flex; flex-direction:column; background:#000; padding:0.35rem; }
+    html.office-full #video-card .desk-video-stage, html.office-full #video-card .video-stage, html.office-full #video-card .letterbox { flex:1 1 auto; min-height:0; height:100%; max-height:none; }
+    html.office-full #video-card .host-video-grid { position:relative; display:block; height:100%; width:100%; }
+    html.office-full #video-card .host-tile { aspect-ratio:auto; max-height:none; width:100%; height:100%; }
+    html.office-full #video-card .host-video-grid.has-remote .host-tile.is-remote,
+    html.office-full #video-card .host-video-grid.has-remote .host-tile.is-screen { position:absolute; inset:0; }
+    #video-card .host-video-grid.has-remote .host-tile.is-local:not(.is-screen) { }
+    html.office-full #video-card .host-video-grid.has-remote .host-tile.is-local:not(.is-screen) {
+      position:absolute; right:0.75rem; bottom:0.75rem; width:24%; min-width:9rem; height:auto; aspect-ratio:16/9; z-index:3;
+      border-radius:10px; box-shadow:0 4px 18px rgba(0,0,0,.5); border:1px solid #3f3f46;
+    }
+    html.office-full #video-card .host-tile video, html.office-full #video-card .host-tile-media { width:100%; height:100%; object-fit:contain; }
+    html.office-full #video-card .video-bar { padding:0.2rem 0.3rem; }
+    #video-card #wait-widget { position:absolute; top:0.6rem; right:0.6rem; z-index:6; max-width:17rem; max-height:55%; background:var(--background); color:var(--foreground); border:1px solid var(--border); border-radius:10px; padding:0.5rem 0.6rem; margin:0; box-shadow:0 4px 18px rgba(0,0,0,.35); }
+    #video-card .video-stage { position:relative; }
     /* Touch/tablet: show the whole frame (no crop), tile sized by the video, not a clipped parent. */
     @media (max-width: 979px), (pointer: coarse), (hover: none), (max-height: 700px) {
       #video-card .host-tile { aspect-ratio:16/9; height:auto; max-height:75dvh; }
@@ -836,6 +853,7 @@
             <button type="button" class="host-bar-btn" id="btn-toggle-share">Share screen</button>
             <button type="button" class="host-bar-btn" id="btn-scribe" aria-pressed="true">Notes on</button>
             <button type="button" class="host-bar-btn" id="btn-pop-video" title="Pop out video">Pop out</button>
+            <button type="button" class="host-bar-btn" id="btn-full-video" title="Full screen">Full screen</button>
             <button type="button" class="host-bar-btn" id="btn-leave-call">Leave</button>
           </div>
         </div>
@@ -1802,6 +1820,67 @@
       if (videoWanted() && !videoFloat) mains += 1;
       return mains >= 2;
     }
+    // Full-screen office + waiting room inside the video card (tablet Office layout has no client panel open).
+    let officeFullUser = null; // null = auto, true/false = user choice this session
+    function officeFullWanted() {
+      if (officeFullUser !== null) return officeFullUser && !!officeLive;
+      const touch = !!(window.deskLayout && deskLayout.isTouch());
+      return touch && !!officeLive && !calendarOn && window.innerWidth > window.innerHeight;
+    }
+    function paintOfficeFull() {
+      const on = officeFullWanted();
+      document.documentElement.classList.toggle("office-full", on);
+      const b = $("btn-full-video");
+      if (b) b.textContent = on ? "Exit full screen" : "Full screen";
+      if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
+    function toggleOfficeFull() {
+      const on = !document.documentElement.classList.contains("office-full");
+      officeFullUser = on;
+      paintOfficeFull();
+      const root = document.documentElement;
+      if (on && root.requestFullscreen && !document.fullscreenElement) root.requestFullscreen().catch(() => {});
+    }
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement && document.documentElement.classList.contains("office-full") && officeFullUser) {
+        officeFullUser = false; paintOfficeFull();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && document.documentElement.classList.contains("office-full")) { officeFullUser = false; paintOfficeFull(); }
+    });
+    window.addEventListener("resize", () => paintOfficeFull());
+    function placeWaitWidget() {
+      const wait = $("wait-widget"), home = $("home-card"), stage = document.querySelector("#video-card .video-stage");
+      if (!wait || !home || !stage) return;
+      const inVideo = !!officeLive && (home.hidden || document.documentElement.classList.contains("office-full"));
+      if (inVideo && wait.parentNode !== stage) stage.appendChild(wait);
+      if (!inVideo && wait.parentNode !== home) home.insertBefore(wait, home.firstChild);
+    }
+    let lastWaitN = 0;
+    function waitChime(n) {
+      if (n > lastWaitN) {
+        try {
+          const ac = new (window.AudioContext || window.webkitAudioContext)();
+          [0, 0.18].forEach((t) => {
+            const o = ac.createOscillator(), g = ac.createGain();
+            o.frequency.value = t ? 1046 : 784; g.gain.value = 0.08;
+            o.connect(g); g.connect(ac.destination); o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.15);
+          });
+          setTimeout(() => ac.close().catch(() => {}), 800);
+        } catch (_) {}
+        try { if (navigator.vibrate) navigator.vibrate(200); } catch (_) {}
+      }
+      lastWaitN = n;
+      const base = document.title.replace(/^\(\d+ waiting\) /, "");
+      document.title = n > 0 ? `(${n} waiting) ${base}` : base;
+    }
+    (function watchWaitCount() {
+      const el = $("wait-count");
+      if (!el || !window.MutationObserver) return;
+      new MutationObserver(() => waitChime(parseInt(el.textContent || "0", 10) || 0)).observe(el, { childList: true, characterData: true, subtree: true });
+    })();
+    if ($("btn-full-video")) $("btn-full-video").onclick = () => toggleOfficeFull();
     function applyTiles() {
       const home = $("home-card");
       const prac = $("practice-pop");
@@ -1865,6 +1944,7 @@
       }
       const wait = $("wait-widget");
       if (wait) wait.hidden = !(officeLive || liveElsewhere);
+      try { placeWaitWidget(); paintOfficeFull(); } catch (_) {}
       document.documentElement.classList.toggle("desk-overlay-open", overlay);
       document.documentElement.classList.toggle("desk-view-video", deskView === "video");
       const scrim = $("home-scrim");
