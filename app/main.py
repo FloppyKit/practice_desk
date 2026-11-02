@@ -3318,10 +3318,14 @@ def api_desk_note_carry(client_id: str = Query(default=""), event_id: str = Quer
     cid = client_id.strip()
     text, source = note_carry.transcript_for(cid, event_id.strip())
     picks: list[dict[str, Any]] = []
-    if source != "linked" and visit_start:
-        b = _ct_day_bounds(visit_start)
-        if b:
-            picks = note_carry.unlinked_on_day(cid, *b)
+    if source != "linked":
+        # deskfix9: a note opened outside a visit still offers unlinked (often client-less office) transcripts
+        # from the last 48 h, so the button never goes dead when the scribe saved one without a client.
+        b = _ct_day_bounds(visit_start) if visit_start else None
+        if not b:
+            now = datetime.now(timezone.utc)
+            b = (now - timedelta(hours=48), now + timedelta(minutes=5))
+        picks = note_carry.unlinked_on_day(cid, *b)
     return {"ok": True, "carry": note_carry.carry(cid), "transcript_available": bool(text),
             "transcript_source": source, "transcript_choices": picks}
 

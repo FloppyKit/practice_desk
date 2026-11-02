@@ -4233,7 +4233,10 @@
     $("nt-draft").onclick = async () => {
       const status = $("note-status");
       const tr = $("nt-transcript") ? $("nt-transcript").value.trim() : "";
-      if (tr.length < 20) { status.textContent = "Paste a bit of transcript first."; return; }
+      if (tr.length < 20) {
+        const m = "Paste a transcript first, or use Update from transcript.";
+        status.textContent = m; msg(m, false); return;
+      }
       status.textContent = "Drafting…";
       const values = collectNoteValues();
       const res = await deskFetch("/api/desk/note/draft", {
@@ -4244,6 +4247,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         status.textContent = "Draft failed: " + (data.detail || res.status);
+        msg(status.textContent, false);
         return;
       }
       const f = data.fields || {};
@@ -4640,7 +4644,8 @@
       const pasted = $("nt-transcript") && $("nt-transcript").value.trim().length >= 20;
       const picked = !!($("nt-tpick") && $("nt-tpick").value);
       const ok = noteTranscriptAvail || pasted || picked;
-      $("nt-update").disabled = !ok;
+      $("nt-update").disabled = false;  // deskfix9: always clickable; a click with nothing explains why
+      $("nt-update").dataset.has = ok ? "1" : "";
       $("nt-update").title = pasted ? "Revise this draft from the pasted transcript"
         : picked ? "Revise this draft from the picked transcript"
         : noteTranscriptSource === "linked" ? "Revise this draft from this visit's transcript"
@@ -4661,6 +4666,13 @@
       const status = $("note-status");
       const values = collectNoteValues();
       const c = (homeCurrent && homeCurrent.client) || {};
+      if (!$("nt-update").dataset.has) {
+        const many = $("nt-tpick") && !$("nt-tpick").hidden;
+        const why = many ? "No transcript linked to this visit. Pick one from the list above."
+          : "No transcript for this visit, notes were off.";
+        status.textContent = why; msg(why, false);
+        return;
+      }
       status.textContent = "Updating from transcript…";
       $("nt-update").disabled = true;
       const res = await deskFetch("/api/desk/note/update-from-transcript", {
@@ -4671,7 +4683,7 @@
       });
       const data = await res.json().catch(() => ({}));
       syncUpdateBtn();
-      if (!res.ok || !data.ok) { status.textContent = data.detail || "Update failed."; return; }
+      if (!res.ok || !data.ok) { const m = data.detail || "Update failed."; status.textContent = m; msg(m, false); return; }
       const ch = data.changed || {};
       undoValues = {};
       const names = [];
