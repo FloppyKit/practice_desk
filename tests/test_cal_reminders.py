@@ -61,3 +61,7 @@ def test_bare_name():
     assert cr._bare("[Telehealth] Follow up: Jane Q") == "Jane Q"
     assert cr._candidates("Jane Q - 30 Min Follow Up") == ["Jane Q"]
     assert cr._candidates("Jane Q - 60 Min New Patient Visit")[0] == "Jane Q"
+
+
+def test_late_skip_and_opt_out_rules():
+    assert cr.LATE_SKIP == timedelta(hours=2) and cr.ASSUME_SMS_CONSENT

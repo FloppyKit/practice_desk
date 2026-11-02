@@ -30,6 +30,11 @@ WINDOWS = {
     "sms_24h": (timedelta(hours=24), timedelta(hours=3)),
     "sms_30m": (timedelta(minutes=30), timedelta(minutes=5)),
 }
+# Matt 2026-11-02 (t234u): every current client consented to texts via Spruce. With this flag on,
+# missing consent counts as yes; an explicit opt-out (sms_consent=0, e.g. inbound STOP) still blocks.
+ASSUME_SMS_CONSENT = os.environ.get("REMINDERS_ASSUME_SMS_CONSENT", "1") == "1"
+# A 24h reminder more than this late is skipped (would say "tomorrow" for a same-day visit).
+LATE_SKIP = timedelta(hours=2)
 TEST_EMAIL = "psycharts@mail.grokbot.com"
 TEST_PHONE = "+19133918760"
 NON_VISIT = re.compile(r"\b(block(ed)?|hold|busy|lunch|personal|off|ooo|out of office|vacation|admin|"
@@ -133,7 +138,9 @@ def plan(now: datetime | None = None, days: float = 2.0) -> list[dict[str, Any]]
         client, how = (None, "booker") if f.get("email") or f.get("phone") else match_client(name, title)
         email = str(f.get("email") or (client or {}).get("email") or "")
         phone = str(f.get("phone") or (client or {}).get("phone_e164") or "")
-        consent = bool(f.get("sms_consent")) or (client or {}).get("sms_consent") in (1, "1", True)
+        raw_c = (client or {}).get("sms_consent")
+        opted_out = raw_c in (0, "0")
+        consent = not opted_out and (bool(f.get("sms_consent")) or raw_c in (1, "1", True) or ASSUME_SMS_CONSENT)
         base = {"ev": _h(f["event_id"]), "event_id": f["event_id"], "start": start.isoformat(), "match": how,
                 "title": title, "when_label": f.get("when_label") or "", "duration": f.get("duration_minutes"),
                 "event_type": f.get("event_type") or "", "name": (client or {}).get("display_name") or name,
@@ -149,8 +156,12 @@ def plan(now: datetime | None = None, days: float = 2.0) -> list[dict[str, Any]]
                 r["skip"] = "no email"
             elif t.startswith("sms") and not phone:
                 r["skip"] = "no phone"
+            elif t.startswith("sms") and opted_out:
+                r["skip"] = "sms opt-out"
             elif t.startswith("sms") and not consent:
                 r["skip"] = "no sms consent"
+            elif t.endswith("24h") and now > send_at + LATE_SKIP:
+                r["skip"] = "late_skip"
             elif now > start - latest:
                 r["skip"] = "past send window"
             r["due"] = not r["skip"] and send_at <= now
@@ -237,6 +248,41 @@ def tick(now: datetime | None = None, *, rows: list[dict[str, Any]] | None = Non
     return stats
 
 
+def catchup_24h_email(day: str, expect: int, now: datetime | None = None) -> dict[str, Any]:
+    """One-time (Matt t234u): 24h emails for matched visits on `day` whose 24h time already passed
+    (late_skip). Refuses unless the count == expect. Recorded in the ledger under the normal key."""
+    now = now or datetime.now(TZ)
+    allrows = [r for r in plan(now, 2.0) if r["start"][:10] == day and r["match"] != "unmatched"
+               and datetime.fromisoformat(r["send_at"]) <= now and r["type"] in ("email_24h", "sms_24h")
+               and r["skip"] in ("", "late_skip")]
+    rows = [r for r in allrows if r["type"] == "email_24h"]
+    texts = [r for r in allrows if r["type"] == "sms_24h"]
+    if len(rows) != expect:
+        return {"ok": False, "count": len(rows), "detail": f"expected {expect}; nothing sent"}
+    con = _db()
+    for r in texts:  # no catch-up 24h texts: mark handled so the scheduler never sends them late
+        con.execute("INSERT OR IGNORE INTO sent VALUES (?,?,?,?,?,?,?)",
+                    (f"{r['ev']}|{r['type']}|{r['start']}", r["ev"], r["type"], r["start"], "sent",
+                     "suppressed: catch-up text not sent (Matt t234u)", now.isoformat()))
+    con.commit()
+    out = []
+    for r in rows:
+        key = f"{r['ev']}|{r['type']}|{r['start']}"
+        if con.execute("SELECT 1 FROM sent WHERE key=? AND status='sent'", (key,)).fetchone():
+            out.append({"ev": r["ev"], "already": True})
+            continue
+        res = deliver(r)
+        ok = bool(res.get("ok"))
+        con.execute("INSERT OR REPLACE INTO sent VALUES (?,?,?,?,?,?,?)",
+                    (key, r["ev"], r["type"], r["start"], "sent" if ok else "failed", "catchup", now.isoformat()))
+        con.commit()
+        rec = _public(dict(r, due=True), at=datetime.now(TZ).isoformat(), ok=ok, catchup=True)
+        with (_dir() / "sent.jsonl").open("a") as fh:
+            fh.write(json.dumps(rec) + "\n")
+        out.append({"ev": r["ev"], "ok": ok, "at": rec["at"]})
+    return {"ok": all(o.get("ok") or o.get("already") for o in out), "count": len(rows), "sent": out}
+
+
 def report(days: float = 2.0, now: datetime | None = None) -> dict[str, Any]:
     from collections import Counter
 
@@ -279,5 +325,7 @@ if __name__ == "__main__":
         print(json.dumps({"at": datetime.now(TZ).isoformat(), **tick()}))
     elif cmd == "report":
         print(json.dumps(report(float(sys.argv[2]) if len(sys.argv) > 2 else 2.0), indent=1))
+    elif cmd == "catchup":
+        print(json.dumps(catchup_24h_email(sys.argv[2], int(sys.argv[3])), indent=1))
     elif cmd == "test":
         print(json.dumps(test_burner(), indent=1))
