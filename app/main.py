@@ -3264,8 +3264,10 @@ def _scribe_link_visits(row: dict[str, Any], rs: datetime, re_: datetime) -> tup
             if ev.get("status") == "cancelled":
                 continue
             f = _event_mail_fields(ev, cal_id, tz)
-            if not (f.get("email") or f.get("name")):
-                continue  # not a patient visit (meetings, holds)
+            # Desk visits often carry no email/name in the event body (deskfix9): keep every timed
+            # event; match() links only when exactly one overlaps, else it stays for the picker.
+            if not (f.get("start_iso") and f.get("end_iso")):
+                continue
             out.append({"event_id": f.get("event_id"), "client_id": "",
                         "start": parse_ts(f.get("start_iso") or ""), "end": parse_ts(f.get("end_iso") or "")})
     return "", out
