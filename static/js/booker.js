@@ -596,6 +596,8 @@ export async function initBooker(opts) {
           const el = formEl.querySelector('[name="' + k + '"]');
           if (el && v && !el.value) el.value = v;
         });
+        const who = [d.name, d.email].filter(Boolean).join(" · ");
+        if (who && msgEl) setMsg(msgEl, "Details ready for " + who + " — pick a time to finish.", "info");
       }).catch(() => {});
   })();
 
