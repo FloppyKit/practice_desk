@@ -21,7 +21,7 @@ BEDROCK_URL = (
 )
 SYSTEM = """You are Pa, the practice assistant on Dr. Matthew Brown's private desk.
 Simple lines — call, open, send, book, yes/no — are handled before you. You only see leftover English.
-He is the doctor. Do what he asks: look up patients, create a client, send forms,
+He is the doctor. Do what he asks: look up patients and their visits (client_visits), create a client, send forms,
 send a branded email, book a visit, work a note template, or edit About the practice.
 About the practice is the letterhead: display name, legal name, clinician name,
 address, phone, fax, email, EIN, NPI. Logo and photo are files he uploads on the desk.
@@ -34,6 +34,17 @@ on the card or say yes. Never invent a patient match or a phone number.
 Do not put a reason for the call in the chat. If a tool fails, say so plainly. Keep replies short."""
 
 TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "client_visits",
+            "description": "Next and recent visits for one patient (from the practice calendar). Pass client_id from search_clients, or a name.",
+            "parameters": {
+                "type": "object",
+                "properties": {"client_id": {"type": "string"}, "q": {"type": "string"}},
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -267,7 +278,37 @@ def _bedrock(system: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
         raise RuntimeError(f"bedrock {e.code}: {e.read()[:200]!r}") from e
 
 
+def _client_visits(args: dict[str, Any]) -> dict[str, Any]:
+    from zoneinfo import ZoneInfo
+
+    from .config import load_config
+    from .main import _visits_for_client
+
+    cid = str(args.get("client_id") or "").strip()
+    row = client_by_id(cid) if cid else None
+    if not row:
+        hits = search_clients(str(args.get("q") or cid or ""))
+        hits = hits.get("clients") if isinstance(hits, dict) else hits
+        hits = [h for h in (hits or []) if isinstance(h, dict)]
+        if len(hits) != 1:
+            return {"error": "pick one patient first", "matches": [{"id": h.get("id"), "name": h.get("name")} for h in hits[:8]]}
+        row = client_by_id(str(hits[0].get("id") or "")) or hits[0]
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    visits = _visits_for_client(row, tz)
+    keep = ("title", "when_label", "duration_minutes", "start_iso")
+    up = sorted([v for v in visits if v.get("upcoming")], key=lambda v: v.get("start_iso") or "")
+    past = [v for v in visits if not v.get("upcoming")][:3]
+    return {
+        "name": row.get("name") or "",
+        "next": {k: up[0].get(k) for k in keep} if up else None,
+        "upcoming": [{k: v.get(k) for k in keep} for v in up[:6]],
+        "recent": [{k: v.get(k) for k in keep} for v in past],
+    }
+
+
 def _run_tool(name: str, args: dict[str, Any], book_fn, send_fn, mail_fn) -> Any:
+    if name == "client_visits":
+        return _client_visits(args)
     if name == "search_clients":
         return search_clients(str(args.get("q") or ""))
     if name == "create_client":
