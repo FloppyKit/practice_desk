@@ -523,11 +523,37 @@ def api_verify_patient_code(req: VerifyCodeRequest):
     from .verify_codes import confirm_code
 
     result = confirm_code(email=req.email, phone=req.phone, code=req.code)
-    if result.get("ok"):
+    if result.get("ok") and not result.get("multi"):
         result["level"] = "sensitive"
         # Name only after the code matched (it rides in the signed token).
         result["name"] = str(verify_patient_token(result["verify_token"]).get("n") or "")[:80]
     return result
+
+
+class AccountsRequest(BaseModel):
+    contact_token: str
+
+
+class PickAccountRequest(BaseModel):
+    contact_token: str
+    ref: int
+    old_token: str = ""
+
+
+@app.post("/api/verify-patient/accounts")
+def api_verify_accounts(req: AccountsRequest):
+    """Accounts on a code-verified contact (first name + last initial). Contact token only; no chart."""
+    from .verify_codes import list_contact_accounts
+
+    return list_contact_accounts(req.contact_token)
+
+
+@app.post("/api/verify-patient/pick")
+def api_verify_pick(req: PickAccountRequest):
+    """Open (or switch to) one account on the verified contact. New token scoped to that client; old one revoked."""
+    from .verify_codes import pick_account
+
+    return pick_account(req.contact_token, req.ref, req.old_token)
 
 
 @app.get("/api/types")

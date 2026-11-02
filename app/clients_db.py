@@ -246,6 +246,14 @@ def set_intake_link(client_id: str, url: str) -> None:
         con.commit()
 
 
+def list_by_phone(e164: str) -> list[dict[str, Any]]:
+    if not e164:
+        return []
+    with connect() as con:
+        rows = con.execute("SELECT * FROM clients WHERE phone_e164 = ? ORDER BY created_at", (e164,)).fetchall()
+    return [r for r in (_row(x) for x in rows) if r]
+
+
 def list_by_email(email: str) -> list[dict[str, Any]]:
     em = (email or "").strip().lower()
     if not em:
