@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 
 import hmac
 import json
@@ -2614,9 +2615,18 @@ def api_desk_client(
     if not row and email:
         row = client_by_email(email)
     if not row and name.strip():
-        hits = search_clients(name.strip(), limit=5)
-        if len(hits) == 1:
-            row = client_by_id(hits[0]["id"])
+        raw_name = name.strip()
+        # Calendar titles carry extras ("Follow-up · Jane Doe (30 min)"): try the bare name too.
+        bare = re.sub(r"\(.*?\)", " ", raw_name.split("·")[-1].split(" - ")[-1]).strip()
+        for q in dict.fromkeys([raw_name, bare]):
+            if row or not q:
+                continue
+            hits = search_clients(q, limit=8)
+            if len(hits) > 1:
+                exact = [h for h in hits if str(h.get("name") or "").strip().lower() == q.lower()]
+                hits = exact if len(exact) == 1 else hits
+            if len(hits) == 1:
+                row = client_by_id(hits[0]["id"])
     if not row:
         # Calendar-only: still show visits for an email/name clicked from the grid
         who = (email or "").strip() or name.strip()
