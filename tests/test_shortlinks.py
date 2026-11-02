@@ -132,3 +132,14 @@ def test_cloak_url_generic_title_and_valid_until() -> None:
     assert ok and url == "https://go.example.invalid/abc"
     assert sent["title"] == "Payment link" and sent["validUntil"].startswith("2027-01-15") and not sent["crawlable"]
     assert shortlinks.cloak_url("http://insecure", "pay")[1] is False
+
+
+def test_pa_scrubs_old_links_and_keeps_fresh() -> None:
+    old = "https://book.drmattbrown.com/b/eyJpZCI6ImEiLCJrIjoiYmsifQ.AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd"
+    h = desk_agent._history([{"role": "user", "content": "link?"}, {"role": "assistant", "content": "Here: " + old},
+                             {"role": "user", "content": "another link"}])
+    assert old not in json.dumps(h) and "eyJ" not in json.dumps(h)
+    fresh = "https://book.drmattbrown.com/b/k7Q2mX9p"
+    assert desk_agent._scrub_links("Here: " + fresh + ".", {fresh}) == "Here: " + fresh + "."
+    assert fresh not in desk_agent._scrub_links("Here: " + fresh, set())
+    assert "booking_link fresh" in desk_agent.SYSTEM

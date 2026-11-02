@@ -20,6 +20,8 @@ BEDROCK_URL = (
     f"{urllib.parse.quote(BEDROCK_MODEL, safe='')}/converse"
 )
 SYSTEM = """You are Pa, the practice assistant on Dr. Matthew Brown's private desk.
+Booking links: ALWAYS call booking_link fresh for every request, and give exactly the url it returns
+(short form book.drmattbrown.com/b/XXXXXXXX). Never reuse, retype, or shorten a link from earlier messages.
 Simple lines — call, open, send, book, yes/no — are handled before you. You only see leftover English.
 He is the doctor. Do what he asks: look up patients and their visits (client_visits), create a client, send forms,
 send a branded email, book a visit, work a note template, or edit About the practice.
@@ -396,12 +398,21 @@ def _run_tool(name: str, args: dict[str, Any], book_fn, send_fn, mail_fn, link_f
     return {"error": "unknown tool"}
 
 
+_BOOK_LINK = re.compile(r"https?://(?:book\.(?:drmattbrown\.com|psycharts\.org))/b/[^\s)>\]\"']+")
+
+
+def _scrub_links(text: str, keep: set[str] | None = None) -> str:
+    """Drop booking links Pa did not get from booking_link this turn (old long links in chat history)."""
+    return _BOOK_LINK.sub(lambda m: m.group(0) if keep and m.group(0).rstrip(".,;:!") in keep
+                          else "[booking link: ask Pa for a fresh one]", text)
+
+
 def _history(history: list[dict[str, str]]) -> list[dict[str, Any]]:
     """Desk chat history -> Bedrock messages: starts with user, roles alternate (same-role turns merged)."""
     out: list[dict[str, Any]] = []
     for m in history[-16:]:
         role = m.get("role") or "user"
-        content = (m.get("content") or "").strip()[:4000]
+        content = _scrub_links((m.get("content") or "").strip()[:4000])
         if role not in ("user", "assistant") or not content:
             continue
         if not out and role != "user":
@@ -428,6 +439,7 @@ def run_desk_agent(
         return {"ok": False, "error": "empty"}
 
     used: list[str] = []
+    links: set[str] = set()
     action: dict[str, Any] | None = None
     for _ in range(5):
         data = _bedrock(SYSTEM, messages)
@@ -436,6 +448,7 @@ def run_desk_agent(
         calls = [b["toolUse"] for b in blocks if isinstance(b.get("toolUse"), dict)]
         text = _THINK.sub("", "".join(str(b.get("text") or "") for b in blocks)).strip()
         if not calls:
+            text = _scrub_links(text, links)
             out = {"ok": True, "reply": text or "(no reply)", "model": "bedrock-" + BEDROCK_MODEL, "tools": used}
             if action:
                 out["action"] = action
@@ -450,6 +463,8 @@ def run_desk_agent(
                 result = _run_tool(name, args, book_fn, send_fn, mail_fn, link_fn)
             except Exception as e:
                 result = {"error": str(e)[:200]}
+            if name == "booking_link" and isinstance(result, dict) and result.get("url"):
+                links.add(str(result["url"]))
             if isinstance(result, dict) and result.get("action") == "confirm_call":
                 action = {k: result[k] for k in result if k != "pending"}
             results.append({"toolResult": {
