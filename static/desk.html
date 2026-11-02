@@ -837,7 +837,7 @@
         <div class="video-stage">
           <div class="letterbox">
             <div id="video-grid" class="host-video-grid solo"></div>
-            <div id="stage-empty" class="stage-empty">Starting camera…</div>
+            <div id="stage-empty" class="stage-empty">Video is off. Tap Office to start.</div>
             <div id="office-placeholder" class="office-placeholder" hidden>
               <p>Join from this tablet. Camera stays a later GO.</p>
               <button type="button" class="btn" id="office-join-placeholder">Join office</button>
@@ -4939,7 +4939,9 @@
         openHome({ id: hash.get("c") || "", email: hash.get("e") || "", name: hash.get("n") || "" });
       }
       if (deskView === "video" || deskView === "visit") {
-        if (!officeUsesPlaceholder()) startOffice().catch(() => {});
+        // Phones and tablets: ask for the camera only after a tap (iOS blocks or errors otherwise).
+        const touch = !!(window.deskLayout && deskLayout.isTouch());
+        if (!officeUsesPlaceholder() && !touch) startOffice().catch(() => {});
       }
       paintOfficePlaceholder();
     }
