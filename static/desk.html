@@ -3771,6 +3771,10 @@
           e.stopPropagation();
           selectVisit(v);
         };
+        ev.addEventListener("pointerdown", () => {
+          const who = visitPerson(v);
+          if (who.isPatient) prefetchClient({ email: who.email, name: who.name, id: v.client_id || "" });
+        }, { passive: true });
         col.appendChild(ev);
       });
 
@@ -4485,10 +4489,32 @@
           box.hidden = true;
           openHome({ id: c.id, email: c.email || "", name: c.name || "" });
         };
+        const warm = () => prefetchClient({ id: c.id, email: c.email || "", name: c.name || "" });
+        b.addEventListener("pointerenter", warm, { passive: true });
+        b.addEventListener("pointerdown", warm, { passive: true });
         box.appendChild(b);
       });
     }
     let homeSeq = 0;
+    // deskfix12: prefetch the drawer on pointer-down / hover and for today's visits; openHome reuses it.
+    const clientPrefetch = new Map();
+    function clientQuery(ref) {
+      const q = new URLSearchParams();
+      if (ref.id) q.set("id", ref.id);
+      if (ref.email) q.set("email", ref.email);
+      if (ref.name) q.set("name", ref.name);
+      return q.toString();
+    }
+    function prefetchClient(ref) {
+      if (!ref || !(ref.id || ref.email || ref.name)) return null;
+      const k = clientQuery(ref);
+      const hit = clientPrefetch.get(k);
+      if (hit && Date.now() - hit.at < 30000) return hit.p;
+      const p = deskFetch("/api/desk/client?" + k).then(async (res) => ({ res, data: await res.json().catch(() => ({})) }));
+      p.catch(() => clientPrefetch.delete(k));
+      clientPrefetch.set(k, { at: Date.now(), p });
+      return p;
+    }
     async function openHome(ref) {
       const seq = ++homeSeq;
       $("home-empty").textContent = "Loading" + (ref.name ? " " + ref.name : "") + "…";
@@ -4496,12 +4522,8 @@
       $("home-body").hidden = true;
       setHomeHint("");
       openClientTile();  // open now with the loading state; the fetch fills it in
-      const q = new URLSearchParams();
-      if (ref.id) q.set("id", ref.id);
-      if (ref.email) q.set("email", ref.email);
-      if (ref.name) q.set("name", ref.name);
-      const res = await deskFetch("/api/desk/client?" + q.toString());
-      const data = await res.json().catch(() => ({}));
+      const { res, data } = await prefetchClient(ref);
+      clientPrefetch.delete(clientQuery(ref));  // next open after a change gets fresh data
       if (seq !== homeSeq) return;  // a newer click won
       if (!res.ok || !data.ok) {
         $("home-empty").textContent = data.detail || "Client not found.";
