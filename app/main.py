@@ -329,7 +329,8 @@ class BookRequest(BaseModel):
     start: str
     duration_minutes: int | None = None
     name: str = Field(min_length=1, max_length=120)
-    email: EmailStr
+    # Optional only when a valid verify_token is sent: the email on file is used then.
+    email: EmailStr | None = None
     phone: str = Field(default="", max_length=40)
     notes: str = Field(default="", max_length=500)
     sms_consent: bool | None = None  # None (phone line): use the answer on file
@@ -850,6 +851,18 @@ def _onboarding_fx():
 
 @app.post("/api/book")
 def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Request):
+    # Logged-in chat/voice patient: book under the email on file (the site may not know it).
+    if not req.email and (req.verify_token or "").strip():
+        try:
+            from .patients import client_by_id as _cbi
+
+            _row = _cbi(str(verify_patient_token(req.verify_token.strip()).get("id") or "")) or {}
+            if _row.get("email"):
+                req.email = str(_row["email"])
+        except ValueError:
+            pass
+    if not req.email:
+        raise HTTPException(422, "email is required")
     cfg = load_config()
     et = get_event_type(cfg, req.event_type)
     if not et:
