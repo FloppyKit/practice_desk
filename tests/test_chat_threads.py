@@ -137,7 +137,7 @@ def test_spruce_note_then_staff_reply_no_sms_without_consent() -> None:
             roles = [m["role"] for m in got["messages"]]
             assert roles == ["patient", "patient", "staff"]
             assert got["messages"][-1]["body"] == "We can see you Thursday."
-            assert sms == []
+            assert sms == ["chat_reply_alert"]  # consent attested; alert carries no content
     finally:
         notify.send_sms = old_sms
         for key, value in old.items():
@@ -191,7 +191,44 @@ def test_sms_reply_only_with_consent() -> None:
             )
             assert result == "reply"
             assert sms and sms[0][0] == "+15555550123"
-            assert "Your refill was sent." in sms[0][1]
-            assert "Dr. Matt Brown" in sms[0][1]
+            assert "Your refill was sent." not in sms[0][1] and "/portal?t=threadtoken1" in sms[0][1]
+            assert "Dr. Brown replied" in sms[0][1]
     finally:
         notify.send_sms = old_sms
+
+
+def test_reply_alert_no_content_dedupe_and_stop() -> None:
+    import json
+    import tempfile
+
+    from app import chat_threads, clients_db, notify
+
+    sent: list[tuple] = []
+    old = (notify.send_sms, notify.send_email, clients_db.get_by_id)
+    notify.send_sms = lambda phone, body, **k: sent.append(("sms", phone, body)) or {"ok": True}
+    notify.send_email = lambda to, subj, body, **k: sent.append(("email", to, subj + body)) or {"ok": True}
+    try:
+        with tempfile.TemporaryDirectory() as raw:
+            os.environ["BOOKER_LOG_DIR"] = raw
+            row = {"token": "threadtoken9", "hear_back": "chat", "sms_consent": False, "phone": "+15555550199",
+                   "email": "t@example.com", "messages": [], "seen_reply_ids": [], "spruce_posted": [], "spruce_request_ids": []}
+            (Path(raw) / "chat-threads").mkdir()
+            (Path(raw) / "chat-threads" / "threadtoken9.json").write_text(json.dumps(row))
+            item = {"id": "item_A1", "text": "Secret clinical words", "isInternalNote": True}
+            assert chat_threads.apply_spruce_item(row, item) == "reply"
+            assert chat_threads.apply_spruce_item(row, item) == "seen"
+            assert chat_threads.alert_reply(row, "item_A1")["skip"] == "dup"
+            assert [s[0] for s in sent] == ["sms", "email"]
+            assert all("Secret" not in s[2] and "/portal?t=threadtoken9" in s[2] for s in sent)
+            # our own composed note is never mirrored
+            assert chat_threads.apply_spruce_item(row, {"id": "item_B", "text": "Website chat\nName: x"}) == "echo"
+            # a real STOP blocks the text, email still goes
+            sent.clear()
+            clients_db.get_by_id = lambda cid: {"id": cid, "sms_consent": 0, "sms_consent_source": "spruce", "phone_e164": "+15555550100", "email": "c@example.com"}
+            row2 = dict(row, token="threadtokenA", phone="", email="", client_id="c1", seen_reply_ids=[], messages=[])
+            out = chat_threads.alert_reply(row2, "item_C")
+            assert out.get("sms") == "stopped" and [s[0] for s in sent] == ["email"]
+            assert not chat_threads.thread_access(row2, "")
+            assert chat_threads.thread_access(row, "")
+    finally:
+        notify.send_sms, notify.send_email, clients_db.get_by_id = old

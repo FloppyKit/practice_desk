@@ -1179,6 +1179,7 @@ class ChatThreadPost(BaseModel):
     hear_back: str = ""
     sms_consent: bool = False
     name: str = ""
+    verify_token: str = ""
 
 
 @app.post("/api/public/chat-threads")
@@ -1186,6 +1187,20 @@ def api_chat_thread_post(req: ChatThreadPost):
     from .chat_threads import post_message
 
     name = req.name
+    client_id = ""
+    email, phone = req.email, req.phone
+    if req.verify_token.strip():
+        try:  # logged-in portal chat: tie the thread to the client so the reply alert reaches them
+            payload = verify_patient_token(req.verify_token.strip())
+            from .patients import client_by_id
+
+            crow = client_by_id(str(payload.get("id") or "")) or {}
+            client_id = str(crow.get("id") or "")
+            email = email or str(crow.get("email") or "")
+            phone = phone or str(crow.get("phone") or "")
+            name = name or str(crow.get("preferred_name") or crow.get("name") or "")[:80]
+        except ValueError:
+            pass
     if not (name or "").strip():
         # The site no longer learns the name before a code; label the staff thread here instead.
         from .verify_codes import _lookup
@@ -1199,23 +1214,27 @@ def api_chat_thread_post(req: ChatThreadPost):
             body=req.body,
             token=req.token,
             label=req.label,
-            email=req.email,
-            phone=req.phone,
+            email=email,
+            phone=phone,
             hear_back=req.hear_back,
             sms_consent=req.sms_consent,
             name=name,
+            client_id=client_id,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
 
 @app.get("/api/public/chat-threads")
-def api_chat_thread_get(token: str = Query(default="")):
-    from .chat_threads import get_thread
+def api_chat_thread_get(token: str = Query(default=""), verify_token: str = Query(default="")):
+    from .chat_threads import _read, get_thread, thread_access
 
     if not token:
         raise HTTPException(400, "token required")
     try:
+        raw = _read(token)
+        if raw and not thread_access(raw, verify_token.strip()):
+            return {"ok": True, "token": token, "login_required": True, "messages": []}
         row = get_thread(token)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

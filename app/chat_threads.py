@@ -236,6 +236,7 @@ def post_message(
     hear_back: str = "",
     sms_consent: bool = False,
     name: str = "",
+    client_id: str = "",
     opener: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     text = (body or "").strip()
@@ -269,6 +270,8 @@ def post_message(
             row["hear_back"] = hear_back
         if sms_consent:
             row["sms_consent"] = True
+    if client_id:
+        row["client_id"] = str(client_id)[:64]
     row.setdefault("messages", []).append(
         {"role": "patient", "body": text, "at": _now()}
     )
@@ -333,6 +336,8 @@ def _is_echo(row: dict[str, Any], item: dict[str, Any], text: str) -> bool:
     request_id = _item_request_id(item)
     if request_id and request_id in set(row.get("spruce_request_ids") or []):
         return True
+    if text.startswith("Website chat\nName:"):  # our own composed note (any thread)
+        return True
     return bool(text) and text in set(row.get("spruce_posted") or [])
 
 
@@ -354,7 +359,7 @@ def apply_spruce_item(row: dict[str, Any], item: dict[str, Any]) -> str:
         {"role": "staff", "body": text, "at": item.get("createdAt") or _now(), "id": item_id}
     )
     _write(row)
-    _maybe_sms(row, text)
+    alert_reply(row, item_id)
     return "reply"
 
 
@@ -509,25 +514,100 @@ def _pull_replies(row: dict[str, Any]) -> None:
             {"role": "staff", "body": text[:2000], "at": _now(), "id": mid}
         )
         changed = True
-        _maybe_sms(row, text)
+        alert_reply(row, mid)
     if changed:
         row["seen_reply_ids"] = list(seen)[-200:]
         _write(row)
 
 
-def _maybe_sms(row: dict[str, Any], text: str) -> None:
-    if row.get("hear_back") != "sms" or not row.get("sms_consent"):
-        return
-    phone = (row.get("phone") or "").strip()
-    if not phone:
-        return
-    from .notify import send_sms
+ALERT_SMS = "Dr. Brown replied to your message. Read it here: {link}"
+ALERT_SUBJECT = "Dr. Brown replied to your message"
+ALERT_EMAIL = "Dr. Brown replied to your message.\n\nRead it here: {link}\n\nYou may be asked to log in.\n"
 
-    send_sms(
-        phone,
-        f"Dr. Matt Brown: {text[:400]}",
-        kind="chat_reply",
-        source="chat",
-        idempotency_key=f"chat:{row['token']}:{len(row.get('messages') or [])}",
-        template="chat_reply",
-    )
+
+def chat_link(row: dict[str, Any]) -> str:
+    site = os.environ.get("SITE_PUBLIC_URL", "https://drmattbrown.com").rstrip("/")
+    return f"{site}/portal?t={row['token']}"
+
+
+def _claim_alert(item_id: str) -> bool:
+    """One reply, one alert: atomic marker file (webhook and thread pulls race)."""
+    d = _dir() / "_alerts"
+    d.mkdir(exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", item_id)[:80]
+    try:
+        fd = os.open(str(d / safe), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    os.write(fd, _now().encode())
+    os.close(fd)
+    return True
+
+
+def _alert_contact(row: dict[str, Any]) -> tuple[str, str, bool, str]:
+    """(email, phone, texts_ok, how). Row contact first, then the linked client, then a unique name match."""
+    from . import clients_db
+
+    client = None
+    how = "row"
+    if row.get("client_id"):
+        client = clients_db.get_by_id(str(row["client_id"]))
+        how = "client_id"
+    if client is None and not (row.get("email") or row.get("phone")) and (row.get("name") or "").strip():
+        from .cal_reminders import match_client
+
+        client, how = match_client(str(row["name"]), "")
+        if client is None:
+            return "", "", False, how
+    email = str(row.get("email") or (client or {}).get("email") or "").strip()
+    phone = str(row.get("phone") or (client or {}).get("phone_e164") or "").strip()
+    # Consent attested for current clients (Matt t234u); only a real STOP (Spruce) blocks texts.
+    stopped = client is not None and (client.get("sms_consent") in (0, "0")) and str(client.get("sms_consent_source") or "") == "spruce"
+    return email, phone, not stopped, how
+
+
+def alert_reply(row: dict[str, Any], item_id: str) -> dict[str, Any]:
+    """Logistics-only alert (no message content) by text and/or email. Never posts to the chat note."""
+    out: dict[str, Any] = {"item": item_id[-8:]}
+    if not item_id or not _claim_alert(item_id):
+        out["skip"] = "dup"
+        return out
+    try:
+        email, phone, texts_ok, how = _alert_contact(row)
+    except Exception as e:  # never break the mirror
+        email, phone, texts_ok, how = "", "", False, f"err:{type(e).__name__}"
+    out["how"] = how
+    link = chat_link(row)
+    from . import notify
+
+    if phone and texts_ok:
+        r = notify.send_sms(phone, ALERT_SMS.format(link=link), kind="chat_reply_alert", source="chat",
+                            idempotency_key=f"chat-alert:{item_id}", template="chat_reply_alert")
+        out["sms"] = bool(r.get("ok"))
+    elif phone:
+        out["sms"] = "stopped"
+    if email:
+        r = notify.send_email(email, ALERT_SUBJECT, ALERT_EMAIL.format(link=link))
+        out["email"] = bool(r.get("ok"))
+    if not phone and not email:
+        out["skip"] = "no contact"
+    try:
+        notify.append_log("chat-reply-alerts.jsonl", {"at": _now(), "thread": row["token"][:4], **out})
+    except Exception:
+        pass
+    return out
+
+
+def thread_access(row: dict[str, Any], verify_token: str) -> bool:
+    """Threads tied to a client need that client's portal login to read."""
+    cid = str(row.get("client_id") or "")
+    if not cid:
+        return True
+    if not verify_token:
+        return False
+    try:
+        from .tokens import verify_patient_token
+
+        return str(verify_patient_token(verify_token).get("id") or "") == cid
+    except Exception:
+        return False
