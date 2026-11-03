@@ -4257,6 +4257,33 @@ class DeskSuperbillRequest(BaseModel):
     address: str = ""
     diagnoses: list[dict] = []
     lines: list[dict] = []
+    items: list[str] = []
+    custom_fields: list[dict] = []
+
+
+@app.get("/api/desk/superbill/visits")
+def api_desk_superbill_visits(
+    client_id: str = Query(default=""),
+    start: str = Query(default=""),
+    end: str = Query(default=""),
+    secret: str = Query(default=""),
+):
+    """Superbill v2 picker: past visits, imported visits, and standalone fees, split unlinked / linked."""
+    from . import superbills
+
+    _require_staff(secret)
+    row = client_by_id(client_id) if client_id else None
+    if not row:
+        raise HTTPException(404, "client not found")
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    try:
+        cal = _visits_for_client(row, tz)
+    except Exception:
+        cal = []
+    start = start[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", start or "") else ""
+    end = end[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", end or "") else ""
+    out = superbills.build_list(str(row.get("id") or client_id), cal, start=start, end=end)
+    return {"ok": True, **out}
 
 
 @app.post("/api/desk/superbill")
@@ -4307,9 +4334,13 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
         if code or label:
             diagnoses.append({"code": code, "label": label})
     lines = []
-    for item in (req.lines or [])[:20]:
+    dos_by_key: dict[str, str] = {}
+    for item in (req.lines or [])[:80]:
         if not isinstance(item, dict):
             continue
+        ik = str(item.get("item") or "")
+        if ik and ik not in dos_by_key:
+            dos_by_key[ik] = str(item.get("dos") or dos)[:10]
         lines.append(
             {
                 "dos": str(item.get("dos") or dos)[:10],
@@ -4325,7 +4356,21 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
         )
     if not lines:
         raise HTTPException(400, "add at least one service line")
-    fname = superbill_filename(dos)
+    from . import superbills as sb2
+    from .superbill_pdf import superbill_v2_filename
+
+    all_dos = [ln["dos"] for ln in lines if len(ln["dos"]) == 10]
+    if all_dos:
+        dos = min(all_dos)
+    custom_fields = []
+    for f in (req.custom_fields or [])[:12]:
+        if isinstance(f, dict):
+            lab = str(f.get("label") or "").strip()[:60]
+            val = str(f.get("value") or "").strip()[:300]
+            if lab or val:
+                custom_fields.append({"label": lab, "value": val})
+    keys = [k for k in dict.fromkeys(req.items or []) if sb2.valid_key(k)][:80]
+    fname = superbill_v2_filename(statement, all_dos or [dos])
     dest = billing.rstrip("/") + "/" + fname
     pdf = superbill_pdf(
         {
@@ -4364,25 +4409,18 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
             "logo": asset_bytes("logo"),
             "diagnoses": diagnoses,
             "lines": lines,
+            "custom_fields": custom_fields,
         }
     )
-    from .notify import NOTIFY_TOKEN
-
-    payload = json.dumps({"path": dest, "b64": base64.b64encode(pdf).decode("ascii")}).encode()
-    r = UrlRequest(
-        _notify_base() + "/drive/save",
-        data=payload,
-        headers={"Content-Type": "application/json", "X-Notify-Token": NOTIFY_TOKEN},
-        method="POST",
-    )
-    try:
-        with urlopen(r, timeout=180) as resp:
-            saved = json.loads(resp.read().decode() or "{}")
-    except HTTPError as e:
-        raise HTTPException(e.code if e.code >= 400 else 502, e.read().decode()[:200]) from e
-    if not saved.get("ok"):
+    code, saved = _notify_post("/drive/save", {"path": dest, "b64": base64.b64encode(pdf).decode("ascii")})
+    if code >= 400:
+        raise HTTPException(code, str((saved or {}).get("detail") or "drive save failed")[:200])
+    if not (saved or {}).get("ok"):
         raise HTTPException(502, "drive save failed")
-    return {"ok": True, "path": dest, "name": fname, "statement": statement, "bytes": len(pdf)}
+    sid = sb2.record(str(row.get("id") or ""), statement=statement, name=fname, path=dest, keys=keys,
+                     dos_by_key=dos_by_key, all_dos=all_dos)
+    return {"ok": True, "path": dest, "name": fname, "statement": statement, "bytes": len(pdf),
+            "superbill_id": sid, "linked": len(keys)}
 
 
 # ---- One-click billing: Bill visit (docs/GO_BILLING_ONE_CLICK.md) ----------

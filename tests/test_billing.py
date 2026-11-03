@@ -335,3 +335,127 @@ def test_letterhead_licenses_stay_on_one_line() -> None:
                                         "licenses": lic}, "lines": []})
     one = "Licenses: " + " \u00b7 ".join(lic)
     assert ("(" + one + ")").encode("latin-1") in pdf
+
+
+# ---- Superbill v2: pick visits / fees / imported visits ----------------------------------------
+
+
+def _seed_v2():
+    import uuid as _u
+
+    from app import clients_db, fees
+
+    with clients_db.connect() as con:
+        fees._ensure(con)
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS imported_appointments (id TEXT PRIMARY KEY, client_id TEXT, "
+            "carepatron_contact_id TEXT, carepatron_appointment_id TEXT, start_at TEXT, end_at TEXT, tz TEXT, "
+            "start_utc TEXT, end_utc TEXT, service TEXT, status TEXT, duration_min INTEGER, lines_json TEXT, "
+            "raw_json TEXT, imported_at TEXT)")
+        paid_lines = json.dumps([{"service": "Office Visit", "code": "99213 - 95", "price": "220", "invoice": "000274 - Paid"}])
+        imp = [
+            ("imp-old", "2025-01-07 09:00:00", "2025-01-07T15:00:00+00:00", "60 min Office Visit", "Confirmed", 60, paid_lines),
+            ("imp-dup", "2026-10-20 10:00:00", "2026-10-20T15:00:00+00:00", "30 Min Visit", "Confirmed", 30, "[]"),
+            ("imp-cx", "2025-02-01 09:00:00", "2025-02-01T15:00:00+00:00", "30 Min Visit", "Cancelled", 30, "[]"),
+            ("imp-np", "2024-12-01 09:00:00", "2024-12-01T15:00:00+00:00", "Initial Consultation", "Confirmed", 90, "[]"),
+        ]
+        for i in imp:
+            con.execute("INSERT INTO imported_appointments (id, client_id, start_at, start_utc, service, status, "
+                        "duration_min, lines_json) VALUES (?,?,?,?,?,?,?,?)", (i[0], "c-unit", *i[1:]))
+        for fid, kind, status, ev in (("fee-ns", "no_show", "owed", ""), ("fee-w", "other", "waived", ""),
+                                      ("fee-v1", "visit", "paid", "ev-1")):
+            con.execute("INSERT INTO fees (id, client_id, dos, kind, amount_cents, status, event_id) VALUES (?,?,?,?,?,?,?)",
+                        (fid, "c-unit", "2026-09-01", kind, 10000, status, ev))
+        con.commit()
+    return [
+        {"event_id": "ev-1", "start_iso": "2026-10-20T10:00:00-05:00", "event_type": "follow-up-30",
+         "duration_minutes": 30, "upcoming": False},
+        {"event_id": "ev-2", "start_iso": "2026-10-27T10:00:00-05:00", "event_type": "follow-up-60",
+         "duration_minutes": 60, "upcoming": False},
+        {"event_id": "ev-up", "start_iso": "2026-12-01T10:00:00-06:00", "event_type": "follow-up-30",
+         "duration_minutes": 30, "upcoming": True},
+        {"event_id": "ev-intro", "start_iso": "2026-10-01T10:00:00-05:00", "event_type": "intro-call",
+         "duration_minutes": 15, "upcoming": False},
+    ]
+
+
+def _v2_post(main, keys, lines, **kw):
+    req = main.DeskSuperbillRequest(client_id="c-unit", dos="2026-10-20", diagnoses=[{"code": "F41.1", "label": "GAD"}],
+                                    lines=lines, items=keys, **kw)
+    return main.api_desk_superbill(req)
+
+
+def test_superbill_v2_list_split_imported_dedupe_and_fees() -> None:
+    from app import superbills
+
+    with _desk(letterhead=True) as (main, _fake, _drive):
+        cal = _seed_v2()
+        out = superbills.build_list("c-unit", cal, now_utc="2026-11-03T15:00:00+00:00")
+        keys = [i["key"] for i in out["unlinked"]]
+        assert out["linked"] == []
+        assert "ev:ev-1" in keys and "ev:ev-2" in keys
+        assert "ev:ev-up" not in keys and "ev:ev-intro" not in keys      # upcoming and intro calls are not billable rows
+        assert "imp:imp-dup" not in keys                                 # same slot as calendar ev-1
+        assert "imp:imp-cx" not in keys                                  # cancelled
+        assert "imp:imp-old" in keys and "imp:imp-np" in keys
+        assert "fee:fee-ns" in keys and "fee:fee-w" not in keys and "fee:fee-v1" not in keys
+        by = {i["key"]: i for i in out["unlinked"]}
+        assert [ln["code"] for ln in by["ev:ev-1"]["lines"]] == ["99213", "90833"]
+        assert by["ev:ev-1"]["paid"] and by["ev:ev-1"]["lines"][0]["paid"] == "220.00"   # paid via fee ledger
+        assert not by["ev:ev-2"]["paid"] and by["ev:ev-2"]["lines"][1]["code"] == "90838"
+        assert by["imp:imp-old"]["paid"] and by["imp:imp-old"]["visit_code"] == "fu60"
+        assert by["imp:imp-np"]["visit_code"] == "np" and by["imp:imp-np"]["fee_cents"] == 60000
+        assert by["fee:fee-ns"]["optional"] and by["fee:fee-ns"]["lines"][0]["cost"] == "100.00"
+        assert all(ln["dos"] == "2025-01-07" for ln in by["imp:imp-old"]["lines"])
+        ranged = superbills.build_list("c-unit", cal, start="2026-10-01", end="2026-10-31",
+                                       now_utc="2026-11-03T15:00:00+00:00")
+        assert {i["key"] for i in ranged["unlinked"]} == {"ev:ev-1", "ev:ev-2"}
+
+
+def test_superbill_v2_save_links_readd_and_unique_names() -> None:
+    from app import superbills
+
+    with _desk(letterhead=True) as (main, _fake, drive):
+        cal = _seed_v2()
+        ln1 = {"item": "ev:ev-1", "dos": "2026-10-20", "service": "Level 3", "code": "99213", "cost": "220.00", "paid": "220.00"}
+        ln2 = {"item": "imp:imp-old", "dos": "2025-01-07", "service": "Level 3", "code": "99213", "cost": "220.00"}
+        a = _v2_post(main, ["ev:ev-1", "imp:imp-old"], [ln1, ln2],
+                     custom_fields=[{"label": "Referral", "value": "Self"}])
+        assert a["ok"] and a["linked"] == 2 and a["name"].startswith("Superbill #")
+        assert "1-7-2025 to 10-20-2026" in a["name"]
+        out = superbills.build_list("c-unit", cal, now_utc="2026-11-03T15:00:00+00:00")
+        linked = {i["key"]: i for i in out["linked"]}
+        assert set(linked) == {"ev:ev-1", "imp:imp-old"} and linked["ev:ev-1"]["statements"] == [a["statement"]]
+        assert "ev:ev-1" not in {i["key"] for i in out["unlinked"]}
+        # Re-add an already-linked visit to a new superbill: new file, old one untouched.
+        old_pdf = drive[a["path"]]
+        b = _v2_post(main, ["ev:ev-1"], [ln1])
+        assert b["path"] != a["path"] and b["statement"] != a["statement"]
+        assert drive[a["path"]] == old_pdf
+        out = superbills.build_list("c-unit", cal, now_utc="2026-11-03T15:00:00+00:00")
+        assert {i["key"]: i for i in out["linked"]}["ev:ev-1"]["statements"] == [a["statement"], b["statement"]]
+        assert superbills.count("c-unit") == 2
+        assert b"Notes" in old_pdf and b"Referral: Self" in old_pdf
+        # Bad keys are ignored, not stored.
+        c = _v2_post(main, ["../etc", "ev:ok-1"], [dict(ln1, item="ev:ok-1")])
+        assert c["linked"] == 1
+
+
+def test_superbill_v2_filename_and_pages() -> None:
+    from app.superbill_pdf import superbill_pdf, superbill_v2_filename
+
+    assert superbill_v2_filename("001800", ["2026-10-20"]) == "Superbill #001800 10-20-2026.pdf"
+    assert superbill_v2_filename("001801", ["2026-10-27", "2026-01-02"]) == "Superbill #001801 1-2-2026 to 10-27-2026.pdf"
+    assert superbill_v2_filename("001800", ["2026-10-20"]) != superbill_v2_filename("001801", ["2026-10-20"])
+    lines = [{"dos": "2026-10-20", "service": "Level 3 office visit", "code": "99213", "cost": "220", "paid": "0"}] * 60
+    pdf = superbill_pdf({"statement": "1", "lines": lines, "custom_fields": [{"label": "Note", "value": "x"}]})
+    assert b"/Count 1 " not in pdf and b"continued" in pdf and b"Note: x" in pdf
+    one = superbill_pdf({"statement": "1", "lines": lines[:2]})
+    assert b"/Count 1" in one and b"Notes" not in one
+
+
+def test_superbill_v2_sheet_wiring() -> None:
+    html = (ROOT / "static" / "desk.html").read_text(encoding="utf-8")
+    for needle in ('id="sb-visits"', 'id="sb-linked-wrap"', "<details", 'id="sb-field-add"', "sb-ldos",
+                   "/api/desk/superbill/visits", "custom_fields", "also on #"):
+        assert needle in html, needle

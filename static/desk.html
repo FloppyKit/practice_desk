@@ -725,7 +725,19 @@
     }
     .svc-day input[type=checkbox] { margin:0; }
     .svc-day.is-off input[type=time] { opacity:0.4; }
-    #superbill-pop { width: min(28rem, calc(100vw - 1.5rem)); }
+    #superbill-pop { width: min(34rem, calc(100vw - 1.5rem)); }
+    .sb-pick { display:flex; flex-direction:column; gap:0.25rem; margin:0 0 0.5rem; max-height:14rem; overflow:auto; }
+    .sb-pick button { display:flex; justify-content:space-between; gap:0.5rem; text-align:left; border:1px solid var(--border); background:var(--background); color:var(--foreground); border-radius:0.5rem; padding:0.35rem 0.55rem; font:inherit; font-size:0.8rem; cursor:pointer; }
+    .sb-pick button.on { background:var(--foreground); color:var(--background); border-color:var(--foreground); }
+    .sb-pick .sb-pick-meta { opacity:0.7; white-space:nowrap; }
+    .sb-pick-empty { font-size:0.8rem; opacity:0.7; margin:0 0 0.4rem; }
+    #sb-linked-wrap { margin:0 0 0.6rem; font-size:0.82rem; }
+    #sb-linked-wrap summary { cursor:pointer; margin:0 0 0.35rem; }
+    .sb-range { display:flex; gap:0.4rem; align-items:center; font-size:0.78rem; margin:0 0 0.45rem; }
+    .sb-range input { font:inherit; font-size:0.78rem; }
+    .sb-field { border:1px solid var(--border); border-radius:0.55rem; padding:0.4rem 0.5rem; margin:0 0 0.35rem; }
+    .sb-field input { width:100%; font:inherit; font-size:0.82rem; }
+    .sb-line .sb-ldos { flex:0 0 8.4rem; }
     .books-stat { display:flex; justify-content:space-between; gap:0.75rem; padding:0.35rem 0; border-bottom:1px solid var(--border); font-size:0.9rem; }
     .books-stat:last-child { border-bottom:0; }
     .books-block { margin:0 0 0.85rem; }
@@ -1336,8 +1348,14 @@
       <button type="button" class="book-pop-close" id="superbill-close" aria-label="Close">×</button>
     </div>
     <p class="desk-meta">Same statement of reimbursement as the Billing folder. Letterhead comes from Practice.</p>
-    <div class="seg-mini" id="sb-presets" role="group"></div>
-    <label class="field">Date of service <input id="sb-dos" type="date" /></label>
+    <p class="desk-meta">Visits not on a superbill — click to add or remove</p>
+    <div class="sb-range"><span>From</span><input id="sb-from" type="date" aria-label="From date" /><span>to</span><input id="sb-to" type="date" aria-label="To date" /><button class="btn secondary" type="button" id="sb-range-go">Filter</button></div>
+    <div class="sb-pick" id="sb-visits" role="group" aria-label="Visits not on a superbill"></div>
+    <details id="sb-linked-wrap"><summary>Already on a superbill (<span id="sb-linked-n">0</span>)</summary>
+      <div class="sb-pick" id="sb-linked" role="group" aria-label="Visits already on a superbill"></div>
+    </details>
+    <div class="seg-mini" id="sb-presets" role="group" hidden></div>
+    <label class="field">Date for new lines <input id="sb-dos" type="date" /></label>
     <label class="field">Place of service <input id="sb-pos" value="10" /></label>
     <label class="field">Client address <input id="sb-address" placeholder="Optional — street, city, state, zip" /></label>
     <p class="desk-meta">Diagnoses</p>
@@ -1349,6 +1367,11 @@
     <div id="sb-lines"></div>
     <div class="desk-actions" style="margin:0 0 0.55rem">
       <button class="btn secondary" type="button" id="sb-line-add">+ Line</button>
+    </div>
+    <p class="desk-meta">Extra fields (print under Notes)</p>
+    <div id="sb-fields"></div>
+    <div class="desk-actions" style="margin:0 0 0.55rem">
+      <button class="btn secondary" type="button" id="sb-field-add">+ Field</button>
     </div>
     <p class="desk-meta" id="superbill-status"></p>
     <div class="desk-actions" style="margin-top:0.4rem">
@@ -3052,7 +3075,7 @@
     function addSvcRow(line) {
       const row = document.createElement("div");
       row.className = "sb-line";
-      row.innerHTML = "<div class='sb-line-top'><input class='sb-svc' placeholder='Service' /><button type='button' class='x' aria-label='Remove'>×</button></div>"
+      row.innerHTML = "<div class='sb-line-top'><input class='sb-ldos' type='date' aria-label='Date of service' /><input class='sb-svc' placeholder='Service' /><button type='button' class='x' aria-label='Remove'>×</button></div>"
         + "<div class='sb-line-top'><input class='sb-cpt' placeholder='99213' /><input class='sb-mod' placeholder='95' /><input class='sb-dxp' placeholder='1,2' /><input class='sb-units' placeholder='1' /><input class='sb-cost' placeholder='220.00' /><input class='sb-paid' placeholder='220.00' /></div>";
       row.querySelector(".sb-svc").value = (line && line.service) || "";
       row.querySelector(".sb-cpt").value = (line && line.code) || "";
@@ -3061,8 +3084,89 @@
       row.querySelector(".sb-units").value = (line && line.units) || "1";
       row.querySelector(".sb-cost").value = (line && line.cost) || "";
       row.querySelector(".sb-paid").value = (line && line.paid) || "";
-      row.querySelector(".x").onclick = () => row.remove();
+      row.querySelector(".sb-ldos").value = (line && line.dos) || $("sb-dos").value || "";
+      if (line && line.item) row.dataset.item = line.item;
+      row.querySelector(".x").onclick = () => { row.remove(); syncPicks(); };
       $("sb-lines").appendChild(row);
+    }
+    // ---- Superbill v2 picker: visits not on a superbill, then (collapsed) ones already on one. ----
+    let sbItems = {};
+    function sbMoney(c) { return "$" + (Number(c || 0) / 100).toFixed(2); }
+    function sbDate(d) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || "");
+      return m ? (Number(m[2]) + "/" + Number(m[3]) + "/" + m[1]) : (d || "");
+    }
+    function syncPicks() {
+      const on = new Set();
+      $("sb-lines").querySelectorAll(".sb-line").forEach((r) => { if (r.dataset.item) on.add(r.dataset.item); });
+      document.querySelectorAll("#sb-visits button, #sb-linked button").forEach((b) => {
+        b.classList.toggle("on", on.has(b.dataset.key));
+        b.setAttribute("aria-pressed", on.has(b.dataset.key) ? "true" : "false");
+      });
+    }
+    function toggleItem(key) {
+      const it = sbItems[key];
+      if (!it) return;
+      const rows = Array.from($("sb-lines").querySelectorAll(".sb-line")).filter((r) => r.dataset.item === key);
+      if (rows.length) rows.forEach((r) => r.remove());
+      else {
+        const lines = (it.lines && it.lines.length) ? it.lines
+          : [{ dos: it.dos, service: it.label || "Visit", code: "", modifier: "95", units: "1", cost: "", paid: "" }];
+        lines.forEach((ln) => addSvcRow(Object.assign({ modifier: "95", dx: "1", units: "1" }, ln, { item: key })));
+      }
+      syncPicks();
+    }
+    function pickButton(it) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.key = it.key;
+      const left = document.createElement("span");
+      left.textContent = sbDate(it.dos) + " · " + (it.label || "Visit") + (it.optional ? " (optional)" : "");
+      const right = document.createElement("span");
+      right.className = "sb-pick-meta";
+      right.textContent = sbMoney(it.fee_cents) + (it.paid ? " · paid" : "")
+        + ((it.statements || []).length ? " · also on #" + it.statements.join(", #") : "");
+      b.append(left, right);
+      b.onclick = () => toggleItem(it.key);
+      return b;
+    }
+    function renderPicks(data) {
+      sbItems = {};
+      const un = $("sb-visits"), ln = $("sb-linked");
+      un.innerHTML = ""; ln.innerHTML = "";
+      (data.unlinked || []).forEach((it) => { sbItems[it.key] = it; un.appendChild(pickButton(it)); });
+      (data.linked || []).forEach((it) => { sbItems[it.key] = it; ln.appendChild(pickButton(it)); });
+      if (!(data.unlinked || []).length) un.innerHTML = "<p class='sb-pick-empty'>Every visit in range is already on a superbill.</p>";
+      $("sb-linked-n").textContent = String((data.linked || []).length);
+      syncPicks();
+    }
+    async function loadPicks(autoKey) {
+      const c = (homeCurrent && homeCurrent.client) || {};
+      const un = $("sb-visits");
+      un.innerHTML = "<p class='sb-pick-empty'>Loading visits…</p>";
+      const q = new URLSearchParams({ client_id: c.id || "" });
+      if ($("sb-from").value) q.set("start", $("sb-from").value);
+      if ($("sb-to").value) q.set("end", $("sb-to").value);
+      try {
+        const res = await deskFetch("/api/desk/superbill/visits?" + q.toString());
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.detail || String(res.status));
+        renderPicks(data);
+        $("sb-presets").hidden = true;
+        if (autoKey && sbItems[autoKey] && !$("sb-lines").querySelector(".sb-line")) toggleItem(autoKey);
+      } catch (e) {
+        un.innerHTML = "<p class='sb-pick-empty'>Could not load visits. Use the fee presets below.</p>";
+        $("sb-presets").hidden = false;
+      }
+    }
+    function addFieldRow(f) {
+      const row = document.createElement("div");
+      row.className = "sb-field";
+      row.innerHTML = "<div class='sb-line-top'><input class='sb-flab' placeholder='Label' /><button type='button' class='x' aria-label='Remove'>×</button></div><input class='sb-fval' placeholder='Value' />";
+      row.querySelector(".sb-flab").value = (f && f.label) || "";
+      row.querySelector(".sb-fval").value = (f && f.value) || "";
+      row.querySelector(".x").onclick = () => row.remove();
+      $("sb-fields").appendChild(row);
     }
     function fallbackServices() {
       const role = (practiceCache && practiceCache.billing_role) || "psychiatrist";
@@ -3137,13 +3241,19 @@
       $("sb-address").value = "";
       $("sb-dxs").innerHTML = "";
       addDxRow({});
+      $("sb-lines").innerHTML = "";
+      $("sb-fields").innerHTML = "";
+      $("sb-from").value = ""; $("sb-to").value = "";
       const spec = pickService(hit && hit.duration_minutes);
       renderPresets(spec && spec.id);
-      applyService(spec || pickService(30));
+      $("sb-linked-wrap").open = false;
+      loadPicks(focusEventId ? "ev:" + focusEventId : "");
     }
+    $("sb-range-go").onclick = () => loadPicks("");
+    $("sb-field-add").onclick = () => addFieldRow({});
     $("superbill-close").onclick = closeSuperbill;
     $("sb-dx-add").onclick = () => addDxRow({});
-    $("sb-line-add").onclick = () => addSvcRow({ modifier: "95", dx: "1", units: "1" });
+    $("sb-line-add").onclick = () => addSvcRow({ modifier: "95", dx: "1", units: "1", dos: $("sb-dos").value });
     $("sb-save").onclick = async () => {
       const c = (homeCurrent && homeCurrent.client) || {};
       const status = $("superbill-status");
@@ -3160,7 +3270,8 @@
         const code = row.querySelector(".sb-cpt").value.trim();
         if (!service && !code) return;
         lines.push({
-          dos: $("sb-dos").value,
+          item: row.dataset.item || "",
+          dos: row.querySelector(".sb-ldos").value || $("sb-dos").value,
           pos: $("sb-pos").value.trim() || "10",
           service,
           code,
@@ -3172,6 +3283,13 @@
         });
       });
       if (!lines.length) { status.textContent = "Add at least one service line."; return; }
+      const items = Array.from(new Set(lines.map((l) => l.item).filter(Boolean)));
+      const custom_fields = [];
+      $("sb-fields").querySelectorAll(".sb-field").forEach((row) => {
+        const label = row.querySelector(".sb-flab").value.trim();
+        const value = row.querySelector(".sb-fval").value.trim();
+        if (label || value) custom_fields.push({ label, value });
+      });
       status.textContent = "Saving…";
       const res = await deskFetch("/api/desk/superbill", {
         method: "POST",
@@ -3184,6 +3302,8 @@
           address: $("sb-address").value.trim(),
           diagnoses,
           lines,
+          items,
+          custom_fields,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -3193,6 +3313,7 @@
       }
       status.textContent = "Saved · " + (data.name || "superbill") + (data.statement ? " · #" + data.statement : "");
       msg("Superbill saved to Billing.", true);
+      loadPicks("");
     };
     // ---- Bill visit (confirm sheet). Nothing is charged or sent until Confirm. ----
     let billCtx = null;

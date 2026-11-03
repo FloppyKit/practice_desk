@@ -1,6 +1,7 @@
 """Statement of reimbursement. Matches the CarePatron Superbill shape. No extra deps."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -59,6 +60,24 @@ def pretty_date(raw: str) -> str:
     return s
 
 
+def _mdy(raw: str) -> str:
+    try:
+        dt = datetime.strptime((raw or "").strip()[:10], "%Y-%m-%d")
+    except ValueError:
+        dt = datetime.now()
+    return f"{dt.month}-{dt.day}-{dt.year}"
+
+
+def superbill_v2_filename(statement: str, dos_list: list[str]) -> str:
+    """Statement number makes every v2 file unique; the range says which visits it covers."""
+    ds = sorted(d for d in (dos_list or []) if d)
+    span = _mdy(ds[0]) if ds else _mdy("")
+    if ds and ds[-1] != ds[0]:
+        span += " to " + _mdy(ds[-1])
+    num = re.sub(r"[^0-9A-Za-z-]", "", str(statement or "")) or "0"
+    return f"Superbill #{num} {span}.pdf"
+
+
 def superbill_filename(dos: str) -> str:
     s = (dos or "").strip()
     try:
@@ -74,16 +93,18 @@ def superbill_pdf(doc: dict) -> bytes:
     y = 760
     parts: list[str] = []
 
+    pages: list[list[str]] = [parts]
+
     def text(x: float, yy: float, s: str, *, size: int = 10, bold: bool = False, r: int = 0) -> None:
         font = "/F1" if bold else "/F2"
-        parts.extend(
+        pages[-1].extend(
             ["BT", f"{font} {size} Tf", f"{x:.1f} {yy:.1f} Td", f"({_esc(s)}) Tj", "ET"]
         )
         if r:
             pass
 
     def rule(yy: float) -> None:
-        parts.extend(["0.82 G", "0.6 w", f"48 {yy:.1f} m 564 {yy:.1f} l S", "0 G"])
+        pages[-1].extend(["0.82 G", "0.6 w", f"48 {yy:.1f} m 564 {yy:.1f} l S", "0 G"])
 
     prac = doc.get("practice") or {}
     name = (prac.get("name") or "").strip()
@@ -212,13 +233,21 @@ def superbill_pdf(doc: dict) -> bytes:
         (458, "Cost"),
         (518, "Paid"),
     ]
-    for x, lab in heads:
-        text(x, y, lab, size=8, bold=True)
-    y -= 14
+    def head_row(yy: float) -> float:
+        for x, lab in heads:
+            text(x, yy, lab, size=8, bold=True)
+        return yy - 14
+
+    def new_page() -> float:
+        pages.append([])
+        text(48, 760, "Statement # " + str(doc.get("statement") or "") + " (continued)", size=9, bold=True)
+        return head_row(736)
+
+    y = head_row(y)
     total = 0.0
     for line in doc.get("lines") or []:
         if y < 80:
-            break
+            y = new_page()
         dos = pretty_date(str(line.get("dos") or doc.get("dos") or ""))
         pos = str(line.get("pos") or "10")
         svc = (line.get("service") or "").strip()
@@ -256,12 +285,40 @@ def superbill_pdf(doc: dict) -> bytes:
     else:
         text(400, y, "Total (USD)", size=10)
     text(500, y, f"${total:.2f}", size=12, bold=True)
+    y -= 26
+    extra = [f for f in (doc.get("custom_fields") or []) if (f.get("label") or f.get("value"))]
+    if extra:
+        if y < 100:
+            pages.append([])
+            y = 740
+        text(48, y, "Notes", size=8, bold=True)
+        y -= 14
+        for f in extra:
+            label = str(f.get("label") or "").strip()
+            value = str(f.get("value") or "").strip()
+            for j, w in enumerate(_wrap(f"{label}: {value}" if label else value, 96)):
+                if y < 60:
+                    pages.append([])
+                    y = 740
+                text(48, y, w, size=9, bold=False)
+                y -= 12
 
     stream = "\n".join(parts).encode("latin-1", "replace")
     xobj = b" /XObject << /Im1 7 0 R >>" if image else b""
+    first_extra = 7 + (len(image["objects"]) if image else 0)
+    kid_ids = [3]
+    more: list[bytes] = []
+    for i, pg in enumerate(pages[1:]):
+        pid, cid = first_extra + 2 * i, first_extra + 2 * i + 1
+        kid_ids.append(pid)
+        body = "\n".join(pg).encode("latin-1", "replace")
+        more.append(f"{pid} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {cid} 0 R "
+                    f"/Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >> endobj\n".encode())
+        more.append(f"{cid} 0 obj << /Length {len(body)} >> stream\n".encode() + body + b"\nendstream endobj\n")
+    kids = " ".join(f"{k} 0 R" for k in kid_ids).encode()
     objects = [
         b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
-        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [" + kids + b"] /Count " + str(len(pages)).encode() + b" >> endobj\n",
         b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >>"
         + xobj
         + b" >> >> endobj\n",
@@ -275,6 +332,7 @@ def superbill_pdf(doc: dict) -> bytes:
     ]
     if image:
         objects.extend(image["objects"])
+    objects.extend(more)
     out = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for obj in objects:
