@@ -3357,13 +3357,16 @@ def _scribe_link_visits(row: dict[str, Any], rs: datetime, re_: datetime) -> tup
 
 def link_scribe_row(row: dict[str, Any]) -> str:
     from . import scribe_drafts
-    from .visit_link import match, recording_window
+    from .visit_link import match, multi_visit, recording_window
 
     rs, re_ = recording_window(row)
     if not rs:
         scribe_drafts.set_link(row["id"], "", "none")
         return "none"
     cid, visits = _scribe_link_visits(row, rs, re_)
+    if multi_visit(rs, re_, visits):  # never auto-link a multi-visit recording (PHI cross-contamination)
+        scribe_drafts.set_link(row["id"], "", "multi")
+        return "multi"
     eid, status = match(rs, re_, cid, visits)
     scribe_drafts.set_link(row["id"], eid, status)
     return status
@@ -3372,7 +3375,7 @@ def link_scribe_row(row: dict[str, Any]) -> str:
 def backfill_scribe_links(only_unset: bool = True) -> dict[str, int]:
     from . import scribe_drafts
 
-    counts = {"linked": 0, "ambiguous": 0, "none": 0}
+    counts = {"linked": 0, "ambiguous": 0, "none": 0, "multi": 0}
     for r in scribe_drafts.rows_for_link(only_unset):
         st = link_scribe_row(r)
         counts[st] = counts.get(st, 0) + 1
@@ -3430,6 +3433,9 @@ def api_desk_note_update_from_transcript(req: DeskNoteUpdateRequest, secret: str
 
     tr = (req.transcript or "").strip()
     if not tr:
+        if req.transcript_id.strip() and note_carry.is_multi(req.transcript_id.strip()):
+            raise HTTPException(409, "This transcript covers more than one visit, so it can't update this note "
+                                     "(it could mix patients). Use a transcript from this visit only.")
         tr, _src = note_carry.transcript_for(req.client_id.strip(), req.event_id.strip(), req.transcript_id.strip())
     if len(tr) < 20:
         raise HTTPException(400, "No transcript for this visit")
@@ -3759,6 +3765,7 @@ class DeskScribeIngestRequest(BaseModel):
     name: str = ""
     room: str = ""
     ended_at: str = ""
+    started_at: str = ""
 
 
 def _scribe_ingest_authorized(request: Request, secret: str = "") -> None:
@@ -3796,6 +3803,7 @@ def api_desk_note_scribe_ingest(
             duration_minutes=req.duration_minutes,
             room=req.room,
             ended_at=req.ended_at,
+            started_at=req.started_at,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

@@ -52,17 +52,25 @@ def transcript_for(client_id: str, event_id: str = "", transcript_id: str = "") 
 
     with scribe_drafts._connect() as con:
         if transcript_id:
-            r = con.execute("SELECT transcript FROM scribe_drafts WHERE id=? AND transcript!='' "
+            r = con.execute("SELECT transcript FROM scribe_drafts WHERE id=? AND transcript!='' AND link_status!='multi' "
                             "AND (client_id=? OR client_id='')", (transcript_id, client_id)).fetchone()
             if r:
                 return r[0], "picked"
         if event_id:
             r = con.execute("SELECT transcript FROM scribe_drafts WHERE event_id=? AND transcript!='' "
-                            "ORDER BY created DESC LIMIT 1", (event_id,)).fetchone()
+                            "AND link_status!='multi' ORDER BY created DESC LIMIT 1", (event_id,)).fetchone()
             if r:
                 return r[0], "linked"
     t = latest_transcript(client_id)
     return (t, "recent") if t else ("", "none")
+
+
+def is_multi(transcript_id: str) -> bool:
+    from . import scribe_drafts
+
+    with scribe_drafts._connect() as con:
+        r = con.execute("SELECT link_status FROM scribe_drafts WHERE id=?", (transcript_id,)).fetchone()
+    return bool(r) and r[0] == "multi"
 
 
 def unlinked_on_day(client_id: str, day_start_utc: datetime, day_end_utc: datetime) -> list[dict[str, Any]]:
@@ -74,7 +82,8 @@ def unlinked_on_day(client_id: str, day_start_utc: datetime, day_end_utc: dateti
     with scribe_drafts._connect() as con:
         rows = [dict(r) for r in con.execute(
             "SELECT id, created, ended_at, duration_minutes, client_id, link_status FROM scribe_drafts "
-            "WHERE event_id='' AND transcript!='' AND (client_id=? OR client_id='')", (client_id,))]
+            "WHERE event_id='' AND transcript!='' AND link_status!='multi' AND (client_id=? OR client_id='')",
+            (client_id,))]
     for r in rows:
         st, en = recording_window(r)
         if en and day_start_utc <= en < day_end_utc:
@@ -92,7 +101,8 @@ def latest_transcript(client_id: str, *, hours: int = 48) -> str:
     try:
         with scribe_drafts._connect() as con:
             r = con.execute("SELECT transcript FROM scribe_drafts WHERE client_id=? AND created>=? "
-                            "AND transcript!='' ORDER BY created DESC LIMIT 1", (client_id, since)).fetchone()
+                            "AND transcript!='' AND link_status!='multi' ORDER BY created DESC LIMIT 1",
+                            (client_id, since)).fetchone()
     except Exception:
         return ""
     return (r[0] if r else "") or ""

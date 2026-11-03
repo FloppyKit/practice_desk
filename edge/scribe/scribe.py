@@ -45,6 +45,69 @@ PORT = int(os.environ.get("SCRIBE_PORT", "8793"))
 LOG = Path(os.environ.get("SCRIBE_LOG", "/home/deploy/edge/logs/scribe.jsonl"))
 
 SAMPLE_RATE = 16000
+GUEST_GAP_SEC = float(os.environ.get("SCRIBE_GUEST_GAP_SEC", "60"))  # guest gone this long -> cut the piece
+
+try:
+    from zoneinfo import ZoneInfo
+
+    _CT = ZoneInfo("America/Chicago")
+except Exception:  # no tzdata: fall back to the box zone
+    _CT = None
+
+
+def ct_stamp(ts: float) -> str:
+    d = datetime.datetime.fromtimestamp(ts, _CT) if _CT else datetime.datetime.fromtimestamp(ts)
+    return d.strftime("%-I:%M:%S %p CT")
+
+
+def iso_utc(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def guest_key(identity: str) -> str:
+    """Guest tokens are '<name-slug>-<6 hex>'; a reconnect gets new hex, same slug."""
+    head, _, tail = identity.rpartition("-")
+    if head and len(tail) == 6 and all(c in "0123456789abcdef" for c in tail):
+        return head
+    return identity
+
+
+class PieceTracker:
+    """Pure per-visit cut logic. tick() -> actions: 'open' | 'cut' (close current) | 'pause' | 'resume'.
+    Cut when the guest is gone > GUEST_GAP_SEC, or when a different guest joins and none of the
+    piece's guests remain. A reconnect (same key) within the gap keeps the piece."""
+
+    def __init__(self, gap: float = GUEST_GAP_SEC) -> None:
+        self.gap = gap
+        self.open = False
+        self.keys: set[str] = set()
+        self.gone_since: float | None = None
+
+    def tick(self, now: float, guests: set[str]) -> list[str]:
+        acts: list[str] = []
+        if guests:
+            if self.open and self.gone_since is not None and not (guests & self.keys):
+                acts.append("cut")  # a different guest arrived during the gap
+                self.open = False
+            elif self.open and self.gone_since is None and not (guests & self.keys):
+                acts.append("cut")  # swapped guests between ticks
+                self.open = False
+            if not self.open:
+                self.open, self.keys, self.gone_since = True, set(guests), None
+                acts.append("open")
+            else:
+                if self.gone_since is not None:
+                    acts.append("resume")
+                self.gone_since = None
+                self.keys |= guests
+        elif self.open:
+            if self.gone_since is None:
+                self.gone_since = now
+                acts.append("pause")
+            elif now - self.gone_since >= self.gap:
+                self.open, self.keys, self.gone_since = False, set(), None
+                acts.append("cut")
+        return acts
 
 
 def utc() -> str:
@@ -129,7 +192,8 @@ def mail(subject: str, html: str) -> dict[str, Any]:
 
 
 def desk_ingest(
-    note: str, transcript: str, minutes: int, target: dict[str, str] | None = None
+    note: str, transcript: str, minutes: int, target: dict[str, str] | None = None,
+    window: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Push blank draft to Practice Desk. Never log bodies."""
     url = (os.environ.get("DESK_SCRIBE_INGEST_URL") or "").strip()
@@ -144,6 +208,8 @@ def desk_ingest(
             "template": "blank",
             "duration_minutes": int(minutes or 0),
             "room": ROOM_NAME,
+            "started_at": (window or ("", ""))[0],
+            "ended_at": (window or ("", ""))[1],
             # Host may tag the visit (participant attrs desk_client_id/email/name).
             "client_id": (target or {}).get("client_id", ""),
             "email": (target or {}).get("email", ""),
@@ -310,8 +376,11 @@ class Session:
         self.started = time.time()
         self.last_flush = time.time()
         self.lock = asyncio.Lock()
-        self.shm = SHM / f"scribe-{os.getpid()}.wav"
+        self.shm = SHM / f"scribe-{os.getpid()}-{id(self)}.wav"
         self.target: dict[str, str] = {}
+        self.recording = False  # only while a guest is in the room; host alone records nothing
+        self.first_audio: float | None = None
+        self.last_audio: float | None = None
 
     def wipe_file(self) -> None:
         try:
@@ -322,7 +391,13 @@ class Session:
 
     async def add_pcm(self, chunk: bytes, key: str = "") -> None:
         # One buffer per track: appending two tracks into one buffer interleaved them.
+        if not self.recording:
+            return
         async with self.lock:
+            now = time.time()
+            if self.first_audio is None:
+                self.first_audio = now
+            self.last_audio = now
             self.tracks.setdefault(key, bytearray()).extend(chunk)
 
     async def flush_chunk(self, force: bool = False) -> None:
@@ -334,6 +409,7 @@ class Session:
             bufs = [bytes(b) for b in self.tracks.values()]
             for b in self.tracks.values():
                 b.clear()
+            chunk_start = max(self.last_flush, self.first_audio or self.last_flush)
             self.last_flush = time.time()
         pcm = await asyncio.to_thread(mix_pcm, bufs)
         if not stt_configured():
@@ -352,7 +428,7 @@ class Session:
             finally:
                 self.wipe_file()
             if text:
-                self.parts.append(text)
+                self.parts.append(f"[{ct_stamp(chunk_start)}] {text}")
             if extra_note:
                 self.parts.append("\n[backend note]\n" + extra_note)
             log_event(
@@ -371,7 +447,10 @@ class Session:
 
     async def finish(self) -> None:
         await self.flush_chunk(force=True)
-        minutes = max(1, int((time.time() - self.started) / 60))
+        t0 = self.first_audio or self.started
+        t1 = self.last_audio or time.time()
+        minutes = max(1, int((t1 - t0) / 60))
+        self.window = (iso_utc(t0), iso_utc(t1))
         transcript = "\n".join(self.parts).strip()
         stt_ok = bool(transcript)
         note = ""
@@ -393,7 +472,7 @@ class Session:
             note = transcript[:4000]
         subject = f"Visit note · {time.strftime('%b %-d')} · {minutes} min"
         if note or transcript:
-            ingested = desk_ingest(note or transcript, transcript, minutes, self.target)
+            ingested = desk_ingest(note or transcript, transcript, minutes, self.target, self.window)
             log_event(
                 {
                     "event": "desk_ingest",
@@ -428,7 +507,14 @@ class Session:
         self.wipe_file()
 
 
-async def consume_audio(track: Any, session: Session) -> None:
+class Holder:
+    """Current piece; audio tasks write to whatever piece is current."""
+
+    def __init__(self, s: "Session") -> None:
+        self.s = s
+
+
+async def consume_audio(track: Any, session: "Holder") -> None:
     from livekit import rtc
 
     key = str(getattr(track, "sid", "") or id(track))
@@ -444,7 +530,7 @@ async def consume_audio(track: Any, session: Session) -> None:
             frame = getattr(ev, "frame", ev)
             data = getattr(frame, "data", b"")
             if data:
-                await session.add_pcm(bytes(data), key)
+                await session.s.add_pcm(bytes(data), key)
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -457,13 +543,27 @@ async def consume_audio(track: Any, session: Session) -> None:
                 pass
 
 
+def host_tag(humans: list[Any]) -> dict[str, str]:
+    for p in humans:
+        if is_host(_ident(p)) and _attr(p, "desk_client_id"):
+            return {
+                "client_id": _attr(p, "desk_client_id")[:80],
+                "email": _attr(p, "desk_client_email")[:200],
+                "name": _attr(p, "desk_client_name")[:200],
+            }
+    return {}
+
+
 async def run_session() -> None:
+    """One bot stay in the room; one transcript piece per guest visit (cut on guest leave/swap)."""
     from livekit import rtc
 
     token = await mint_scribe_token()
     room = rtc.Room()
-    session = Session()
+    holder = Holder(Session())
+    tracker = PieceTracker()
     tasks: list[asyncio.Task[Any]] = []
+    finishing: list[asyncio.Task[Any]] = []
     STATE.joined = True
     log_event({"event": "join", "room": ROOM_NAME, "backend": backend_kind()})
 
@@ -472,9 +572,25 @@ async def run_session() -> None:
             return
         if is_scribe(_ident(participant)):
             return
-        tasks.append(asyncio.create_task(consume_audio(track, session)))
+        tasks.append(asyncio.create_task(consume_audio(track, holder)))
 
     room.on("track_subscribed", on_track)
+
+    async def close_piece(reason: str) -> None:
+        old = holder.s
+        old.recording = False
+        holder.s = Session()
+        heard = (old.last_audio or 0) - (old.first_audio or 0)
+        log_event({"event": "piece_cut", "room": ROOM_NAME, "reason": reason, "audio_sec": int(heard),
+                   "targeted": bool(old.target.get("client_id"))})
+        if old.first_audio is None or (heard < 20 and not old.parts):
+            old.tracks.clear()
+            old.wipe_file()  # a blip (join/leave within seconds): nothing to save, no "empty" mail
+            return
+        finishing.append(asyncio.create_task(old.finish()))
+
+    def humans_now() -> list[Any]:
+        return [p for p in room.remote_participants.values() if not is_scribe(_ident(p))]
 
     try:
         await room.connect(LK_URL, token)
@@ -482,31 +598,32 @@ async def run_session() -> None:
             for pub in p.track_publications.values():
                 if pub.track and pub.kind == rtc.TrackKind.KIND_AUDIO:
                     on_track(pub.track, pub, p)
+        empty_since: float | None = None
         while True:
-            await asyncio.sleep(5)
-            await session.flush_chunk(False)
-            humans = [
-                p
-                for p in room.remote_participants.values()
-                if not is_scribe(_ident(p))
-            ]
-            for p in humans:
-                if is_host(_ident(p)) and _attr(p, "desk_client_id"):
-                    session.target = {
-                        "client_id": _attr(p, "desk_client_id")[:80],
-                        "email": _attr(p, "desk_client_email")[:200],
-                        "name": _attr(p, "desk_client_name")[:200],
-                    }
+            humans = humans_now()
+            guests = {guest_key(_ident(p)) for p in humans if not is_host(_ident(p))}
+            tag = host_tag(humans)
+            for act in tracker.tick(time.time(), guests):
+                if act == "cut":
+                    await close_piece("guest_left" if not guests else "guest_changed")
+                elif act == "open":
+                    holder.s.target = dict(tag)  # tag as of the guest's arrival
+                    holder.s.recording = True
+                    log_event({"event": "piece_open", "room": ROOM_NAME, "targeted": bool(tag.get("client_id"))})
+                elif act == "pause":
+                    holder.s.recording = False
+                elif act == "resume":
+                    holder.s.recording = True
+            if tracker.open and not holder.s.target and tag:
+                holder.s.target = dict(tag)  # host tagged just after admitting; first tag sticks
+            await holder.s.flush_chunk(False)
             if not humans:
-                # wait briefly — host might be alone between guests
-                await asyncio.sleep(8)
-                humans = [
-                    p
-                    for p in room.remote_participants.values()
-                    if not is_scribe(_ident(p))
-                ]
-                if not humans:
+                empty_since = empty_since or time.time()
+                if time.time() - empty_since >= 8:
                     break
+            else:
+                empty_since = None
+            await asyncio.sleep(2)
     finally:
         for t in tasks:
             t.cancel()
@@ -515,7 +632,11 @@ async def run_session() -> None:
         except Exception:
             pass
         try:
-            await session.finish()
+            if tracker.open or holder.s.parts or any(holder.s.tracks.values()):
+                holder.s.recording = False
+                await holder.s.finish()
+            for t in finishing:
+                await t
         except Exception:
             log_event({"event": "finish_err", "err": traceback.format_exc()[-200:]})
         STATE.joined = False

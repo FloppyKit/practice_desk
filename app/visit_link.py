@@ -31,12 +31,31 @@ def recording_window(row: dict[str, Any]) -> tuple[datetime | None, datetime | N
     end = parse_ts(row.get("ended_at") or "") or parse_ts(row.get("created") or "")
     if not end:
         return None, None
+    start = parse_ts(row.get("started_at") or "")
+    if start and start <= end:
+        return start, end
     mins = int(row.get("duration_minutes") or 0)
     return end - timedelta(minutes=max(mins, 0)), end
 
 
 def _overlap(a0: datetime, a1: datetime, b0: datetime, b1: datetime) -> float:
     return max(0.0, (min(a1, b1) - max(a0, b0)).total_seconds())
+
+
+MIN_OVERLAP = timedelta(minutes=5)
+
+
+def multi_visit(rec_start: datetime, rec_end: datetime, visits: list[dict[str, Any]]) -> bool:
+    """Guard: longer than the longest overlapping visit + 30 min, or real overlap with 2+ distinct visit slots."""
+    pool = [v for v in visits if v.get("start") and v.get("end")]
+    # A visit counts when the recording covers >= min(15 min, half of it): normal overruns into the next slot don't trip.
+    hits = [v for v in pool if _overlap(rec_start, rec_end, v["start"], v["end"])
+            >= max(MIN_OVERLAP.total_seconds(), min(900.0, (v["end"] - v["start"]).total_seconds() / 2))]
+    slots = {(v["start"], v["end"]) for v in hits}
+    if len({v["start"] for v in hits}) > 1 and len(slots) > 1:
+        return True
+    longest = max(((v["end"] - v["start"]) for v in hits), default=timedelta(0))
+    return (rec_end - rec_start) > longest + LATE
 
 
 def match(rec_start: datetime, rec_end: datetime, client_id: str, visits: list[dict[str, Any]]) -> tuple[str, str]:

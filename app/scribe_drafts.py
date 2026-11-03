@@ -49,6 +49,8 @@ def _connect() -> sqlite3.Connection:
     if "event_id" not in cols:  # visit link (2026-10-30)
         conn.execute("ALTER TABLE scribe_drafts ADD COLUMN event_id TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE scribe_drafts ADD COLUMN link_status TEXT NOT NULL DEFAULT ''")
+    if "started_at" not in cols:  # per-visit pieces (2026-11-02)
+        conn.execute("ALTER TABLE scribe_drafts ADD COLUMN started_at TEXT NOT NULL DEFAULT ''")
     return conn
 
 
@@ -58,7 +60,8 @@ def set_link(draft_id: str, event_id: str, status: str) -> None:
 
 
 def rows_for_link(only_unset: bool = True) -> list[dict[str, Any]]:
-    q = "SELECT id, created, ended_at, duration_minutes, client_id, email, event_id, link_status FROM scribe_drafts"
+    q = ("SELECT id, created, ended_at, started_at, duration_minutes, client_id, email, event_id, link_status "
+         "FROM scribe_drafts")
     if only_unset:
         q += " WHERE link_status=''"
     with _connect() as conn:
@@ -81,6 +84,7 @@ def put(
     duration_minutes: int = 0,
     room: str = "",
     ended_at: str = "",
+    started_at: str = "",
 ) -> dict[str, Any]:
     body = (note or "").strip() or (transcript or "").strip()
     if not body:
@@ -92,8 +96,8 @@ def put(
         conn.execute(
             "INSERT INTO scribe_drafts "
             "(id, created, template, title, note, transcript, client_id, email, name, "
-            "duration_minutes, room, ended_at, claimed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            "duration_minutes, room, ended_at, started_at, claimed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
             (
                 draft_id,
                 created,
@@ -107,6 +111,7 @@ def put(
                 max(0, int(duration_minutes or 0)),
                 (room or "").strip()[:80],
                 (ended_at or "").strip()[:64],
+                (started_at or "").strip()[:64],
             ),
         )
     return {"id": draft_id, "created": created, "template": tid}
