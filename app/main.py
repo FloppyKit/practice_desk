@@ -59,7 +59,7 @@ from .patients import (
 )
 from .week_people import merge_client_hits, people_from_visits
 from .staff_auth import COOKIE as STAFF_COOKIE, secret_from_request
-from .tokens import mint_cancel_token, verify_cancel_token, verify_patient_token
+from .tokens import mint_cancel_token, mint_verify_token, verify_cancel_token, verify_patient_token
 from . import cipher_mode, cipher_queue, cipher_seal
 
 def _seed_caldav_bg() -> None:
@@ -5653,6 +5653,64 @@ def page_book_token(token: str, request: Request = None):  # type: ignore[assign
             "and phone yourself. Or ask the office for a new link.</p></body>",
             status_code=410, headers=_NO_INDEX)
     return RedirectResponse(f"/{hit[0]['s']}#bt={token}", status_code=303, headers=_NO_INDEX)
+
+
+_C_PAGE = ("<!doctype html><html lang=en><head><meta charset=utf-8><meta name=robots content='noindex,nofollow'>"
+           "<meta name=referrer content=no-referrer><meta name=viewport content='width=device-width,initial-scale=1'>"
+           "<title>{title}</title></head><body style='font-family:system-ui;max-width:32em;margin:3em auto;padding:0 1em;"
+           "line-height:1.5'><h1 style='font-size:1.3em'>{title}</h1>{body}</body></html>")
+
+
+def _c_expired() -> HTMLResponse:
+    return HTMLResponse(_C_PAGE.format(
+        title="Log in to read your messages",
+        body="<p>This link has expired or was replaced. Your messages are safe.</p>"
+             f"<p><a href='{SITE_PUBLIC}/portal' style='font-size:1.1em'>Log in with a code</a> to read them.</p>"),
+        status_code=410, headers=_NO_INDEX)
+
+
+def _c_ip(request: Request | None) -> str:
+    if request is None:
+        return ""
+    return request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
+
+
+@app.get("/c/{code}")
+def page_chat_link(code: str, request: Request = None):  # type: ignore[assignment]
+    """Chat-reply alert link. GET shows only a button: scanners and crawlers never log in or see content."""
+    from . import chat_links
+
+    ip = _c_ip(request)
+    if ip and not _b_rate_ok("c:" + ip):
+        return HTMLResponse("Too many tries. Wait a minute and try again.", status_code=429, headers=_NO_INDEX)
+    if not chat_links.lookup(code):
+        return _c_expired()
+    return HTMLResponse(_C_PAGE.format(
+        title="Dr. Brown replied to your message",
+        body=f"<form method=post action='/c/{code}'><button type=submit style='font-size:1.1em;padding:.7em 1.4em;"
+             "border-radius:8px;border:0;background:#1f4e79;color:#fff'>Open my messages</button></form>"),
+        headers=_NO_INDEX)
+
+
+@app.post("/c/{code}")
+def page_chat_link_open(code: str, request: Request = None):  # type: ignore[assignment]
+    """Button press: mint the normal portal session (same TTL as a code login) and hand it to the site in the #fragment."""
+    from urllib.parse import quote
+
+    from . import chat_links
+    from .patients import client_by_id
+
+    ip = _c_ip(request)
+    if ip and not _b_rate_ok("c:" + ip):
+        return HTMLResponse("Too many tries. Wait a minute and try again.", status_code=429, headers=_NO_INDEX)
+    hit = chat_links.lookup(code)
+    row = client_by_id(hit["client_id"]) if hit else None
+    if not hit or not row:
+        return _c_expired()
+    name = str(row.get("preferred_name") or row.get("given_name") or row.get("name") or "")[:80]
+    vt = mint_verify_token(client_id=str(row["id"]), name=name, matched="chat_link")
+    frag = f"cv={quote(vt, safe='')}&cn={quote(name, safe='')}&t={quote(hit['thread'], safe='')}"
+    return RedirectResponse(f"{SITE_PUBLIC}/portal#{frag}", status_code=303, headers=_NO_INDEX)
 
 
 class BookPrefillRequest(BaseModel):

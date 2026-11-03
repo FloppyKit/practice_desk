@@ -232,3 +232,21 @@ def test_reply_alert_no_content_dedupe_and_stop() -> None:
             assert chat_threads.thread_access(row, "")
     finally:
         notify.send_sms, notify.send_email, clients_db.get_by_id = old
+
+
+def test_chat_links_scope_expiry_tamper_revoke() -> None:
+    import tempfile
+    import time
+
+    from app import chat_links
+
+    with tempfile.TemporaryDirectory() as raw:
+        os.environ["BOOKER_LOG_DIR"] = raw
+        code = chat_links.issue("threadtokenZ", "c9")
+        assert len(code) == 10
+        assert chat_links.lookup(code) == {"thread": "threadtokenZ", "client_id": "c9"}
+        assert chat_links.lookup(code) is not None  # reusable within the week
+        assert chat_links.lookup(code, now=time.time() + 7 * 86400 + 5) is None  # expired
+        bad = ("A" if code[0] != "A" else "B") + code[1:]
+        assert chat_links.lookup(bad) is None and chat_links.lookup(code + "x") is None
+        assert chat_links.revoke_thread("threadtokenZ") == 1 and chat_links.lookup(code) is None

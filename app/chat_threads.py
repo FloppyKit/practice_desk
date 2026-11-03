@@ -578,6 +578,13 @@ def alert_reply(row: dict[str, Any], item_id: str) -> dict[str, Any]:
         email, phone, texts_ok, how = "", "", False, f"err:{type(e).__name__}"
     out["how"] = how
     link = chat_link(row)
+    cid = str(row.get("client_id") or "")
+    if cid:  # pre-authed 7-day link (Matt t239u); anonymous threads keep the plain thread link
+        from . import chat_links
+
+        base = os.environ.get("PUBLIC_BASE_URL", "https://book.drmattbrown.com").rstrip("/")
+        link = f"{base}/c/{chat_links.issue(row['token'], cid)}"
+        out["preauth"] = True
     from . import notify
 
     if phone and texts_ok:
