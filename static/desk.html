@@ -4466,15 +4466,23 @@
     }
     $("home-q").addEventListener("input", () => {
       clearTimeout(homeTimer);
-      homeTimer = setTimeout(searchHome, 180);
+      homeTimer = setTimeout(searchHome, 120);
     });
     async function searchHome() {
       const q = $("home-q").value.trim();
       const box = $("home-hits");
       if (q.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
-      const res = await deskFetch(clientsUrl(q));
-      const data = await res.json().catch(() => ({}));
-      const rows = data.clients || [];
+      const hit = hitsSeen.get(q);
+      let rows;
+      if (hit && Date.now() - hit.at < 60000) rows = hit.rows;
+      else {
+        const res = await deskFetch(clientsUrl(q));
+        const data = await res.json().catch(() => ({}));
+        rows = data.clients || [];
+        hitsSeen.set(q, { at: Date.now(), rows });
+        if (hitsSeen.size > 100) hitsSeen.delete(hitsSeen.keys().next().value);
+      }
+      if ($("home-q").value.trim() !== q) return;  // typed on; a newer search will paint
       box.hidden = !rows.length;
       box.innerHTML = "";
       rows.forEach((c) => {
@@ -4498,6 +4506,8 @@
     let homeSeq = 0;
     // deskfix12: prefetch the drawer on pointer-down / hover and for today's visits; openHome reuses it.
     const clientPrefetch = new Map();
+    const drawerSeen = new Map();  // last drawer payload per client, this tab only (never persisted)
+    const hitsSeen = new Map();    // search results per query, 60 s
     function clientQuery(ref) {
       const q = new URLSearchParams();
       if (ref.id) q.set("id", ref.id);
@@ -4522,6 +4532,9 @@
       $("home-body").hidden = true;
       setHomeHint("");
       openClientTile();  // open now with the loading state; the fetch fills it in
+      // deskperf2: paint the last copy of this client at once (memory only), then refresh in place.
+      const seen = drawerSeen.get(clientQuery(ref));
+      if (seen) { homeCurrent = seen; renderHome(seen); highlightFocus(); }
       const { res, data } = await prefetchClient(ref);
       clientPrefetch.delete(clientQuery(ref));  // next open after a change gets fresh data
       if (seq !== homeSeq) return;  // a newer click won
@@ -4529,6 +4542,9 @@
         $("home-empty").textContent = data.detail || "Client not found.";
         return;
       }
+      drawerSeen.set(clientQuery(ref), data);
+      if (data.client && data.client.id) drawerSeen.set(clientQuery({ id: data.client.id }), data);
+      if (drawerSeen.size > 60) drawerSeen.delete(drawerSeen.keys().next().value);
       homeCurrent = data;
       const bits = [];
       if (data.client && data.client.id) bits.push("c=" + data.client.id);

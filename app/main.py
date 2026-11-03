@@ -87,6 +87,7 @@ async def _lifespan(_app: FastAPI):
     from . import onboarding
 
     onboarding.start_sweeper(_onboarding_fx)  # new-client holds: reminder / confirm / release
+    _warm_drawer_bg()
     yield
 
 
@@ -2621,12 +2622,32 @@ def _warm_client_window() -> None:
     threading.Thread(target=run, name="client-window-warm", daemon=True).start()
 
 
+def _drawer_window(tz: ZoneInfo) -> tuple[datetime, datetime]:
+    # Day-aligned window: a stable cache key, so every drawer open (and the week board) reuses one CalDAV read.
+    day = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (day - timedelta(days=180)).astimezone(), (day + timedelta(days=91)).astimezone()
+
+
+def _warm_drawer_bg() -> None:
+    """Boot: fetch the drawer window once so the first client open after a restart isn't cold."""
+    import threading
+
+    def run() -> None:
+        try:
+            tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+            a, b = _drawer_window(tz)
+            for cid in _desk_cal_ids():
+                list_events(cid, a, b)
+        except Exception as e:
+            print("drawer_warm_fail", type(e).__name__, flush=True)
+
+    threading.Thread(target=run, name="drawer-warm", daemon=True).start()
+
+
 def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, Any]]:
     now = datetime.now(tz)
     # Day-aligned window: a stable cache key, so every drawer open reuses one CalDAV read.
-    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    tmin = (day - timedelta(days=180)).astimezone()
-    tmax = (day + timedelta(days=91)).astimezone()
+    tmin, tmax = _drawer_window(tz)
     email = (client.get("email") or "").strip().lower()
     name = (client.get("name") or "").strip().lower()
     client_phone = "".join(ch for ch in str(client.get("phone") or "") if ch.isdigit())

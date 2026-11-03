@@ -82,11 +82,78 @@ def reset() -> None:
     _list_cache.clear()
 
 
+_dirty: set[tuple[str, str]] = set()  # wide windows changed since their last fetch
+
+
 def _bump_lists() -> None:
+    """A write or sync happened: drop narrow windows, keep wide ones as stale-but-servable
+    (drawer never goes cold) and refresh them in the background."""
     wide = [k for k in _list_cache if _is_wide(k)]
-    _list_cache.clear()
-    for k in wide:  # re-warm the drawer window so the next click stays fast
+    for k in list(_list_cache):
+        if k not in wide:
+            _list_cache.pop(k, None)
+    for k in wide:
+        ts, data = _list_cache[k]
+        _list_cache[k] = (min(ts, time.monotonic() - _LIST_TTL - 1), data)
+        _dirty.add(k)
         _refresh_bg(k)
+
+
+def _ev_bounds(e: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+    def one(d: dict[str, Any]) -> datetime | None:
+        raw = (d or {}).get("dateTime") or (d or {}).get("date") or ""
+        if not raw:
+            return None
+        try:
+            x = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return x if x.tzinfo else x.replace(tzinfo=time_zone_default())
+    return one(e.get("start") or {}), one(e.get("end") or {}) or one(e.get("start") or {})
+
+
+def time_zone_default():
+    from zoneinfo import ZoneInfo
+
+    return ZoneInfo("America/Chicago")
+
+
+def _from_wide(time_min: datetime, time_max: datetime) -> list[dict[str, Any]] | None:
+    """Serve a narrow window (the week board) from a clean cached wide window: no CalDAV round trip."""
+    now = time.monotonic()
+    for k, (ts, data) in list(_list_cache.items()):
+        if not _is_wide(k) or k in _dirty or now - ts >= _STALE_MAX:
+            continue
+        a, b = (datetime.fromisoformat(x) for x in k)
+        if a <= time_min and time_max <= b:
+            out = []
+            for e in data:
+                s0, s1 = _ev_bounds(e)
+                if s0 and s1 and s1 > time_min and s0 < time_max:
+                    out.append(e)
+                elif s0 and s1 == s0 and time_min <= s0 < time_max:
+                    out.append(e)
+            return out
+    return None
+
+
+_keeper_started = False
+
+
+def _start_keeper() -> None:
+    """Refresh cached wide windows every 4 min so a drawer open after a quiet spell is never cold."""
+    global _keeper_started
+    if _keeper_started:
+        return
+    _keeper_started = True
+
+    def loop() -> None:
+        while True:
+            time.sleep(240)
+            for k in [k for k in list(_list_cache) if _is_wide(k)]:
+                _refresh_bg(k)
+
+    threading.Thread(target=loop, name="caldav-wide-keeper", daemon=True).start()
 
 
 def _is_wide(key: tuple[str, str]) -> bool:
@@ -104,6 +171,9 @@ def _fetch_list(key: tuple[str, str]) -> list[dict[str, Any]]:
     if len(_list_cache) > 40:
         _list_cache.clear()
     _list_cache[key] = (time.monotonic(), out)
+    if _is_wide(key):
+        _dirty.discard(key)
+        _start_keeper()
     return out
 
 
@@ -318,6 +388,10 @@ def list_events(
     hit = _list_cache.get(key)
     if hit and now - hit[0] < _LIST_TTL:
         return list(hit[1])
+    if not _is_wide(key):
+        sub = _from_wide(time_min, time_max)
+        if sub is not None:
+            return sub
     if hit and _is_wide(key) and now - hit[0] < _STALE_MAX:
         _refresh_bg(key)
         return list(hit[1])
