@@ -4347,7 +4347,9 @@ def api_desk_superbill(req: DeskSuperbillRequest, secret: str = Query(default=""
                 "pos": str(item.get("pos") or req.pos or "10")[:8],
                 "service": str(item.get("service") or "")[:80],
                 "code": str(item.get("code") or "")[:16],
-                "modifier": str(item.get("modifier") or "95")[:8],
+                # Fee rows (no-show, letters) carry no CPT, so no telehealth modifier either.
+                "modifier": (str(item.get("modifier") or "") if ik.startswith("fee:")
+                             else str(item.get("modifier") or "95"))[:8],
                 "dx": str(item.get("dx") or "")[:20],
                 "units": str(item.get("units") or "1")[:6],
                 "cost": str(item.get("cost") or "")[:16],

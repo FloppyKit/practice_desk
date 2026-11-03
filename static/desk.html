@@ -1354,7 +1354,7 @@
     <details id="sb-linked-wrap"><summary>Already on a superbill (<span id="sb-linked-n">0</span>)</summary>
       <div class="sb-pick" id="sb-linked" role="group" aria-label="Visits already on a superbill"></div>
     </details>
-    <div class="seg-mini" id="sb-presets" role="group" hidden></div>
+    <div class="seg-mini" id="sb-presets" role="group" style="display:none"></div>
     <label class="field">Date for new lines <input id="sb-dos" type="date" /></label>
     <label class="field">Place of service <input id="sb-pos" value="10" /></label>
     <label class="field">Client address <input id="sb-address" placeholder="Optional — street, city, state, zip" /></label>
@@ -3079,7 +3079,7 @@
         + "<div class='sb-line-top'><input class='sb-cpt' placeholder='99213' /><input class='sb-mod' placeholder='95' /><input class='sb-dxp' placeholder='1,2' /><input class='sb-units' placeholder='1' /><input class='sb-cost' placeholder='220.00' /><input class='sb-paid' placeholder='220.00' /></div>";
       row.querySelector(".sb-svc").value = (line && line.service) || "";
       row.querySelector(".sb-cpt").value = (line && line.code) || "";
-      row.querySelector(".sb-mod").value = (line && line.modifier) || "95";
+      row.querySelector(".sb-mod").value = (line && line.item && line.modifier === "") ? "" : ((line && line.modifier) || "95");
       row.querySelector(".sb-dxp").value = (line && line.dx) || "1";
       row.querySelector(".sb-units").value = (line && line.units) || "1";
       row.querySelector(".sb-cost").value = (line && line.cost) || "";
@@ -3152,11 +3152,11 @@
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) throw new Error(data.detail || String(res.status));
         renderPicks(data);
-        $("sb-presets").hidden = true;
+        $("sb-presets").style.display = "none";
         if (autoKey && sbItems[autoKey] && !$("sb-lines").querySelector(".sb-line")) toggleItem(autoKey);
       } catch (e) {
         un.innerHTML = "<p class='sb-pick-empty'>Could not load visits. Use the fee presets below.</p>";
-        $("sb-presets").hidden = false;
+        $("sb-presets").style.display = "";
       }
     }
     function addFieldRow(f) {
@@ -3275,7 +3275,7 @@
           pos: $("sb-pos").value.trim() || "10",
           service,
           code,
-          modifier: row.querySelector(".sb-mod").value.trim() || "95",
+          modifier: (row.dataset.item || "").startsWith("fee:") ? row.querySelector(".sb-mod").value.trim() : (row.querySelector(".sb-mod").value.trim() || "95"),
           dx: row.querySelector(".sb-dxp").value.trim(),
           units: row.querySelector(".sb-units").value.trim() || "1",
           cost: row.querySelector(".sb-cost").value.trim(),

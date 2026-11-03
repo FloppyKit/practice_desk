@@ -436,6 +436,9 @@ def test_superbill_v2_save_links_readd_and_unique_names() -> None:
         assert {i["key"]: i for i in out["linked"]}["ev:ev-1"]["statements"] == [a["statement"], b["statement"]]
         assert superbills.count("c-unit") == 2
         assert b"Notes" in old_pdf and b"Referral: Self" in old_pdf
+        fee = _v2_post(main, ["fee:fee-ns"], [{"item": "fee:fee-ns", "dos": "2026-09-01", "service": "No-show fee",
+                                                 "code": "", "modifier": "", "cost": "100.00"}])
+        assert b"95" not in drive[fee["path"]].split(b"No-show fee", 1)[1][:200]
         # Bad keys are ignored, not stored.
         c = _v2_post(main, ["../etc", "ev:ok-1"], [dict(ln1, item="ev:ok-1")])
         assert c["linked"] == 1
