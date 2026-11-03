@@ -522,7 +522,7 @@ def _pull_replies(row: dict[str, Any]) -> None:
 
 ALERT_SMS = "Dr. Brown replied to your message. Read it here: {link}"
 ALERT_SUBJECT = "Dr. Brown replied to your message"
-ALERT_EMAIL = "Dr. Brown replied to your message.\n\nRead it here: {link}\n\nYou may be asked to log in.\n"
+ALERT_EMAIL = "Dr. Brown replied to your message.\n\nRead it here: {link}\n"
 
 
 def chat_link(row: dict[str, Any]) -> str:
@@ -603,6 +603,25 @@ def alert_reply(row: dict[str, Any], item_id: str) -> dict[str, Any]:
     except Exception:
         pass
     return out
+
+
+def rotate_token(old: str) -> str:
+    """Kill an old /portal?t=<old> link: move the thread to a new token (index + pre-auth links follow)."""
+    row = _read(old)
+    if not row:
+        raise ValueError("no thread")
+    new = secrets.token_urlsafe(12).replace("-", "").replace("_", "")[:20]
+    row["token"] = new
+    row["rotated_from_at"] = _now()
+    _write(row)
+    cid = str(row.get("spruce_conversation_id") or "")
+    if cid:
+        _remember_conversation(cid, new)
+    from . import chat_links
+
+    chat_links.revoke_thread(old)
+    _path(old).unlink()
+    return new
 
 
 def thread_access(row: dict[str, Any], verify_token: str) -> bool:

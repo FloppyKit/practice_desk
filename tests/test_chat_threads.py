@@ -250,3 +250,19 @@ def test_chat_links_scope_expiry_tamper_revoke() -> None:
         bad = ("A" if code[0] != "A" else "B") + code[1:]
         assert chat_links.lookup(bad) is None and chat_links.lookup(code + "x") is None
         assert chat_links.revoke_thread("threadtokenZ") == 1 and chat_links.lookup(code) is None
+
+
+def test_rotate_token_kills_old_link() -> None:
+    import json
+    import tempfile
+
+    from app import chat_links, chat_threads
+
+    with tempfile.TemporaryDirectory() as raw:
+        os.environ["BOOKER_LOG_DIR"] = raw
+        d = Path(raw) / "chat-threads"; d.mkdir()
+        (d / "oldthreadtok1.json").write_text(json.dumps({"token": "oldthreadtok1", "spruce_conversation_id": "cv1", "messages": []}))
+        code = chat_links.issue("oldthreadtok1", "c1")
+        new = chat_threads.rotate_token("oldthreadtok1")
+        assert chat_threads._read("oldthreadtok1") is None and chat_threads._read(new)["token"] == new
+        assert chat_threads._lookup_conversation("cv1") == new and chat_links.lookup(code) is None
