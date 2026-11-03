@@ -20,6 +20,19 @@ def _secret() -> bytes:
     return raw.encode("utf-8")
 
 
+def _book_secrets() -> list[bytes]:
+    """Current secret first, then an optional previous one so links already sent keep working after a rotation."""
+    keys = [_secret()]
+    prev = os.environ.get("CANCEL_SECRET_PREV_FILE", "/secrets/booker-cancel.prev.secret")
+    try:
+        raw = Path(prev).read_text(encoding="utf-8").strip()
+        if raw:
+            keys.append(raw.encode("utf-8"))
+    except OSError:
+        pass
+    return keys
+
+
 def _b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
@@ -131,4 +144,43 @@ def verify_patient_token(token: str) -> dict[str, Any]:
         raise ValueError("token expired")
     if not payload.get("id"):
         raise ValueError("incomplete token")
+    return payload
+
+
+
+def mint_book_token(*, client_id: str, version: int = 0, slug: str = "follow-up",
+                    duration: int | None = None) -> str:
+    """Client-bound booking link token, no expiry (Matt 2026-11-02). No name/email/phone inside.
+    Revoke = bump the client's book_link_v; tokens carrying an older v stop working."""
+    payload: dict[str, Any] = {"k": "bk", "id": str(client_id), "s": str(slug)[:40], "v": int(version)}
+    if duration:
+        payload["d"] = int(duration)
+    body = _b64(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+    sig = _b64(hmac.new(_secret(), body.encode("ascii"), hashlib.sha256).digest())
+    return f"{body}.{sig}"
+
+
+def verify_book_token(token: str) -> dict[str, Any]:
+    """Signature + shape only. Caller must also check payload['v'] against the client's book_link_v."""
+    # Links get mangled in transit: %-encoding, trailing "." or ")" from a sentence, whitespace, line wraps.
+    import re as _re
+    from urllib.parse import unquote
+    token = _re.sub(r"\s+", "", unquote(str(token or "")))
+    try:
+        body, sig = token.split(".", 1)
+    except ValueError as e:
+        raise ValueError("malformed token") from e
+    body = _re.sub(r"[^A-Za-z0-9_-]", "", body)
+    sig = _re.sub(r"[^A-Za-z0-9_-]", "", sig)[:43]  # HMAC-SHA256 urlsafe b64, no padding = 43 chars
+    ok = False
+    for key in _book_secrets():
+        expect = _b64(hmac.new(key, body.encode("ascii"), hashlib.sha256).digest())
+        if hmac.compare_digest(expect, sig):
+            ok = True
+            break
+    if not ok:
+        raise ValueError("invalid signature")
+    payload = json.loads(_b64d(body))
+    if payload.get("k") != "bk" or not payload.get("id") or not payload.get("s"):
+        raise ValueError("wrong token type")
     return payload

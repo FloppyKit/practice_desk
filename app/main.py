@@ -1,8 +1,10 @@
 from __future__ import annotations
+import re
 
 import hmac
 import json
 import os
+import time
 import threading
 import uuid
 from contextvars import ContextVar
@@ -20,7 +22,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
@@ -57,7 +59,7 @@ from .patients import (
 )
 from .week_people import merge_client_hits, people_from_visits
 from .staff_auth import COOKIE as STAFF_COOKIE, secret_from_request
-from .tokens import mint_cancel_token, verify_cancel_token, verify_patient_token
+from .tokens import mint_cancel_token, mint_verify_token, verify_cancel_token, verify_patient_token
 from . import cipher_mode, cipher_queue, cipher_seal
 
 def _seed_caldav_bg() -> None:
@@ -85,6 +87,7 @@ async def _lifespan(_app: FastAPI):
     from . import onboarding
 
     onboarding.start_sweeper(_onboarding_fx)  # new-client holds: reminder / confirm / release
+    _warm_drawer_bg()
     yield
 
 
@@ -97,6 +100,8 @@ app.add_middleware(
     allow_origins=[
         "https://book.drmattbrown.com",
         "https://live.psycharts.org",
+        "https://live.drmattbrown.com",
+        "https://meet.drmattbrown.com",
         "https://drmattbrown.com",
         "https://drmattbrown.com",
         "https://www.drmattbrown.com",
@@ -184,6 +189,80 @@ def _prefilled_book_url(
     if duration:
         q["duration"] = str(int(duration))
     return f"{PUBLIC_BASE}/{slug}" + (("?" + urlencode(q)) if q else "")
+
+
+def _book_link(client_id: str, *, slug: str = "follow-up", duration: int | None = None) -> dict[str, Any]:
+    """Short client-bound booking link: book.drmattbrown.com/b/<8-char code>. No PHI, no expiry,
+    reused per client until revoked (Matt 2026-11-02: long HMAC links got mangled when relayed).
+    slug/duration kept for callers; the code always opens follow-up."""
+    code = clients_db.book_code_for(str(client_id))
+    return {"url": f"{PUBLIC_BASE}/b/{code}"}
+
+
+_BOOK_FAIL_LOG = Path(os.environ.get("BOOKER_LOG_DIR", "/data/logs")) / "booklink-failures.jsonl"
+_B_HITS: dict[str, list[float]] = {}
+
+
+def _b_rate_ok(ip: str, limit: int = 30, window: float = 60.0) -> bool:
+    now = time.time()
+    hits = [t for t in _B_HITS.get(ip, []) if now - t < window]
+    hits.append(now)
+    _B_HITS[ip] = hits[-limit - 1:]
+    if len(_B_HITS) > 5000:
+        _B_HITS.clear()
+    return len(hits) <= limit
+
+
+def _log_book_fail(token: str, reason: str, where: str) -> None:
+    """No PHI, never the token: length, shape, reason, and which minter's format it looks like."""
+    t = str(token or "")
+    src = ("short-code" if "." not in t and len(t) <= 16 else
+           "long-hmac (booker _book_link, pre-short)" if t.count(".") == 1 else "unknown")
+    try:
+        _BOOK_FAIL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _BOOK_FAIL_LOG.open("a") as f:
+            f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "where": where, "len": len(t),
+                                "parts": [len(x) for x in t.split(".")][:3], "reason": reason,
+                                "source": src}) + "\n")
+    except Exception:
+        pass
+
+
+def _book_token_client(token: str, where: str = "b") -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Short code or legacy long token -> (payload, client row). Failures are logged without the token."""
+    import re as _re
+    from urllib.parse import unquote
+
+    from .tokens import verify_book_token
+
+    raw = _re.sub(r"\s+", "", unquote(str(token or "")))
+    code = _re.sub(r"[^A-Za-z0-9]", "", raw)
+    if "." not in raw.rstrip(".)!,;:'\"") and 6 <= len(code) <= 16:
+        hit = clients_db.book_code_lookup(code[:clients_db.BOOK_CODE_LEN])
+        if not hit:
+            _log_book_fail(raw, "unknown code", where)
+            return None
+        if hit[1]:
+            _log_book_fail(raw, "revoked code", where)
+            return None
+        row = clients_db.get_by_id(hit[0])
+        if not row:
+            _log_book_fail(raw, "unknown client", where)
+            return None
+        return {"k": "bk", "id": hit[0], "s": "follow-up", "v": int(row.get("book_link_v") or 0)}, row
+    try:
+        p = verify_book_token(raw)
+    except Exception as e:
+        _log_book_fail(raw, str(e)[:60] or "decode error", where)
+        return None
+    row = clients_db.get_by_id(str(p["id"]))
+    if not row:
+        _log_book_fail(raw, "unknown client", where)
+        return None
+    if int(p.get("v") or 0) != int(row.get("book_link_v") or 0):
+        _log_book_fail(raw, "bad version (revoked)", where)
+        return None
+    return p, row
 
 
 def _mint_intake_url(email: str, name: str = "", forms: list[str] | None = None, client_id: str = "") -> str:
@@ -523,11 +602,37 @@ def api_verify_patient_code(req: VerifyCodeRequest):
     from .verify_codes import confirm_code
 
     result = confirm_code(email=req.email, phone=req.phone, code=req.code)
-    if result.get("ok"):
+    if result.get("ok") and not result.get("multi"):
         result["level"] = "sensitive"
         # Name only after the code matched (it rides in the signed token).
         result["name"] = str(verify_patient_token(result["verify_token"]).get("n") or "")[:80]
     return result
+
+
+class AccountsRequest(BaseModel):
+    contact_token: str
+
+
+class PickAccountRequest(BaseModel):
+    contact_token: str
+    ref: int
+    old_token: str = ""
+
+
+@app.post("/api/verify-patient/accounts")
+def api_verify_accounts(req: AccountsRequest):
+    """Accounts on a code-verified contact (first name + last initial). Contact token only; no chart."""
+    from .verify_codes import list_contact_accounts
+
+    return list_contact_accounts(req.contact_token)
+
+
+@app.post("/api/verify-patient/pick")
+def api_verify_pick(req: PickAccountRequest):
+    """Open (or switch to) one account on the verified contact. New token scoped to that client; old one revoked."""
+    from .verify_codes import pick_account
+
+    return pick_account(req.contact_token, req.ref, req.old_token)
 
 
 @app.get("/api/types")
@@ -622,7 +727,7 @@ def _send_booking_notices(
     notes: str,
     sms_consent: bool,
     price_label: str = "",
-    location_line: str = "Video visit · https://meet.drmattbrown.com/guest",
+    location_line: str = "Video visit · https://meet.drmattbrown.com",
     extra_notify: list[str] | None = None,
     rebook_url: str = "",
     duration_minutes: int | None = None,
@@ -1059,12 +1164,9 @@ def api_book(req: BookRequest, background_tasks: BackgroundTasks, request: Reque
 
 
 @app.post("/api/reminders/run")
-def api_reminders_run(
-    secret: str = Query(default=""),
-    dry_run: bool = Query(default=False),
-):
-    """Cron entrypoint. Protect with REMIND_CRON_SECRET when set."""
-    if REMIND_SECRET and secret != REMIND_SECRET:
+def api_reminders_run(request: Request, dry_run: bool = Query(default=False)):
+    """Cron entrypoint. x-staff-secret header only (no ?secret=, so it never lands in URLs/logs)."""
+    if not REMIND_SECRET or not hmac.compare_digest(_staff_secret("", request), REMIND_SECRET):
         raise HTTPException(401, "unauthorized")
     return process_reminders(dry_run=dry_run)
 
@@ -1078,6 +1180,7 @@ class ChatThreadPost(BaseModel):
     hear_back: str = ""
     sms_consent: bool = False
     name: str = ""
+    verify_token: str = ""
 
 
 @app.post("/api/public/chat-threads")
@@ -1085,6 +1188,20 @@ def api_chat_thread_post(req: ChatThreadPost):
     from .chat_threads import post_message
 
     name = req.name
+    client_id = ""
+    email, phone = req.email, req.phone
+    if req.verify_token.strip():
+        try:  # logged-in portal chat: tie the thread to the client so the reply alert reaches them
+            payload = verify_patient_token(req.verify_token.strip())
+            from .patients import client_by_id
+
+            crow = client_by_id(str(payload.get("id") or "")) or {}
+            client_id = str(crow.get("id") or "")
+            email = email or str(crow.get("email") or "")
+            phone = phone or str(crow.get("phone") or "")
+            name = name or str(crow.get("preferred_name") or crow.get("name") or "")[:80]
+        except ValueError:
+            pass
     if not (name or "").strip():
         # The site no longer learns the name before a code; label the staff thread here instead.
         from .verify_codes import _lookup
@@ -1098,23 +1215,27 @@ def api_chat_thread_post(req: ChatThreadPost):
             body=req.body,
             token=req.token,
             label=req.label,
-            email=req.email,
-            phone=req.phone,
+            email=email,
+            phone=phone,
             hear_back=req.hear_back,
             sms_consent=req.sms_consent,
             name=name,
+            client_id=client_id,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
 
 @app.get("/api/public/chat-threads")
-def api_chat_thread_get(token: str = Query(default="")):
-    from .chat_threads import get_thread
+def api_chat_thread_get(token: str = Query(default=""), verify_token: str = Query(default="")):
+    from .chat_threads import _read, get_thread, thread_access
 
     if not token:
         raise HTTPException(400, "token required")
     try:
+        raw = _read(token)
+        if raw and not thread_access(raw, verify_token.strip()):
+            return {"ok": True, "token": token, "login_required": True, "messages": []}
         row = get_thread(token)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -2468,6 +2589,18 @@ def api_desk_refills(secret: str = Query(default="")):
     return {"ok": True, "requests": refills.list_requests(), "mdtoolbox": "pending"}
 
 
+@app.post("/api/desk/refills/{rid}/sent")
+def api_desk_refill_sent(rid: str):
+    """Matt marks a refill sent -> one patient text (Spruce). Desk session or staff header only."""
+    _require_staff()
+    from . import refills
+
+    out = refills.mark_sent(rid, actor=_desk_session_email() or "staff")
+    if not out.get("ok") and out.get("error") == "not_found":
+        raise HTTPException(404, "not found")
+    return out
+
+
 @app.get("/api/desk/refills/summary")
 def api_desk_refills_summary(secret: str = Query(default="")):
     """PHI-free counts for bots: by status and age bucket only."""
@@ -2489,14 +2622,42 @@ def _warm_client_window() -> None:
     threading.Thread(target=run, name="client-window-warm", daemon=True).start()
 
 
+def _drawer_window(tz: ZoneInfo) -> tuple[datetime, datetime]:
+    # Day-aligned window: a stable cache key, so every drawer open (and the week board) reuses one CalDAV read.
+    day = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (day - timedelta(days=180)).astimezone(), (day + timedelta(days=91)).astimezone()
+
+
+def _warm_drawer_bg() -> None:
+    """Boot: fetch the drawer window once so the first client open after a restart isn't cold."""
+    import threading
+
+    def run() -> None:
+        try:
+            tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+            a, b = _drawer_window(tz)
+            for cid in _desk_cal_ids():
+                list_events(cid, a, b)
+        except Exception as e:
+            print("drawer_warm_fail", type(e).__name__, flush=True)
+
+    threading.Thread(target=run, name="drawer-warm", daemon=True).start()
+
+
 def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, Any]]:
     now = datetime.now(tz)
     # Day-aligned window: a stable cache key, so every drawer open reuses one CalDAV read.
-    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    tmin = (day - timedelta(days=180)).astimezone()
-    tmax = (day + timedelta(days=91)).astimezone()
+    tmin, tmax = _drawer_window(tz)
     email = (client.get("email") or "").strip().lower()
     name = (client.get("name") or "").strip().lower()
+    client_phone = "".join(ch for ch in str(client.get("phone") or "") if ch.isdigit())
+    # Family members can share an email or phone. Then the contact alone is not this client: the name must match too.
+    from .patients import normalize_phone as _norm_phone
+
+    e164 = _norm_phone(client_phone) if len(client_phone) >= 10 else None
+    shared = (bool(email) and len(clients_db.list_by_email(email)) > 1) or (
+        bool(e164) and len(clients_db.list_by_phone(e164)) > 1
+    )
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for cid in _desk_cal_ids():
@@ -2511,14 +2672,14 @@ def _visits_for_client(client: dict[str, Any], tz: ZoneInfo) -> list[dict[str, A
             ev_email = (fields.get("email") or "").strip().lower()
             ev_name = (fields.get("name") or "").strip().lower()
             summary = str(ev.get("summary") or "").lower()
+            named = bool(name) and (ev_name == name or (len(name) > 4 and name in summary))
             hit = bool(email and ev_email == email)
-            if not hit and name and ev_name == name:
-                hit = True
             ev_phone = "".join(ch for ch in str(fields.get("phone") or "") if ch.isdigit())
-            client_phone = "".join(ch for ch in str(client.get("phone") or "") if ch.isdigit())
             if not hit and len(client_phone) >= 10 and ev_phone[-10:] == client_phone[-10:]:
                 hit = True
-            if not hit and name and len(name) > 4 and name in summary:
+            if shared and not named:
+                hit = False
+            if named:
                 hit = True
             eid = str(fields.get("event_id") or "")
             if not hit or not eid or eid in seen:
@@ -2544,9 +2705,21 @@ def api_desk_client(
     if not row and email:
         row = client_by_email(email)
     if not row and name.strip():
-        hits = search_clients(name.strip(), limit=5)
-        if len(hits) == 1:
-            row = client_by_id(hits[0]["id"])
+        raw_name = name.strip()
+        # Calendar titles carry extras ("Follow-up · Jane Doe (30 min)"): try the bare name too.
+        bare = re.sub(r"\(.*?\)", " ", raw_name.split("·")[-1].split(" - ")[-1]).strip()
+        # deskfix12: titles are "First Last - 30 Min Follow Up", so the name is usually the FIRST segment.
+        from .cal_reminders import _candidates
+
+        for q in dict.fromkeys([raw_name, *_candidates(raw_name), bare]):
+            if row or not q:
+                continue
+            hits = search_clients(q, limit=8)
+            if len(hits) > 1:
+                exact = [h for h in hits if str(h.get("name") or "").strip().lower() == q.lower()]
+                hits = exact if len(exact) == 1 else hits
+            if len(hits) == 1:
+                row = client_by_id(hits[0]["id"])
     if not row:
         # Calendar-only: still show visits for an email/name clicked from the grid
         who = (email or "").strip() or name.strip()
@@ -2638,12 +2811,7 @@ def api_desk_client(
         "links": {
             "pay": pay_url,
             "forms": f"{SITE_PUBLIC}/forms",
-            "book": _prefilled_book_url(
-                "follow-up",
-                name=row.get("name") or "",
-                email=row.get("email") or "",
-                phone=row.get("phone") or "",
-            ),
+            "book": _book_link(str(row["id"]))["url"] if row.get("id") else f"{PUBLIC_BASE}/follow-up",
             "mailto": f"mailto:{row['email']}" if row.get("email") else "",
         },
     }
@@ -2830,12 +2998,7 @@ def api_desk_fees_no_show(req: DeskFeeRequest, secret: str = Query(default="")):
                 "title": "Visit",
                 "start_iso": dos,
                 "duration_minutes": req.duration_minutes or 30,
-                "rebook_url": _prefilled_book_url(
-                    "follow-up",
-                    name=row.get("display_name") or "",
-                    email=row.get("email") or "",
-                    phone=row.get("phone_e164") or "",
-                ),
+                "rebook_url": _book_link(str(row["id"]))["url"],
             },
         )
         mailed = bool(mail.get("ok"))
@@ -3179,6 +3342,131 @@ def api_desk_note_last_avs(client_id: str = Query(default=""), secret: str = Que
     }
 
 
+def _scribe_link_visits(row: dict[str, Any], rs: datetime, re_: datetime) -> tuple[str, list[dict[str, Any]]]:
+    """Candidate calendar visits around a recording. -> (client_id used, visits)."""
+    from .visit_link import parse_ts
+
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    cid = str(row.get("client_id") or "")
+    if not cid and row.get("email"):
+        c = client_by_email(str(row["email"]))
+        cid = str((c or {}).get("id") or "")
+    out: list[dict[str, Any]] = []
+    if cid:
+        c = client_by_id(cid)
+        for v in _refill_visits(dict(c)) if c else []:
+            out.append({"event_id": v.get("event_id"), "client_id": cid,
+                        "start": parse_ts(v.get("start_iso") or ""), "end": parse_ts(v.get("end_iso") or "")})
+        return cid, out
+    for cal_id in _desk_cal_ids():
+        try:
+            evs = list_events(cal_id, (rs - timedelta(hours=12)).astimezone(), (re_ + timedelta(hours=12)).astimezone())
+        except Exception:
+            continue
+        for ev in evs:
+            if ev.get("status") == "cancelled":
+                continue
+            f = _event_mail_fields(ev, cal_id, tz)
+            # Desk visits often carry no email/name in the event body (deskfix9): keep every timed
+            # event; match() links only when exactly one overlaps, else it stays for the picker.
+            if not (f.get("start_iso") and f.get("end_iso")):
+                continue
+            out.append({"event_id": f.get("event_id"), "client_id": "",
+                        "start": parse_ts(f.get("start_iso") or ""), "end": parse_ts(f.get("end_iso") or "")})
+    return "", out
+
+
+def link_scribe_row(row: dict[str, Any]) -> str:
+    from . import scribe_drafts
+    from .visit_link import match, multi_visit, recording_window
+
+    rs, re_ = recording_window(row)
+    if not rs:
+        scribe_drafts.set_link(row["id"], "", "none")
+        return "none"
+    cid, visits = _scribe_link_visits(row, rs, re_)
+    if multi_visit(rs, re_, visits):  # never auto-link a multi-visit recording (PHI cross-contamination)
+        scribe_drafts.set_link(row["id"], "", "multi")
+        return "multi"
+    eid, status = match(rs, re_, cid, visits)
+    scribe_drafts.set_link(row["id"], eid, status)
+    return status
+
+
+def backfill_scribe_links(only_unset: bool = True) -> dict[str, int]:
+    from . import scribe_drafts
+
+    counts = {"linked": 0, "ambiguous": 0, "none": 0, "multi": 0}
+    for r in scribe_drafts.rows_for_link(only_unset):
+        st = link_scribe_row(r)
+        counts[st] = counts.get(st, 0) + 1
+    return counts
+
+
+def _ct_day_bounds(event_start_iso: str) -> tuple[datetime, datetime] | None:
+    from .visit_link import parse_ts
+
+    st = parse_ts(event_start_iso)
+    if not st:
+        return None
+    tz = ZoneInfo(load_config().get("timezone", "America/Chicago"))
+    local = st.astimezone(tz)
+    d0 = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return d0.astimezone(timezone.utc), (d0 + timedelta(days=1)).astimezone(timezone.utc)
+
+
+@app.get("/api/desk/note/carry")
+def api_desk_note_carry(client_id: str = Query(default=""), event_id: str = Query(default=""),
+                        visit_start: str = Query(default=""), secret: str = Query(default="")):
+    """Most recent note (signed first, else imported) mapped for the next draft, plus which transcript
+    'Update from transcript' would use (linked to this visit, else newest within 48 h). Bodies never logged."""
+    _require_staff(secret)
+    from . import note_carry
+
+    cid = client_id.strip()
+    text, source = note_carry.transcript_for(cid, event_id.strip())
+    picks: list[dict[str, Any]] = []
+    if source != "linked":
+        # deskfix9: a note opened outside a visit still offers unlinked (often client-less office) transcripts
+        # from the last 48 h, so the button never goes dead when the scribe saved one without a client.
+        b = _ct_day_bounds(visit_start) if visit_start else None
+        if not b:
+            now = datetime.now(timezone.utc)
+            b = (now - timedelta(hours=48), now + timedelta(minutes=5))
+        picks = note_carry.unlinked_on_day(cid, *b)
+    return {"ok": True, "carry": note_carry.carry(cid), "transcript_available": bool(text),
+            "transcript_source": source, "transcript_choices": picks}
+
+
+class DeskNoteUpdateRequest(BaseModel):
+    client_id: str = ""
+    event_id: str = ""
+    transcript_id: str = ""
+    fields: dict[str, str] = {}
+    transcript: str = ""
+
+
+@app.post("/api/desk/note/update-from-transcript")
+def api_desk_note_update_from_transcript(req: DeskNoteUpdateRequest, secret: str = Query(default="")):
+    """Button click only: revise the draft from the visit transcript (Bedrock, AWS BAA). Never signs."""
+    _require_staff(secret)
+    from . import note_carry
+
+    tr = (req.transcript or "").strip()
+    if not tr:
+        if req.transcript_id.strip() and note_carry.is_multi(req.transcript_id.strip()):
+            raise HTTPException(409, "This transcript covers more than one visit, so it can't update this note "
+                                     "(it could mix patients). Use a transcript from this visit only.")
+        tr, _src = note_carry.transcript_for(req.client_id.strip(), req.event_id.strip(), req.transcript_id.strip())
+    if len(tr) < 20:
+        raise HTTPException(400, "No transcript for this visit")
+    try:
+        changed = note_carry.update_from_transcript(dict(req.fields or {}), tr)
+    except Exception as e:
+        raise HTTPException(502, "Update failed: " + type(e).__name__) from e
+    return {"ok": True, "changed": changed}
+
+
 class AvsShareRequest(BaseModel):
     note_id: str
     send_email: bool = True
@@ -3498,6 +3786,7 @@ class DeskScribeIngestRequest(BaseModel):
     name: str = ""
     room: str = ""
     ended_at: str = ""
+    started_at: str = ""
 
 
 def _scribe_ingest_authorized(request: Request, secret: str = "") -> None:
@@ -3535,9 +3824,22 @@ def api_desk_note_scribe_ingest(
             duration_minutes=req.duration_minutes,
             room=req.room,
             ended_at=req.ended_at,
+            started_at=req.started_at,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+
+    def _link() -> None:
+        try:
+            from . import scribe_drafts
+
+            r = next((x for x in scribe_drafts.rows_for_link(False) if x["id"] == row["id"]), None)
+            if r:
+                link_scribe_row(r)
+        except Exception as e:
+            print("scribe_link_fail", type(e).__name__, flush=True)
+
+    threading.Thread(target=_link, name="scribe-link", daemon=True).start()
     return {"ok": True, "id": row["id"]}
 
 
@@ -3926,15 +4228,19 @@ def api_desk_meta(secret: str = Query(default="")):
         "ok": True,
         "office_url": os.environ.get("LIVEKIT_OFFICE_URL", "").strip(),
         "guest_url": os.environ.get(
-            "LIVEKIT_GUEST_URL", "https://meet.drmattbrown.com/guest"
+            "LIVEKIT_GUEST_URL", "https://meet.drmattbrown.com"
         ).strip(),
         "agent": True,
         "drive": True,
         "practice": True,
         "superbill": True,
-        # Local note-vault key: unchanged material so existing on-device vault data still opens.
+        # On-device note vault: own secret. vault_key_prev (rotation window) lets the browser
+        # re-encrypt data sealed under the previous key, then it is dropped from the env.
         "vault_key": (os.environ.get("DESK_VAULT_SECRET") or REMIND_SECRET),
     }
+    prev = os.environ.get("DESK_VAULT_SECRET_PREV", "").strip()
+    if prev:
+        resp["vault_key_prev"] = prev
     out = Response(
         content=json.dumps(resp),
         media_type="application/json",
@@ -5050,8 +5356,13 @@ def api_desk_agent(
         }
         return send_named_email(kind=kind, to=to, fields=fields)
 
+    def link_fn(args: dict) -> dict:
+        return _desk_book_link(str(args.get("client_id") or ""), send_email=bool(args.get("send_email")),
+                               dry_run=bool(args.get("dry_run")))
+
     try:
-        return run_desk_agent(req.messages, book_fn=book_fn, send_fn=send_fn, mail_fn=mail_fn)
+        return run_desk_agent(req.messages, book_fn=book_fn, send_fn=send_fn, mail_fn=mail_fn,
+                              link_fn=link_fn)
     except Exception as e:
         raise HTTPException(502, str(e)[:200]) from e
 
@@ -5111,6 +5422,13 @@ def api_desk_send(req: DeskSendRequest, secret: str = Query(default="")):
             raise HTTPException(404, "client not found")
         name = name or row["name"]
         email = email or row["email"]
+    if not email and name:
+        # deskfix12: drawer opened from a calendar name without an id -> use the directory record's email.
+        from .cal_reminders import match_client
+
+        hit, _how = match_client(name, name)
+        if hit and hit.get("email"):
+            email = str(hit["email"])
     if not email:
         raise HTTPException(400, "need an email (pick a client or type one)")
 
@@ -5227,7 +5545,7 @@ def desk_page():
         if 'data-demo="' not in html:
             html = html.replace("<html", '<html data-demo="1"', 1)
         html = html.replace(
-            'src="https://live.psycharts.org/static/js/host-office.js?v=12"',
+            'src="https://live.drmattbrown.com/static/js/host-office.js?v=12"',
             'src="" data-stripped-demo-host-office="1"',
         )
     return Response(
@@ -5340,6 +5658,169 @@ def page_intro():
 @app.get("/thanks")
 def page_thanks():
     return _page("thanks.html")
+
+
+_NO_INDEX = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"}
+
+
+@app.get("/b/{token}")
+def page_book_token(token: str, request: Request = None):  # type: ignore[assignment]
+    """Personal booking link. Redirects to the service page with the code in the #fragment;
+    booker.js swaps it for the prefill, then clears the address bar."""
+    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip() or
+          (request.client.host if request.client else "")) if request is not None else ""
+    if ip and not _b_rate_ok(ip):
+        return HTMLResponse("Too many tries. Wait a minute and try again.", status_code=429, headers=_NO_INDEX)
+    hit = _book_token_client(token, "b")
+    if not hit:
+        return HTMLResponse(
+            "<!doctype html><meta name=robots content=noindex><meta name=viewport content='width=device-width'>"
+            "<title>Booking link didn't work</title><body style='font-family:system-ui;max-width:32em;margin:3em auto;"
+            "padding:0 1em;line-height:1.5'><h1 style='font-size:1.3em'>This booking link didn't work</h1>"
+            "<p>It may have been cut off when it was copied, or replaced with a newer one.</p>"
+            f"<p><a href='{PUBLIC_BASE}/follow-up'>Book a follow-up here</a>. You'll type your name, email "
+            "and phone yourself. Or ask the office for a new link.</p></body>",
+            status_code=410, headers=_NO_INDEX)
+    return RedirectResponse(f"/{hit[0]['s']}#bt={token}", status_code=303, headers=_NO_INDEX)
+
+
+_C_PAGE = ("<!doctype html><html lang=en><head><meta charset=utf-8><meta name=robots content='noindex,nofollow'>"
+           "<meta name=referrer content=no-referrer><meta name=viewport content='width=device-width,initial-scale=1'>"
+           "<title>{title}</title></head><body style='font-family:system-ui;max-width:32em;margin:3em auto;padding:0 1em;"
+           "line-height:1.5'><h1 style='font-size:1.3em'>{title}</h1>{body}</body></html>")
+
+
+def _c_expired() -> HTMLResponse:
+    return HTMLResponse(_C_PAGE.format(
+        title="Log in to read your messages",
+        body="<p>This link has expired or was replaced. Your messages are safe.</p>"
+             f"<p><a href='{SITE_PUBLIC}/portal' style='font-size:1.1em'>Log in with a code</a> to read them.</p>"),
+        status_code=410, headers=_NO_INDEX)
+
+
+def _c_ip(request: Request | None) -> str:
+    if request is None:
+        return ""
+    return request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
+
+
+@app.get("/c/{code}")
+def page_chat_link(code: str, request: Request = None):  # type: ignore[assignment]
+    """Chat-reply alert link. GET shows only a button: scanners and crawlers never log in or see content."""
+    from . import chat_links
+
+    ip = _c_ip(request)
+    if ip and not _b_rate_ok("c:" + ip):
+        return HTMLResponse("Too many tries. Wait a minute and try again.", status_code=429, headers=_NO_INDEX)
+    if not chat_links.lookup(code):
+        return _c_expired()
+    return HTMLResponse(_C_PAGE.format(
+        title="Dr. Brown replied to your message",
+        body=f"<form method=post action='/c/{code}'><button type=submit style='font-size:1.1em;padding:.7em 1.4em;"
+             "border-radius:8px;border:0;background:#1f4e79;color:#fff'>Open my messages</button></form>"),
+        headers=_NO_INDEX)
+
+
+@app.post("/c/{code}")
+def page_chat_link_open(code: str, request: Request = None):  # type: ignore[assignment]
+    """Button press: mint the normal portal session (same TTL as a code login) and hand it to the site in the #fragment."""
+    from urllib.parse import quote
+
+    from . import chat_links
+    from .patients import client_by_id
+
+    ip = _c_ip(request)
+    if ip and not _b_rate_ok("c:" + ip):
+        return HTMLResponse("Too many tries. Wait a minute and try again.", status_code=429, headers=_NO_INDEX)
+    hit = chat_links.lookup(code)
+    row = client_by_id(hit["client_id"]) if hit else None
+    if not hit or not row:
+        return _c_expired()
+    name = str(row.get("preferred_name") or row.get("given_name") or row.get("name") or "")[:80]
+    vt = mint_verify_token(client_id=str(row["id"]), name=name, matched="chat_link")
+    frag = f"cv={quote(vt, safe='')}&cn={quote(name, safe='')}&t={quote(hit['thread'], safe='')}"
+    return RedirectResponse(f"{SITE_PUBLIC}/portal#{frag}", status_code=303, headers=_NO_INDEX)
+
+
+class BookPrefillRequest(BaseModel):
+    token: str
+
+
+@app.post("/api/public/book-prefill")
+def api_book_prefill(req: BookPrefillRequest):
+    """Token -> current name/email/phone for the client it is bound to. no-store."""
+    hit = _book_token_client(req.token, "prefill")
+    if not hit:
+        return JSONResponse({"ok": False}, status_code=410, headers=_NO_INDEX)
+    p, row = hit
+    return JSONResponse({"ok": True, "slug": p["s"], "duration": p.get("d"),
+                         "name": row.get("display_name") or "", "email": row.get("email") or "",
+                         "phone": row.get("phone_e164") or ""}, headers=_NO_INDEX)
+
+
+class DeskBookLinkRequest(BaseModel):
+    client_id: str
+    duration: int | None = None
+    send_email: bool = False
+    dry_run: bool = False
+
+
+def _desk_book_link(client_id: str, *, duration: int | None = None, send_email: bool = False,
+                    dry_run: bool = False) -> dict[str, Any]:
+    row = clients_db.get_by_id(str(client_id or "")) if client_id else None
+    if not row:
+        return {"ok": False, "error": "client not found"}
+    link = _book_link(row["id"], duration=duration)
+    out: dict[str, Any] = {"ok": True, "url": link["url"], "email": {"skipped": True}}
+    if send_email:
+        to = str(row.get("email") or "")
+        if not to:
+            out["email"] = {"ok": False, "detail": "no email on file"}
+        elif dry_run:
+            out["email"] = {"ok": True, "dry_run": True, "sent": False}
+        else:
+            from .notify import send_named_email
+
+            r = send_named_email(kind="book_link", to=to, fields={
+                "name": row.get("display_name") or "", "url": link["url"], "title": "a follow-up visit"})
+            out["email"] = {"ok": bool(r.get("ok")), "sent": bool(r.get("ok"))}
+    return out
+
+
+@app.post("/api/desk/book-link")
+def api_desk_book_link(req: DeskBookLinkRequest):
+    """Desk: mint a client's personal booking link (book host /b/<token>); optional email."""
+    _require_staff()
+    return _desk_book_link(req.client_id, duration=req.duration, send_email=req.send_email,
+                           dry_run=req.dry_run)
+
+
+class DeskBookLinkRevoke(BaseModel):
+    client_id: str
+
+
+@app.post("/api/desk/book-link/revoke")
+def api_desk_book_link_revoke(req: DeskBookLinkRevoke):
+    """Kill the client's current booking link (e.g. forwarded) and return the reissued one."""
+    _require_staff()
+    if not clients_db.get_by_id(req.client_id):
+        raise HTTPException(404, "client not found")
+    clients_db.bump_book_link_version(req.client_id)
+    return {"ok": True, "url": _book_link(req.client_id)["url"]}
+
+
+@app.get("/api/desk/sms-optouts")
+def api_desk_sms_optouts(request: Request):
+    """Desk only: clients with texts off. stop = replied STOP in Spruce; unchecked = form box left off."""
+    _require_staff("", request)
+    with clients_db.connect() as con:
+        rows = con.execute("SELECT id, display_name, sms_consent_at, sms_consent_source FROM clients "
+                           "WHERE sms_consent = 0 ORDER BY sms_consent_at DESC").fetchall()
+    out: dict[str, list[dict[str, Any]]] = {"stop": [], "unchecked": []}
+    for r in rows:
+        item = {"id": r[0], "name": r[1] or "", "at": r[2] or "", "source": r[3] or ""}
+        out["stop" if (r[3] or "") == "spruce" else "unchecked"].append(item)
+    return JSONResponse({"ok": True, **out}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/{slug}")

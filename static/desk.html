@@ -155,6 +155,13 @@
     html.desk-layout-notes .desk-layout-switch,
     html.desk-layout-office .desk-layout-switch { display:inline-flex; }
     html.desk-unlocked #banner-unlock { display:none !important; }
+    #nt-carry[hidden], #nt-undo[hidden], #nt-tpick[hidden] { display:none !important; }
+    /* Note window: header (title, close, prefill banner) fixed; only the body scrolls. */
+    #note-pop:not([hidden]) { display:flex; flex-direction:column; overflow:hidden !important; }
+    #note-pop .nt-head { flex:0 0 auto; }
+    #note-pop .nt-head .book-pop-top { position:static; margin-bottom:0.45rem; }
+    #note-pop .nt-scroll { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; margin:0 -0.95rem; padding:0 0.95rem; }
+    #nt-fields .nt-changed { outline:2px solid #d97706; outline-offset:1px; }
     #banner-unlock[hidden], .signin-form [hidden], .mail-split[hidden], #nt-fields label[hidden] { display:none !important; }
     #scribe-draft-banner[hidden] { display:none !important; }
     .desk-more-menu button.is-on { font-weight:600; }
@@ -414,11 +421,48 @@
       .desk-tile-wide { min-width:0; min-height:min(70dvh, 42rem); max-height:none; position:static; overflow:auto; }
       #week-card, #video-card { flex:1 1 auto; }
     }
+    /* Phones, tablets (touch), and short windows: whole page scrolls (body was pinned to 100dvh with overflow hidden). */
+    @media (max-width: 979px), (pointer: coarse), (hover: none), (max-height: 700px) {
+      html, body { height:auto; }
+      body { max-height:none; overflow-y:auto; }
+      html.desk-sheet-open body, html.desk-overlay-open body { overflow:hidden; }
+      .wrap-desk { flex:0 0 auto; overflow:visible; }
+      #week-card { flex:0 0 auto; }
+      #week { overscroll-behavior:contain; }
+    }
     #video-card .host-tile { position:relative; background:#18181b; min-height:0; overflow:hidden; }
     #video-card .host-tile-media, #video-card .host-tile video {
       width:100%; height:100%; object-fit:cover; background:#000; display:block;
     }
     #video-card .host-tile.is-local video { transform:scaleX(-1); }
+    /* Full-screen office (button, or auto on touch landscape with calendar closed): patient large, self-view inset. */
+    html.office-full body { overflow:hidden; }
+    html.office-full #video-card { position:fixed; inset:0; z-index:80; margin:0; border-radius:0; max-height:none !important; height:100dvh !important; width:100vw; display:flex; flex-direction:column; background:#000; padding:0.35rem; }
+    html.office-full #video-card .desk-video-stage, html.office-full #video-card .video-stage, html.office-full #video-card .letterbox { flex:1 1 auto; min-height:0; height:100%; max-height:none; }
+    html.office-full #video-card .host-video-grid { position:relative; display:block; height:100%; width:100%; }
+    html.office-full #video-card .host-tile { aspect-ratio:auto; max-height:none; width:100%; height:100%; }
+    html.office-full #video-card .host-video-grid.has-remote .host-tile.is-remote,
+    html.office-full #video-card .host-video-grid.has-remote .host-tile.is-screen { position:absolute; inset:0; }
+    #video-card .host-video-grid.has-remote .host-tile.is-local:not(.is-screen) { }
+    html.office-full #video-card .host-video-grid.has-remote .host-tile.is-local:not(.is-screen) {
+      position:absolute; right:0.75rem; bottom:0.75rem; width:24%; min-width:9rem; height:auto; aspect-ratio:16/9; z-index:3;
+      border-radius:10px; box-shadow:0 4px 18px rgba(0,0,0,.5); border:1px solid #3f3f46;
+    }
+    html.office-full #video-card .host-tile video, html.office-full #video-card .host-tile-media { width:100%; height:100%; object-fit:contain; }
+    html.office-full #video-card .video-bar { padding:0.2rem 0.3rem; }
+    #video-card #wait-widget { position:absolute; top:0.6rem; right:0.6rem; z-index:6; max-width:17rem; max-height:55%; background:var(--background); color:var(--foreground); border:1px solid var(--border); border-radius:10px; padding:0.5rem 0.6rem; margin:0; box-shadow:0 4px 18px rgba(0,0,0,.35); }
+    #video-card .video-stage { position:relative; }
+    /* Touch/tablet: show the whole frame (no crop), tile sized by the video, not a clipped parent. */
+    @media (max-width: 979px), (pointer: coarse), (hover: none), (max-height: 700px) {
+      #video-card .host-tile { aspect-ratio:16/9; height:auto; max-height:75dvh; }
+      #video-card .host-tile-media, #video-card .host-tile video { height:100%; object-fit:contain; }
+      /* With a patient: patient fills the box, self-view is a small inset. */
+      #video-card .video-stage { aspect-ratio:16/9; height:auto; max-height:80dvh; min-height:12rem; flex:0 0 auto; }
+      #video-card .host-video-grid.has-remote { position:relative; display:block; width:100%; height:100%; }
+      html.office-full #video-card .video-stage { aspect-ratio:auto; max-height:none; height:100%; flex:1 1 auto; }
+      #video-card .host-video-grid.has-remote .host-tile.is-remote, #video-card .host-video-grid.has-remote .host-tile.is-screen { position:absolute; inset:0; aspect-ratio:auto; max-height:none; width:100%; height:100%; }
+      #video-card .host-video-grid.has-remote .host-tile.is-local:not(.is-screen) { position:absolute; right:0.5rem; bottom:0.5rem; width:26%; min-width:6.5rem; height:auto; aspect-ratio:16/9; z-index:3; border-radius:8px; border:1px solid #3f3f46; }
+    }
     #video-card .host-tile-label {
       position:absolute; left:0.5rem; bottom:0.5rem; padding:0.15rem 0.45rem; border-radius:999px;
       font-size:0.72rem; background:rgba(0,0,0,.55); color:#fafafa;
@@ -427,6 +471,16 @@
       position:absolute; right:0.5rem; bottom:0.5rem; padding:0.15rem 0.45rem; border-radius:999px;
       font-size:0.7rem; background:rgba(0,0,0,.6); color:#e4e4e7; font-variant-numeric:tabular-nums;
     }
+    /* deskfix11: call timer + CT clock top-left of the stage (Pa + self-view own the bottom-right) */
+    #video-card .host-tile-timer { display:none !important; }
+    #video-card #office-clock { position:absolute; top:0.6rem; left:0.6rem; z-index:6; padding:0.2rem 0.6rem;
+      border-radius:999px; font-size:0.78rem; background:rgba(0,0,0,.6); color:#f4f4f5;
+      font-variant-numeric:tabular-nums; pointer-events:none; white-space:nowrap; }
+    #video-card #office-clock[hidden] { display:none; }
+    .home-chip.texts-off { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    #optout-panel { padding:0.75rem 1rem; border-top:1px solid var(--border); }
+    #optout-panel ul { margin:0.4rem 0 0; padding-left:1.1rem; }
+    #optout-panel button.linklike { background:none; border:0; padding:0; color:inherit; text-decoration:underline; cursor:pointer; font:inherit; }
     #video-card .stage-empty {
       position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
       color:#71717a; font-size:0.9rem; pointer-events:none;
@@ -662,6 +716,7 @@
     .rf-top { display:flex; justify-content:space-between; gap:0.5rem; align-items:baseline; flex-wrap:wrap; }
     .rf-chip { display:inline-block; border:1px solid var(--border); border-radius:999px; padding:0.05rem 0.5rem; font-size:0.75rem; }
     .rf-row dl { display:grid; grid-template-columns:7.5rem 1fr; gap:0.15rem 0.5rem; margin:0.4rem 0; }
+    .rf-acts { display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap; }
     .rf-row dt { color:var(--muted); } .rf-row dd { margin:0; }
     #note-pop, #superbill-pop, #files-pop {
       width:min(28rem, calc(100vw - 1.25rem));
@@ -814,18 +869,20 @@
             <button type="button" class="host-bar-btn" id="btn-toggle-share">Share screen</button>
             <button type="button" class="host-bar-btn" id="btn-scribe" aria-pressed="true">Notes on</button>
             <button type="button" class="host-bar-btn" id="btn-pop-video" title="Pop out video">Pop out</button>
+            <button type="button" class="host-bar-btn" id="btn-full-video" title="Full screen">Full screen</button>
             <button type="button" class="host-bar-btn" id="btn-leave-call">Leave</button>
           </div>
         </div>
         <div class="video-stage">
           <div class="letterbox">
             <div id="video-grid" class="host-video-grid solo"></div>
-            <div id="stage-empty" class="stage-empty">Starting camera…</div>
+            <div id="stage-empty" class="stage-empty">Video is off. Tap Office to start.</div>
             <div id="office-placeholder" class="office-placeholder" hidden>
               <p>Join from this tablet. Camera stays a later GO.</p>
               <button type="button" class="btn" id="office-join-placeholder">Join office</button>
             </div>
           </div>
+          <div id="office-clock" aria-live="off" hidden></div>
           <div id="stage-err" class="err host-stage-err hidden"></div>
         </div>
       </div>
@@ -855,9 +912,11 @@
         <p style="margin:0">Client messages are in Spruce for now. Website chats and uploads arrive there.</p>
         <span style="display:flex;gap:0.5rem">
           <a class="btn" href="https://app.sprucehealth.com" target="_blank" rel="noopener">Open Spruce</a>
+          <button class="btn secondary" type="button" id="optout-btn">Text opt-outs</button>
           <button class="btn secondary" type="button" id="mail-show-desk" onclick="this.closest('#mail-card').querySelector('.mail-split').hidden=false;this.remove()">Show Desk mail</button>
         </span>
       </div>
+      <div id="optout-panel" hidden></div>
       <div class="mail-split" hidden>
         <div class="mail-list">
           <div class="mail-list-head">
@@ -1159,7 +1218,7 @@
   <div id="refills-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Refills">
     <div class="book-pop-top">
       <div>
-        <div class="book-pop-kicker">Read-only · nothing sends</div>
+        <div class="book-pop-kicker">Texts only when you mark sent</div>
         <p class="book-pop-time">Refills</p>
       </div>
       <button type="button" class="book-pop-close" id="refills-close" aria-label="Close" title="Close">×</button>
@@ -1208,6 +1267,7 @@
   </div>
 
   <div id="note-pop" class="book-pop" hidden role="dialog" aria-modal="true" aria-label="Note">
+    <div class="nt-head">
     <div class="book-pop-top">
       <div>
         <div class="book-pop-kicker">After-visit summary</div>
@@ -1215,6 +1275,12 @@
       </div>
       <button type="button" class="book-pop-close" id="note-close" aria-label="Close">×</button>
     </div>
+    <div id="nt-carry" class="desk-meta" hidden style="display:flex;gap:0.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px solid var(--border);border-radius:0.55rem;padding:0.4rem 0.6rem;margin:0 0 0.4rem">
+      <span id="nt-carry-label"></span>
+      <button class="btn secondary" type="button" id="nt-blank" style="width:auto">Start blank</button>
+    </div>
+    </div>
+    <div class="nt-scroll" id="note-body">
     <input type="hidden" id="nt-event" />
     <label class="field">Template
       <select id="nt-template"></select>
@@ -1245,6 +1311,9 @@
     </label>
     <p class="desk-meta" id="note-status"></p>
     <div class="desk-actions" style="margin-top:0.4rem">
+      <select id="nt-tpick" hidden aria-label="Pick this visit's transcript" title="Unlinked transcripts from this visit's day"></select>
+      <button class="btn secondary" type="button" id="nt-update" disabled title="No transcript for this visit">Update from transcript</button>
+      <button class="btn secondary" type="button" id="nt-undo" hidden>Undo transcript changes</button>
       <button class="btn secondary" type="button" id="nt-draft">Draft from transcript</button>
       <button class="btn" type="button" id="nt-sign">Sign to Visit notes</button>
     </div>
@@ -1254,6 +1323,7 @@
         <button class="btn" type="button" id="nt-avs-send">Send AVS to patient (email + text)</button>
         <button class="btn secondary" type="button" id="nt-avs-revoke">Turn off link</button>
       </div>
+    </div>
     </div>
   </div>
 
@@ -1339,7 +1409,7 @@
         return;
       }
       var s = document.createElement("script");
-      s.src = "https://live.psycharts.org/static/js/host-office.js?v=12";
+      s.src = "https://live.drmattbrown.com/static/js/host-office.js?v=15";
       s.async = true;
       document.head.appendChild(s);
     })();
@@ -1617,8 +1687,8 @@
       return m ? m[1] : "";
     }
     function liveBase() {
-      try { return new URL(officeUrl || "https://live.psycharts.org/r/x").origin; }
-      catch (e) { return "https://live.psycharts.org"; }
+      try { return new URL(officeUrl || "https://live.drmattbrown.com/r/x").origin; }
+      catch (e) { return "https://live.drmattbrown.com"; }
     }
     function clientWanted() {
       if (deskView === "video") return false;
@@ -1673,6 +1743,10 @@
       }
       officeOn = true;
       applyTiles();
+      // Real office on this device (tap = user gesture, so iOS/Android allow the camera). Demo stays a placeholder.
+      let demo = false;
+      try { demo = document.documentElement.getAttribute("data-demo") === "1"; } catch (_) {}
+      if (!demo) startOffice().then(paintOfficePlaceholder).catch(() => {});
     }
     function setLayout(next) {
       if (!window.deskLayout) return;
@@ -1765,6 +1839,67 @@
       if (videoWanted() && !videoFloat) mains += 1;
       return mains >= 2;
     }
+    // Full-screen office + waiting room inside the video card (tablet Office layout has no client panel open).
+    let officeFullUser = null; // null = auto, true/false = user choice this session
+    function officeFullWanted() {
+      if (officeFullUser !== null) return officeFullUser && !!officeLive;
+      const touch = !!(window.deskLayout && deskLayout.isTouch());
+      return touch && !!officeLive && !calendarOn && window.innerWidth > window.innerHeight;
+    }
+    function paintOfficeFull() {
+      const on = officeFullWanted();
+      document.documentElement.classList.toggle("office-full", on);
+      const b = $("btn-full-video");
+      if (b) b.textContent = on ? "Exit full screen" : "Full screen";
+      if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
+    function toggleOfficeFull() {
+      const on = !document.documentElement.classList.contains("office-full");
+      officeFullUser = on;
+      paintOfficeFull();
+      const root = document.documentElement;
+      if (on && root.requestFullscreen && !document.fullscreenElement) root.requestFullscreen().catch(() => {});
+    }
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement && document.documentElement.classList.contains("office-full") && officeFullUser) {
+        officeFullUser = false; paintOfficeFull();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && document.documentElement.classList.contains("office-full")) { officeFullUser = false; paintOfficeFull(); }
+    });
+    window.addEventListener("resize", () => paintOfficeFull());
+    function placeWaitWidget() {
+      const wait = $("wait-widget"), home = $("home-card"), stage = document.querySelector("#video-card .video-stage");
+      if (!wait || !home || !stage) return;
+      const inVideo = !!officeLive && (home.hidden || document.documentElement.classList.contains("office-full"));
+      if (inVideo && wait.parentNode !== stage) stage.appendChild(wait);
+      if (!inVideo && wait.parentNode !== home) home.insertBefore(wait, home.firstChild);
+    }
+    let lastWaitN = 0;
+    function waitChime(n) {
+      if (n > lastWaitN) {
+        try {
+          const ac = new (window.AudioContext || window.webkitAudioContext)();
+          [0, 0.18].forEach((t) => {
+            const o = ac.createOscillator(), g = ac.createGain();
+            o.frequency.value = t ? 1046 : 784; g.gain.value = 0.08;
+            o.connect(g); g.connect(ac.destination); o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.15);
+          });
+          setTimeout(() => ac.close().catch(() => {}), 800);
+        } catch (_) {}
+        try { if (navigator.vibrate) navigator.vibrate(200); } catch (_) {}
+      }
+      lastWaitN = n;
+      const base = document.title.replace(/^\(\d+ waiting\) /, "");
+      document.title = n > 0 ? `(${n} waiting) ${base}` : base;
+    }
+    (function watchWaitCount() {
+      const el = $("wait-count");
+      if (!el || !window.MutationObserver) return;
+      new MutationObserver(() => waitChime(parseInt(el.textContent || "0", 10) || 0)).observe(el, { childList: true, characterData: true, subtree: true });
+    })();
+    if ($("btn-full-video")) $("btn-full-video").onclick = () => toggleOfficeFull();
     function applyTiles() {
       const home = $("home-card");
       const prac = $("practice-pop");
@@ -1828,6 +1963,7 @@
       }
       const wait = $("wait-widget");
       if (wait) wait.hidden = !(officeLive || liveElsewhere);
+      try { placeWaitWidget(); paintOfficeFull(); } catch (_) {}
       document.documentElement.classList.toggle("desk-overlay-open", overlay);
       document.documentElement.classList.toggle("desk-view-video", deskView === "video");
       const scrim = $("home-scrim");
@@ -2477,8 +2613,21 @@
         + "<dt>Next visit</dt><dd>" + esc(r.next_visit_at || "none booked") + "</dd>"
         + "<dt>Asked for</dt><dd>" + esc(r.med_text || "—") + "</dd>"
         + "<dt>Medication</dt><dd>" + pend + "</dd><dt>Controlled</dt><dd>" + pend + "</dd><dt>Pharmacy</dt><dd>" + pend + "</dd></dl>"
-        + "<button class='btn secondary' type='button' disabled title='Coming later; nothing sends'>Draft booking text</button></div>").join("");
+        + "<div class='rf-acts'>" + (r.texted ? "<span class='rf-chip'>Sent · patient texted</span>"
+          : (r.client_id && (r.source === "spruce" || r.source === "chat") ? "<button class='btn' type='button' data-rf-sent='" + esc(r.id) + "'>Mark sent · text patient</button>" : ""))
+        + " <button class='btn secondary' type='button' disabled title='Coming later; nothing sends'>Draft booking text</button></div></div>").join("");
+      box.querySelectorAll("[data-rf-sent]").forEach((b) => { b.onclick = () => markRefillSent(b); });
       fitSheet(pop);
+    }
+    async function markRefillSent(btn) {
+      const row = btn.closest(".rf-row"), who = row ? row.querySelector("strong").textContent : "the patient";
+      if (!confirm("Mark this refill sent and text " + who + " once?")) return;
+      btn.disabled = true; btn.textContent = "Sending…";
+      const res = await deskFetch("/api/desk/refills/" + encodeURIComponent(btn.dataset.rfSent) + "/sent", { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) { btn.outerHTML = "<span class='rf-chip'>" + (d.already ? "Already texted" : "Sent · patient texted") + "</span>"; return; }
+      btn.disabled = false; btn.textContent = "Mark sent · text patient";
+      alert("Not sent: " + String(d.error || d.detail || res.status).replace(/_/g, " "));
     }
     function closeRefills() { $("refills-pop").hidden = true; syncSheetLock(); }
     if ($("refills-close")) $("refills-close").onclick = closeRefills;
@@ -2625,12 +2774,13 @@
         renderNoteFields();
         const c = (homeCurrent && homeCurrent.client) || {};
         applyVaultToNoteFields(c);
-        applyLastAvs(c);
+        applyCarry(c).finally(() => applyLastAvs(c));
         fitSheet($("note-pop"));
       });
       const pop = $("note-pop");
       pop.hidden = false;
       pop.scrollTop = 0;
+      $("note-body").scrollTop = 0;
       syncSheetLock();
       fitSheet(pop);
     }
@@ -3455,6 +3605,20 @@
       return window.innerHeight;
     }
     function sizeWeekTile() {
+      if (window.matchMedia && window.matchMedia("(max-width: 979px), (pointer: coarse), (hover: none), (max-height: 700px)").matches) {
+        // Phone: the page scrolls. Do not pin tiles to the viewport; the calendar keeps its own scroll.
+        ["week-card", "video-card", "mail-card"].forEach((id) => {
+          const el = $(id);
+          if (el) { el.style.height = ""; el.style.maxHeight = ""; }
+        });
+        const wk = $("week");
+        if (wk) {
+          wk.style.height = "";
+          wk.style.maxHeight = Math.max(320, Math.round(viewportHeight() * 0.72)) + "px";
+          wk.style.overflowY = "auto";
+        }
+        return;
+      }
       const wrap = document.querySelector(".wrap-desk");
       const floor = wrap ? (parseFloat(getComputedStyle(wrap).paddingBottom) || 8) : 8;
       const card = $("week-card");
@@ -3607,6 +3771,10 @@
           e.stopPropagation();
           selectVisit(v);
         };
+        ev.addEventListener("pointerdown", () => {
+          const who = visitPerson(v);
+          if (who.isPatient) prefetchClient({ email: who.email, name: who.name, id: v.client_id || "" });
+        }, { passive: true });
         col.appendChild(ev);
       });
 
@@ -3729,6 +3897,11 @@
         .map((el) => el.value);
     }
     function openSendPop() {
+      const hc = (homeCurrent && homeCurrent.client) || {};
+      if (!$("sd-email").value.trim() && hc.email) {
+        $("sd-client").value = hc.id || ""; $("sd-name").value = hc.name || ""; $("sd-email").value = hc.email;
+        $("sd-phone").value = hc.phone || "";
+      }
       closeHomeDrawer();
       if (!$("send-list").children.length) fillSendList();
       const pop = $("send-pop");
@@ -3769,8 +3942,12 @@
     }
     async function deskSend(doEmail) {
       const status = $("send-status");
+      const hc = (homeCurrent && homeCurrent.client) || {};
+      if (!$("sd-email").value.trim() && hc.email && (!$("sd-name").value.trim() || $("sd-name").value.trim() === (hc.name || ""))) {
+        $("sd-email").value = hc.email; if (!$("sd-client").value) $("sd-client").value = hc.id || "";
+      }
       const email = $("sd-email").value.trim();
-      if (!email) { status.textContent = "Need an email."; return; }
+      if (!email && !$("sd-client").value && !$("sd-name").value.trim()) { status.textContent = "Need an email."; return; }
       const items = selectedSendItems();
       if (!items.length) { status.textContent = "Check at least one form."; return; }
       status.textContent = doEmail ? "Sending…" : "Making link…";
@@ -3781,7 +3958,7 @@
           items,
           client_id: $("sd-client").value,
           name: $("sd-name").value.trim(),
-          email,
+          email: email || "",
           notes: $("sd-notes").value.trim(),
           send_email: doEmail,
         }),
@@ -4082,7 +4259,10 @@
     $("nt-draft").onclick = async () => {
       const status = $("note-status");
       const tr = $("nt-transcript") ? $("nt-transcript").value.trim() : "";
-      if (tr.length < 20) { status.textContent = "Paste a bit of transcript first."; return; }
+      if (tr.length < 20) {
+        const m = "Paste a transcript first, or use Update from transcript.";
+        status.textContent = m; msg(m, false); return;
+      }
       status.textContent = "Drafting…";
       const values = collectNoteValues();
       const res = await deskFetch("/api/desk/note/draft", {
@@ -4093,6 +4273,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         status.textContent = "Draft failed: " + (data.detail || res.status);
+        msg(status.textContent, false);
         return;
       }
       const f = data.fields || {};
@@ -4285,15 +4466,23 @@
     }
     $("home-q").addEventListener("input", () => {
       clearTimeout(homeTimer);
-      homeTimer = setTimeout(searchHome, 180);
+      homeTimer = setTimeout(searchHome, 120);
     });
     async function searchHome() {
       const q = $("home-q").value.trim();
       const box = $("home-hits");
       if (q.length < 2) { box.hidden = true; box.innerHTML = ""; return; }
-      const res = await deskFetch(clientsUrl(q));
-      const data = await res.json().catch(() => ({}));
-      const rows = data.clients || [];
+      const hit = hitsSeen.get(q);
+      let rows;
+      if (hit && Date.now() - hit.at < 60000) rows = hit.rows;
+      else {
+        const res = await deskFetch(clientsUrl(q));
+        const data = await res.json().catch(() => ({}));
+        rows = data.clients || [];
+        hitsSeen.set(q, { at: Date.now(), rows });
+        if (hitsSeen.size > 100) hitsSeen.delete(hitsSeen.keys().next().value);
+      }
+      if ($("home-q").value.trim() !== q) return;  // typed on; a newer search will paint
       box.hidden = !rows.length;
       box.innerHTML = "";
       rows.forEach((c) => {
@@ -4308,10 +4497,34 @@
           box.hidden = true;
           openHome({ id: c.id, email: c.email || "", name: c.name || "" });
         };
+        const warm = () => prefetchClient({ id: c.id, email: c.email || "", name: c.name || "" });
+        b.addEventListener("pointerenter", warm, { passive: true });
+        b.addEventListener("pointerdown", warm, { passive: true });
         box.appendChild(b);
       });
     }
     let homeSeq = 0;
+    // deskfix12: prefetch the drawer on pointer-down / hover and for today's visits; openHome reuses it.
+    const clientPrefetch = new Map();
+    const drawerSeen = new Map();  // last drawer payload per client, this tab only (never persisted)
+    const hitsSeen = new Map();    // search results per query, 60 s
+    function clientQuery(ref) {
+      const q = new URLSearchParams();
+      if (ref.id) q.set("id", ref.id);
+      if (ref.email) q.set("email", ref.email);
+      if (ref.name) q.set("name", ref.name);
+      return q.toString();
+    }
+    function prefetchClient(ref) {
+      if (!ref || !(ref.id || ref.email || ref.name)) return null;
+      const k = clientQuery(ref);
+      const hit = clientPrefetch.get(k);
+      if (hit && Date.now() - hit.at < 30000) return hit.p;
+      const p = deskFetch("/api/desk/client?" + k).then(async (res) => ({ res, data: await res.json().catch(() => ({})) }));
+      p.catch(() => clientPrefetch.delete(k));
+      clientPrefetch.set(k, { at: Date.now(), p });
+      return p;
+    }
     async function openHome(ref) {
       const seq = ++homeSeq;
       $("home-empty").textContent = "Loading" + (ref.name ? " " + ref.name : "") + "…";
@@ -4319,17 +4532,19 @@
       $("home-body").hidden = true;
       setHomeHint("");
       openClientTile();  // open now with the loading state; the fetch fills it in
-      const q = new URLSearchParams();
-      if (ref.id) q.set("id", ref.id);
-      if (ref.email) q.set("email", ref.email);
-      if (ref.name) q.set("name", ref.name);
-      const res = await deskFetch("/api/desk/client?" + q.toString());
-      const data = await res.json().catch(() => ({}));
+      // deskperf2: paint the last copy of this client at once (memory only), then refresh in place.
+      const seen = drawerSeen.get(clientQuery(ref));
+      if (seen) { homeCurrent = seen; renderHome(seen); highlightFocus(); }
+      const { res, data } = await prefetchClient(ref);
+      clientPrefetch.delete(clientQuery(ref));  // next open after a change gets fresh data
       if (seq !== homeSeq) return;  // a newer click won
       if (!res.ok || !data.ok) {
         $("home-empty").textContent = data.detail || "Client not found.";
         return;
       }
+      drawerSeen.set(clientQuery(ref), data);
+      if (data.client && data.client.id) drawerSeen.set(clientQuery({ id: data.client.id }), data);
+      if (drawerSeen.size > 60) drawerSeen.delete(drawerSeen.keys().next().value);
       homeCurrent = data;
       const bits = [];
       if (data.client && data.client.id) bits.push("c=" + data.client.id);
@@ -4444,16 +4659,113 @@
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok || !data.note) return;
         avsShareShow(data.note, data.share);
-        if (skipPrefill) return;
-        const pre = data.prefill || {};
-        let n = 0;
-        document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
-          const k = el.dataset.fid;
-          if (!el.value && pre[k]) { el.value = pre[k]; n++; }
-        });
-        if (n) $("note-status").textContent = "Prefilled from the last signed AVS (" + data.note.dos + "). Edit before signing.";
       } catch (e) {}
     }
+    // Carry forward: most recent note (signed, else imported) into empty sections. Never signs.
+    let carried = {};
+    async function applyCarry(c) {
+      const skip = !!window.__noteSkipPrefill;
+      carried = {};
+      $("nt-carry").hidden = true;
+      $("nt-undo").hidden = true;
+      $("nt-update").disabled = true;
+      $("nt-update").title = "No transcript for this visit";
+      if (!c || !c.id) return;
+      const q = new URLSearchParams({ client_id: c.id, event_id: $("nt-event").value || "",
+        visit_start: (noteVisit && noteVisit.start_iso) || "" });
+      const res = await deskFetch("/api/desk/note/carry?" + q.toString());
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) return;
+      noteTranscriptAvail = !!data.transcript_available;
+      noteTranscriptSource = data.transcript_source || "none";
+      const pick = $("nt-tpick");
+      const choices = data.transcript_choices || [];
+      pick.innerHTML = "<option value=''>Pick this visit's transcript…</option>" + choices.map((t) => {
+        const d = new Date(t.end_utc);
+        return "<option value='" + esc(t.id) + "'>Ended " + esc(d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))
+          + (t.minutes ? " · " + t.minutes + " min" : "") + (t.status === "ambiguous" ? " · ambiguous" : "") + "</option>";
+      }).join("");
+      pick.hidden = !choices.length;
+      syncUpdateBtn();
+      const pre = (data.carry && data.carry.fields) || {};
+      if (skip) return;
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        const k = el.dataset.fid;
+        if (k !== "dos" && !el.value && pre[k]) { el.value = pre[k]; carried[k] = pre[k]; }
+      });
+      if (Object.keys(carried).length) {
+        $("nt-carry-label").textContent = "Prefilled from note of " + (data.carry.dos || "last visit") + " — review before signing";
+        $("nt-carry").hidden = false;
+      }
+    }
+    let noteTranscriptAvail = false;
+    let noteTranscriptSource = "none";
+    function syncUpdateBtn() {
+      const pasted = $("nt-transcript") && $("nt-transcript").value.trim().length >= 20;
+      const picked = !!($("nt-tpick") && $("nt-tpick").value);
+      const ok = noteTranscriptAvail || pasted || picked;
+      $("nt-update").disabled = false;  // deskfix9: always clickable; a click with nothing explains why
+      $("nt-update").dataset.has = ok ? "1" : "";
+      $("nt-update").title = pasted ? "Revise this draft from the pasted transcript"
+        : picked ? "Revise this draft from the picked transcript"
+        : noteTranscriptSource === "linked" ? "Revise this draft from this visit's transcript"
+        : noteTranscriptSource === "recent" ? "No transcript linked to this visit; uses the newest from the last 48 hours"
+        : "No transcript for this visit";
+    }
+    if ($("nt-transcript")) $("nt-transcript").addEventListener("input", syncUpdateBtn);
+    if ($("nt-tpick")) $("nt-tpick").addEventListener("change", syncUpdateBtn);
+    $("nt-blank").onclick = () => {
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        if (carried[el.dataset.fid] !== undefined && el.value === carried[el.dataset.fid]) el.value = "";
+      });
+      carried = {};
+      $("nt-carry").hidden = true;
+    };
+    let undoValues = null;
+    $("nt-update").onclick = async () => {
+      const status = $("note-status");
+      const values = collectNoteValues();
+      const c = (homeCurrent && homeCurrent.client) || {};
+      if (!$("nt-update").dataset.has) {
+        const many = $("nt-tpick") && !$("nt-tpick").hidden;
+        const why = many ? "No transcript linked to this visit. Pick one from the list above."
+          : "No transcript for this visit, notes were off.";
+        status.textContent = why; msg(why, false);
+        return;
+      }
+      status.textContent = "Updating from transcript…";
+      $("nt-update").disabled = true;
+      const res = await deskFetch("/api/desk/note/update-from-transcript", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: c.id || "", fields: values, event_id: $("nt-event").value || "",
+          transcript_id: ($("nt-tpick") && $("nt-tpick").value) || "",
+          transcript: $("nt-transcript") ? $("nt-transcript").value.trim() : "" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      syncUpdateBtn();
+      if (!res.ok || !data.ok) { const m = data.detail || "Update failed."; status.textContent = m; msg(m, false); return; }
+      const ch = data.changed || {};
+      undoValues = {};
+      const names = [];
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        const k = el.dataset.fid;
+        el.classList.remove("nt-changed");
+        if (ch[k] !== undefined) {
+          undoValues[k] = el.value; el.value = ch[k]; el.classList.add("nt-changed");
+          el.addEventListener("input", () => el.classList.remove("nt-changed"), { once: true });
+          names.push((el.closest("label") || {}).firstChild ? el.closest("label").firstChild.textContent.trim() : k);
+        }
+      });
+      $("nt-undo").hidden = !names.length;
+      status.textContent = names.length ? "Updated (highlighted): " + names.join(", ") + ". Review, then Sign." : "Transcript didn't change anything.";
+    };
+    $("nt-undo").onclick = () => {
+      if (!undoValues) return;
+      document.querySelectorAll("#nt-fields [data-fid]").forEach((el) => {
+        if (undoValues[el.dataset.fid] !== undefined) { el.value = undoValues[el.dataset.fid]; el.classList.remove("nt-changed"); }
+      });
+      undoValues = null; $("nt-undo").hidden = true; $("note-status").textContent = "Transcript changes undone.";
+    };
     $("nt-avs-send").onclick = async () => {
       if (!avsNoteId) return;
       const c = (homeCurrent && homeCurrent.client) || {};
@@ -4564,6 +4876,7 @@
           <p class="home-kv">${esc(bits.join(" · "))}</p>
           <div class="home-chips">
             <span class="home-chip${cardOk ? " ok" : ""}">${esc(cardLabel)}</span>
+            ${(c.sms_consent === 0 || c.sms_consent === "0") && c.sms_consent_source === "spruce" ? '<span class="home-chip texts-off" title="Replied STOP in Spruce">Texts off (replied STOP)</span>' : ""}
             ${intakeChips(data.intake)}
             ${window.DeskBooks ? DeskBooks.chip(data.books) : ""}
           </div>
@@ -4577,6 +4890,7 @@
           <button class="btn secondary" type="button" id="hm-book">Book next</button>
           <a class="btn secondary" id="hm-mail" ${mail ? "href='" + esc(mail) + "'" : "hidden"}>Email</a>
           <button class="btn secondary" type="button" id="hm-pay">Copy pay link</button>
+          <button class="btn secondary" type="button" id="hm-booklink">Copy booking link</button>
           <button class="btn secondary" type="button" id="hm-files">Files</button>
           ${layoutMode === "office" ? "" : '<button class="btn secondary" type="button" id="hm-note">Note</button>'}
           <button class="btn secondary" type="button" id="hm-superbill">Superbill</button>
@@ -4691,6 +5005,16 @@
         try { await navigator.clipboard.writeText(links.pay); } catch (e) {}
         msg("Pay link copied.", true);
       };
+      if ($("hm-booklink") && !c.id) $("hm-booklink").onclick = () =>
+        msg("This name isn't linked to a client in the directory yet. Open them from client search, then Copy booking link.", false);
+      if ($("hm-booklink") && c.id) $("hm-booklink").onclick = async () => {
+        const res = await deskFetch("/api/desk/book-link", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_id: c.id }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok || !d.ok || !d.url) { msg("Could not make a booking link.", false); return; }
+        try { await navigator.clipboard.writeText(d.url); } catch (e) {}
+        msg("Booking link copied (prefilled, no expiry).", true);
+      };
       if ($("hm-join")) $("hm-join").onclick = () => joinOfficePlaceholder();
       if ($("hm-note")) $("hm-note").onclick = () => openNotePop("");
       $("hm-superbill").onclick = () => openSuperbill();
@@ -4770,7 +5094,7 @@
       startScribeDraftPoll();
       officeUrl = meta.office_url || officeUrl;
       if (window.PsychartsVault) {
-        if (meta.vault_key) PsychartsVault.unlock(meta.vault_key).catch(() => {});
+        if (meta.vault_key) PsychartsVault.unlock(meta.vault_key, meta.vault_key_prev).catch(() => {});
       }
       cipherStatusRefresh();
       if (!window.__cipherPoll) window.__cipherPoll = setInterval(cipherStatusRefresh, 60000);
@@ -4794,7 +5118,9 @@
         openHome({ id: hash.get("c") || "", email: hash.get("e") || "", name: hash.get("n") || "" });
       }
       if (deskView === "video" || deskView === "visit") {
-        if (!officeUsesPlaceholder()) startOffice().catch(() => {});
+        // Phones and tablets: ask for the camera only after a tap (iOS blocks or errors otherwise).
+        const touch = !!(window.deskLayout && deskLayout.isTouch());
+        if (!officeUsesPlaceholder() && !touch) startOffice().catch(() => {});
       }
       paintOfficePlaceholder();
     }
@@ -4946,5 +5272,45 @@
   <script src="/static/js/pa-router.js?v=2"></script>
   <script src="/static/js/staff-agent.js?v=6"></script>
   <script src="/static/js/proton-drive.js?v=10"></script>
+<script>
+/* deskfix11: office clock (In call + CT time) and Text opt-outs list */
+(function () {
+  var fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
+  var ct = "", ctAt = 0;
+  function tick() {
+    var el = document.getElementById("office-clock");
+    if (!el) return;
+    var now = Date.now();
+    if (!ct || now - ctAt > 15000) { ct = fmt.format(new Date(now)) + " CT"; ctAt = now; }
+    var t = document.querySelector("#video-grid .host-tile.is-remote:not(.is-screen) .host-tile-timer:not(.hidden)");
+    var call = t && /\d/.test(t.textContent) ? t.textContent.trim() : "";
+    var live = document.querySelector("#video-grid .host-tile");
+    el.textContent = call ? call + " \u00b7 " + ct : ct;
+    el.hidden = !live;
+  }
+  setInterval(tick, 1000); tick();
+
+  function esc(x) { return String(x || "").replace(/[&<>"']/g, function (m) { return "&#" + m.charCodeAt(0) + ";"; }); }
+  document.addEventListener("click", async function (ev) {
+    var b = ev.target.closest && ev.target.closest("#optout-btn");
+    var o = ev.target.closest && ev.target.closest("#optout-panel [data-cid]");
+    if (o && typeof openHome === "function") { openHome({ id: o.getAttribute("data-cid"), name: o.textContent }); return; }
+    if (!b) return;
+    var p = document.getElementById("optout-panel");
+    if (!p.hidden) { p.hidden = true; return; }
+    p.hidden = false; p.innerHTML = "<p class='desk-meta'>Loading…</p>";
+    try {
+      var f = typeof deskFetch === "function" ? deskFetch : fetch;
+      var r = await f("/api/desk/sms-optouts"); var d = await r.json();
+      var li = function (x) { return "<li><button type='button' class='linklike' data-cid='" + esc(x.id) + "'>" + esc(x.name || "Client") +
+        "</button> <span class='desk-meta'>" + esc((x.at || "").slice(0, 10)) + (x.source ? " · " + esc(x.source) : "") + "</span></li>"; };
+      p.innerHTML = "<strong>Replied STOP (texts off)</strong> <span class='desk-meta'>" + d.stop.length + "</span>" +
+        (d.stop.length ? "<ul>" + d.stop.map(li).join("") + "</ul>" : "<p class='desk-meta'>No one has replied STOP.</p>") +
+        "<p style='margin-top:0.6rem'><strong>Left the text box unchecked on a form</strong> <span class='desk-meta'>" + d.unchecked.length +
+        " · not a STOP; reminders still text them</span></p>" + (d.unchecked.length ? "<ul>" + d.unchecked.map(li).join("") + "</ul>" : "");
+    } catch (e) { p.innerHTML = "<p class='desk-meta'>Could not load opt-outs.</p>"; }
+  });
+})();
+</script>
 </body>
 </html>

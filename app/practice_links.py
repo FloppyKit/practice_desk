@@ -1,7 +1,7 @@
 """Practice link bases: one place for the drmattbrown.com bases.
 
 PRACTICE_SITE_URL   public site (default https://drmattbrown.com)
-PRACTICE_VIDEO_URL  video waiting room (default https://meet.drmattbrown.com/guest)
+PRACTICE_VIDEO_URL  video waiting room (default https://meet.drmattbrown.com)
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def site_url() -> str:
 
 
 def video_url() -> str:
-    return (os.environ.get("PRACTICE_VIDEO_URL") or "https://meet.drmattbrown.com/guest").strip().rstrip("/")
+    return (os.environ.get("PRACTICE_VIDEO_URL") or "https://meet.drmattbrown.com").strip().rstrip("/")
 
 
 def link_map() -> list[tuple[str, str]]:

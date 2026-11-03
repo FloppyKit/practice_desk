@@ -15,7 +15,8 @@ FOLDER_HOSTS = {"go.psycharts.org", "go.drmattbrown.com", "drive.proton.me"}
 def folder_url(short: str = "", long: str = "") -> str:
     """Share a link that opens. Prefer the Drive URL.
 
-    The go.psycharts.org shorts are not loaded in Shlink, so they 404.
+    The go.psycharts.org shorts are not loaded in Shlink, so they 404 (re-checked 2026-11-02: Shlink holds 0 short URLs;
+    go.psycharts.org now 301s to go.drmattbrown.com, the Shlink default domain).
     Never invent a path. Only known hosts.
     """
     for raw in (long, short):
@@ -104,6 +105,8 @@ def _staff_view(row: dict[str, Any]) -> dict[str, Any]:
         "family_name": row.get("family_name") or "",
         "email": row.get("email") or "",
         "phone": row.get("phone_e164") or "",
+        "sms_consent": row.get("sms_consent"),
+        "sms_consent_source": row.get("sms_consent_source") or "",
         "dob": row.get("dob") or "",
         "status": row.get("status") or "",
         "card_on_file": bool(row.get("card_on_file")),

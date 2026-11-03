@@ -35,6 +35,11 @@ def _connect() -> sqlite3.Connection:
         "email TEXT, matched TEXT, created INTEGER, last_used INTEGER, expires INTEGER, revoked INTEGER DEFAULT 0)"
     )
     con.execute("CREATE INDEX IF NOT EXISTS sessions_client ON sessions(client_id)")
+    # A code-verified email/phone that maps to 2+ clients. Lets the browser pick or switch accounts, never read data.
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS contacts (hash TEXT PRIMARY KEY, channel TEXT NOT NULL, destination TEXT NOT NULL, "
+        "created INTEGER, last_used INTEGER, expires INTEGER, revoked INTEGER DEFAULT 0)"
+    )
     return con
 
 
@@ -72,6 +77,39 @@ def check(token: str) -> dict[str, Any]:
             con.execute("UPDATE sessions SET last_used=?, expires=? WHERE hash=?", (now, expires, row["hash"]))
     return {"k": "pv", "id": row["client_id"], "m": row["email"] or "", "n": row["name"] or "",
             "h": row["matched"] or "", "x": expires, "s": "portal"}
+
+
+CONTACT_PREFIX = "pc1."
+
+
+def mint_contact(*, channel: str, destination: str) -> str:
+    token = CONTACT_PREFIX + secrets.token_urlsafe(32)
+    now = int(time.time())
+    with _connect() as con:
+        con.execute(
+            "INSERT INTO contacts (hash, channel, destination, created, last_used, expires) VALUES (?,?,?,?,?,?)",
+            (_hash(token), channel, destination, now, now, now + TTL_SECONDS),
+        )
+    return token
+
+
+def check_contact(token: str) -> tuple[str, str]:
+    """(channel, destination) for a live contact token. Raises ValueError otherwise. Same rolling lifetime as sessions."""
+    if not (token or "").startswith(CONTACT_PREFIX):
+        raise ValueError("invalid token")
+    now = int(time.time())
+    with _connect() as con:
+        row = con.execute("SELECT * FROM contacts WHERE hash=?", (_hash(token),)).fetchone()
+        if not row or row["revoked"] or int(row["expires"] or 0) < now:
+            raise ValueError("invalid token")
+        if now - int(row["last_used"] or 0) >= TOUCH_EVERY:
+            con.execute("UPDATE contacts SET last_used=?, expires=? WHERE hash=?", (now, now + TTL_SECONDS, row["hash"]))
+    return row["channel"], row["destination"]
+
+
+def revoke_contact(token: str) -> int:
+    with _connect() as con:
+        return con.execute("UPDATE contacts SET revoked=1 WHERE hash=?", (_hash(token),)).rowcount
 
 
 def revoke(token: str) -> int:

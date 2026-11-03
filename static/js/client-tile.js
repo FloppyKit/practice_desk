@@ -360,6 +360,7 @@
       (mail ? "href='" + esc(mail) + "'" : "hidden") +
       ">Email</a>" +
       '<button class="btn secondary" type="button" id="hm-pay">Copy pay link</button>' +
+      (c.id ? '<button class="btn secondary" type="button" id="hm-booklink">Copy booking link</button>' : "") +
       '<button class="btn secondary" type="button" id="hm-files">Files</button>' +
       '<button class="btn secondary" type="button" id="hm-note">Note</button>' +
       '<button class="btn secondary" type="button" id="hm-superbill">Superbill</button>' +
@@ -486,6 +487,18 @@
         await navigator.clipboard.writeText(links.pay);
       } catch (e) {}
       setHomeHint("Pay link copied.");
+    };
+    if ($("hm-booklink", body)) $("hm-booklink", body).onclick = function () {
+      apiFetch(apiBase() + "/api/desk/book-link", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: c.id }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d || !d.ok || !d.url) throw new Error("no link");
+          return navigator.clipboard.writeText(d.url).catch(function () {}).then(function () {
+            setHomeHint("Booking link copied (book.drmattbrown.com, prefilled, no expiry).");
+          });
+        })
+        .catch(function () { setHomeHint("Could not make a booking link."); });
     };
     $("hm-note", body).onclick = function () {
       openDesk("note=1");

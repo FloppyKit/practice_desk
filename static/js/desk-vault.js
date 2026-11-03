@@ -14,6 +14,8 @@
 
   var _db = null;
   var _key = null;
+  var _prevKey = null;
+  var STORES = ["notes", "listings", "clients", "visits"];
 
   function openDb() {
     if (_db) return Promise.resolve(_db);
@@ -214,6 +216,76 @@
     };
   }
 
+  // ---- key rotation: re-seal every row from the previous secret to the new one.
+  // Crash-safe and repeatable: the new salt is saved first (meta.kdf_next), rows already
+  // under the new key are left alone, and meta.kdf switches only after every row is done.
+  function rekeyPack(pack, oldKey, newKey) {
+    return decryptJson(oldKey, pack).then(
+      function (obj) {
+        return encryptJson(newKey, obj);
+      },
+      function () {
+        return null; // already new (resumed run) or unreadable: leave as is
+      }
+    );
+  }
+
+  function rekeyRow(row, oldKey, newKey) {
+    if (row && row.iv && row.ct) return rekeyPack(row, oldKey, newKey);
+    if (row && row.pack && row.pack.ct) {
+      return rekeyPack(row.pack, oldKey, newKey).then(function (p) {
+        return p ? Object.assign({}, row, { pack: p }) : null;
+      });
+    }
+    return Promise.resolve(null); // alias rows carry no ciphertext
+  }
+
+  function rekeyAll(oldKey, oldSalt, secret) {
+    return idbGet("meta", "kdf_next").then(function (nx) {
+      var salt = nx && nx.salt ? new Uint8Array(b64ToBuf(nx.salt)) : randomBytes(16);
+      var saved = nx && nx.salt ? Promise.resolve() : idbPut("meta", "kdf_next", { salt: bufToB64(salt.buffer) });
+      return saved
+        .then(function () {
+          return deriveKey(secret, salt);
+        })
+        .then(function (newKey) {
+          var chain = Promise.resolve();
+          STORES.forEach(function (sname) {
+            chain = chain.then(function () {
+              return idbKeys(sname).then(function (keys) {
+                return (keys || []).reduce(function (p, k) {
+                  return p.then(function () {
+                    return idbGet(sname, k).then(function (row) {
+                      return rekeyRow(row, oldKey, newKey).then(function (out) {
+                        if (out) return idbPut(sname, k, out);
+                      });
+                    });
+                  });
+                }, Promise.resolve());
+              });
+            });
+          });
+          return chain
+            .then(function () {
+              return encryptJson(newKey, { ok: 1, v: 1 });
+            })
+            .then(function (ver) {
+              return idbPut("meta", "kdf", { salt: bufToB64(salt.buffer), iter: ITER, ver: ver });
+            })
+            .then(function () {
+              return idbPut("meta", "kdf_prev", { salt: oldSalt });
+            })
+            .then(function () {
+              return idbDel("meta", "kdf_next");
+            })
+            .then(function () {
+              _key = newKey;
+              _prevKey = oldKey;
+            });
+        });
+    });
+  }
+
   var vault = {
     ready: function () {
       return !!_key;
@@ -221,7 +293,7 @@
     lock: function () {
       _key = null;
     },
-    unlock: function (secret) {
+    unlock: function (secret, prev) {
       secret = String(secret || "").trim();
       if (!secret || !global.crypto || !crypto.subtle) {
         return Promise.reject(new Error("vault unavailable"));
@@ -246,11 +318,30 @@
             });
           }
           var salt = new Uint8Array(b64ToBuf(meta.salt));
+          prev = String(prev || "").trim();
           return deriveKey(secret, salt).then(function (key) {
-            return decryptJson(key, meta.ver).then(function () {
-              _key = key;
-              vault.pruneListings();
-            });
+            return decryptJson(key, meta.ver).then(
+              function () {
+                _key = key;
+                if (prev && prev !== secret) {
+                  // Keep the old key in RAM for importing snapshots sealed before the rotation.
+                  idbGet("meta", "kdf_prev").then(function (kp) {
+                    if (kp && kp.salt) return deriveKey(prev, new Uint8Array(b64ToBuf(kp.salt))).then(function (k) { _prevKey = k; });
+                  }).catch(function () {});
+                }
+                vault.pruneListings();
+              },
+              function (err) {
+                if (!prev || prev === secret) throw err;
+                return deriveKey(prev, salt).then(function (oldKey) {
+                  return decryptJson(oldKey, meta.ver).then(function () {
+                    return rekeyAll(oldKey, meta.salt, secret);
+                  });
+                }).then(function () {
+                  vault.pruneListings();
+                });
+              }
+            );
           });
         });
     },
@@ -545,7 +636,12 @@
       if (!snap || snap.wrap !== "vault" || !snap.pack) {
         return Promise.reject(new Error("not a vault snapshot"));
       }
-      return decryptJson(_key, snap.pack).then(function (dump) {
+      var oldKey = null;
+      return decryptJson(_key, snap.pack).catch(function (err) {
+        if (!_prevKey) throw err;
+        oldKey = _prevKey; // snapshot sealed before the key rotation
+        return decryptJson(_prevKey, snap.pack);
+      }).then(function (dump) {
         var stores = (dump && dump.stores) || {};
         var rows = 0;
         var chain = Promise.resolve();
@@ -553,7 +649,9 @@
           var bag = stores[sname] || {};
           Object.keys(bag).forEach(function (k) {
             chain = chain.then(function () {
-              return idbPut(sname, k, bag[k]).then(function () {
+              var row = oldKey ? rekeyRow(bag[k], oldKey, _key).then(function (r) { return r || bag[k]; })
+                : Promise.resolve(bag[k]);
+              return row.then(function (r) { return idbPut(sname, k, r); }).then(function () {
                 rows += 1;
               });
             });

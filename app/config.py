@@ -16,9 +16,20 @@ SA_PATH = Path(
 DEFAULT_CALENDAR = os.environ.get("GOOGLE_CALENDAR_ID", "")
 
 
+_CFG_CACHE: dict[str, Any] = {"key": None, "data": None}
+
+
 def load_config() -> dict[str, Any]:
-    with CONFIG_PATH.open() as f:
-        data = yaml.safe_load(f) or {}
+    # deskfix12: YAML parse was ~45 ms and runs 3x per drawer open; cache it by file mtime/size.
+    import copy
+
+    st = CONFIG_PATH.stat()
+    key = (st.st_mtime_ns, st.st_size)
+    if _CFG_CACHE["key"] != key:
+        with CONFIG_PATH.open() as f:
+            _CFG_CACHE["data"] = yaml.safe_load(f) or {}
+        _CFG_CACHE["key"] = key
+    data = copy.deepcopy(_CFG_CACHE["data"])
     data.setdefault("timezone", "America/Chicago")
     data.setdefault("busy_calendars", [DEFAULT_CALENDAR] if DEFAULT_CALENDAR else [])
     data.setdefault("event_types", {})

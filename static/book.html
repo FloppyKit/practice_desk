@@ -16,7 +16,6 @@
   <main class="wrap wrap-book">
     <div class="brand brand-split">
       <div class="brand-side">
-        <a class="back" href="https://drmattbrown.com/contact">← All booking options</a>
         <a class="brand-logo-link" href="/" aria-label="Book home">
           <img class="brand-logo" src="/api/practice/logo" width="120" height="110" alt="Practice logo" />
         </a>
@@ -26,7 +25,7 @@
 <h1 id="book-title">Book a visit</h1>
       <p class="brand-lead" id="book-lead">Choose a length, then a day and time.</p>
       <div class="fee-chart" aria-label="Visit fees" id="book-fees"></div>
-      <p class="loc-line"><strong>Location:</strong> Video visit · <a href="https://meet.drmattbrown.com/guest">meet.drmattbrown.com/guest</a></p>
+      <p class="loc-line"><strong>Location:</strong> Video visit · <a href="https://meet.drmattbrown.com">meet.drmattbrown.com</a></p>
       </div>
     </div>
 
@@ -176,7 +175,7 @@
   <script src="/static/js/cipher-envelope.js?v=1"></script>
   <script src="/static/js/cipher-booker.js?v=1"></script>
   <script type="module">
-    import { initBooker } from "/static/js/booker.js?v=len1";
+    import { initBooker } from "/static/js/booker.js?v=len2";
     const slug = location.pathname.replace(/^\/+|\/+$/g, "") || "";
     const types = await fetch("/api/types").then((r) => r.json()).catch(() => ({ types: [] }));
     const t = (types.types || []).find((x) => x.slug === slug);

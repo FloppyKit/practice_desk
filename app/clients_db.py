@@ -112,7 +112,7 @@ def _init(con: sqlite3.Connection) -> None:
     if "standing_dx" not in cols:
         # Standing ICD-10 codes (JSON list) that default the Bill visit sheet.
         con.execute("ALTER TABLE clients ADD COLUMN standing_dx TEXT")
-    for col, typ in (("sms_consent", "INTEGER"), ("sms_consent_at", "TEXT"), ("sms_consent_source", "TEXT")):
+    for col, typ in (("book_link_v", "INTEGER"), ("sms_consent", "INTEGER"), ("sms_consent_at", "TEXT"), ("sms_consent_source", "TEXT")):
         if col not in cols:
             # Text consent on file: NULL unknown, 1 yes, 0 no (when and where it was given).
             con.execute(f"ALTER TABLE clients ADD COLUMN {col} {typ}")
@@ -120,6 +120,11 @@ def _init(con: sqlite3.Connection) -> None:
         if col not in cols:
             # Per-client intake link (+ when minted); card_shared_from = family member whose card we use.
             con.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS book_codes (code TEXT PRIMARY KEY, client_id TEXT NOT NULL, "
+        "created_at TEXT, revoked_at TEXT)"
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_book_codes_client ON book_codes(client_id)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_email ON clients(email)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone_e164)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_clients_name ON clients(display_name)")
@@ -246,6 +251,14 @@ def set_intake_link(client_id: str, url: str) -> None:
         con.commit()
 
 
+def list_by_phone(e164: str) -> list[dict[str, Any]]:
+    if not e164:
+        return []
+    with connect() as con:
+        rows = con.execute("SELECT * FROM clients WHERE phone_e164 = ? ORDER BY created_at", (e164,)).fetchall()
+    return [r for r in (_row(x) for x in rows) if r]
+
+
 def list_by_email(email: str) -> list[dict[str, Any]]:
     em = (email or "").strip().lower()
     if not em:
@@ -332,3 +345,46 @@ def count() -> int:
     with connect() as con:
         row = con.execute("SELECT COUNT(*) AS n FROM clients").fetchone()
     return int(row["n"] if row else 0)
+
+
+BOOK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"  # base62 minus look-alikes (0O1Il)
+BOOK_CODE_LEN = 8
+
+
+def book_code_for(client_id: str) -> str:
+    """Short booking-link code for a client: reused until revoked, never expires."""
+    import secrets as _s
+
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as con:
+        r = con.execute("SELECT code FROM book_codes WHERE client_id = ? AND revoked_at IS NULL "
+                        "ORDER BY created_at LIMIT 1", (client_id,)).fetchone()
+        if r:
+            return str(r[0])
+        for _ in range(10):
+            code = "".join(_s.choice(BOOK_CODE_ALPHABET) for _ in range(BOOK_CODE_LEN))
+            try:
+                con.execute("INSERT INTO book_codes (code, client_id, created_at) VALUES (?, ?, ?)",
+                            (code, client_id, now))
+                con.commit()
+                return code
+            except sqlite3.IntegrityError:
+                continue
+    raise RuntimeError("could not allocate booking code")
+
+
+def book_code_lookup(code: str) -> tuple[str, bool] | None:
+    """code -> (client_id, revoked) or None if unknown."""
+    with connect() as con:
+        r = con.execute("SELECT client_id, revoked_at FROM book_codes WHERE code = ?", (code,)).fetchone()
+    return (str(r[0]), r[1] is not None) if r else None
+
+
+def bump_book_link_version(client_id: str) -> int:
+    """Revoke the client's current booking link (old long tokens and the short code); next mint is new."""
+    with connect() as con:
+        con.execute("UPDATE book_codes SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL",
+                    (datetime.now(timezone.utc).isoformat(), client_id))
+        con.execute("UPDATE clients SET book_link_v = coalesce(book_link_v, 0) + 1 WHERE id = ?", (client_id,))
+        r = con.execute("SELECT book_link_v FROM clients WHERE id = ?", (client_id,)).fetchone()
+    return int(r[0]) if r else 0

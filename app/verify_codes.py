@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .clients_db import get_by_email, get_by_phone
+from .clients_db import get_by_email, get_by_phone, list_by_email, list_by_phone
 from .patients import normalize_phone
 
 CODE_TTL_SECONDS = 10 * 60
@@ -188,6 +188,18 @@ def confirm_code(
         _write(channel, destination, stored)
         return {"ok": False, "reason": "invalid_code"}
     from .portal_sessions import mint as mint_portal_session
+    from .portal_sessions import mint_contact
+
+    accounts = contact_accounts(channel, destination)
+    if len(accounts) > 1:
+        # Verified the contact, not a row: they pick which account to open. No session yet.
+        _write(channel, destination, {**stored, "exp": 0, "attempts": MAX_ATTEMPTS})
+        return {
+            "ok": True,
+            "multi": True,
+            "contact_token": mint_contact(channel=channel, destination=destination),
+            "accounts": account_choices(accounts),
+        }
 
     # Code-confirmed logins get a revocable 90-day rolling portal session (name/DOB-only checks stay 30 min).
     token = mint_portal_session(
@@ -198,3 +210,56 @@ def confirm_code(
     )
     _write(channel, destination, {**stored, "exp": 0, "attempts": MAX_ATTEMPTS})
     return {"ok": True, "verify_token": token}
+
+
+def contact_accounts(channel: str, destination: str) -> list[dict[str, Any]]:
+    """Every active client on a verified email or phone, oldest first. Call only after a code matched."""
+    rows = list_by_email(destination) if channel == "email" else list_by_phone(destination)
+    return [r for r in rows if (r.get("status") or "active").lower() != "archived"]
+
+
+def account_label(row: dict[str, Any]) -> str:
+    """First name plus last initial, e.g. "Jim J."."""
+    full = str(row.get("display_name") or "").strip()
+    if "," in full:
+        last, _, first = full.partition(",")
+    else:
+        bits = full.split()
+        first, last = (" ".join(bits[:-1]), bits[-1]) if len(bits) > 1 else (full, "")
+    first = (str(row.get("preferred_name") or "").strip() or first.strip()).split(" ")[0]
+    last = last.strip()
+    return f"{first} {last[0].upper()}." if first and last else (first or "Account")
+
+
+def account_choices(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"ref": i + 1, "label": account_label(r)} for i, r in enumerate(rows)]
+
+
+def list_contact_accounts(contact_token: str) -> dict[str, Any]:
+    from .portal_sessions import check_contact
+
+    try:
+        channel, destination = check_contact(contact_token)
+    except ValueError:
+        return {"ok": False, "reason": "expired"}
+    return {"ok": True, "accounts": account_choices(contact_accounts(channel, destination))}
+
+
+def pick_account(contact_token: str, ref: int, old_token: str = "") -> dict[str, Any]:
+    """Session scoped to one client on the verified contact. Replaces (revokes) the browser's old session."""
+    from .portal_sessions import check_contact, is_session_token, mint, revoke
+
+    try:
+        channel, destination = check_contact(contact_token)
+    except ValueError:
+        return {"ok": False, "reason": "expired"}
+    rows = contact_accounts(channel, destination)
+    if not 1 <= int(ref or 0) <= len(rows):
+        return {"ok": False, "reason": "bad_choice", "accounts": account_choices(rows)}
+    row = rows[int(ref) - 1]
+    if is_session_token(old_token or ""):
+        revoke(old_token.strip())
+    name = str(row.get("preferred_name") or row.get("display_name") or "")[:80]
+    token = mint(client_id=str(row.get("id") or ""), email=str(row.get("email") or ""), name=name, matched=channel)
+    return {"ok": True, "verify_token": token, "name": name, "label": account_label(row),
+            "multi": len(rows) > 1}
