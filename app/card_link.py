@@ -46,8 +46,7 @@ def _claim(client_id: str, now: float) -> bool:
             seen = json.loads(p.read_text()) if p.is_file() else {}
         except (OSError, ValueError):
             seen = {}
-        last = float(seen.get(client_id) or 0)
-        if now - last < WINDOW_SECONDS:
+        if client_id in seen and now - float(seen[client_id]) < WINDOW_SECONDS:
             return False
         seen = {k: v for k, v in seen.items() if now - float(v) < WINDOW_SECONDS}
         seen[client_id] = now
@@ -56,6 +55,20 @@ def _claim(client_id: str, now: float) -> bool:
         tmp.write_text(json.dumps(seen))
         tmp.replace(p)
         return True
+
+
+def _release(client_id: str) -> None:
+    """A send that failed on every channel does not use up the 10-minute window."""
+    with _LOCK:
+        p = _state_path()
+        try:
+            seen = json.loads(p.read_text()) if p.is_file() else {}
+        except (OSError, ValueError):
+            return
+        if seen.pop(client_id, None) is not None:
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(seen))
+            tmp.replace(p)
 
 
 def send_card_link(
@@ -82,4 +95,6 @@ def send_card_link(
         ok = bool(send_email(email, SUBJECT, EMAIL_BODY.format(url=pay_url)).get("ok")) or ok
     if texting and send_sms:
         ok = bool(send_sms(phone, SMS_BODY.format(url=pay_url)).get("ok")) or ok
+    if not ok:
+        _release(cid)
     return {"status": "sent" if ok else "failed", "hint": hint if ok else ""}
