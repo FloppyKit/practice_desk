@@ -128,3 +128,57 @@ def test_endpoint_auth_and_token():
     finally:
         (notify.send_email, notify.send_sms, spruce_api.send_spruce_sms, spruce_api.spruce_api_enabled,
          main._verified_client, main.REMIND_SECRET) = saved
+
+
+def _real_row_endpoint(consent: int):
+    """Real _verified_client -> client_by_id -> _staff_view against a temp clients DB (synthetic client); only senders mocked."""
+    import importlib
+    import secrets
+    from pathlib import Path
+
+    from app import card_link, clients_db, main, notify, spruce_api, tokens
+
+    raw = tempfile.mkdtemp()
+    sec = Path(raw) / "cancel.secret"
+    sec.write_text(secrets.token_hex(16))
+    saved_env = {k: os.environ.get(k) for k in ("BOOKER_LOG_DIR", "CANCEL_SECRET_FILE")}
+    saved = (clients_db.DB_PATH, notify.send_email, notify.send_sms, spruce_api.send_spruce_sms,
+             spruce_api.spruce_api_enabled, main.REMIND_SECRET)
+    sent = []
+    try:
+        os.environ["BOOKER_LOG_DIR"] = raw
+        os.environ["CANCEL_SECRET_FILE"] = str(sec)
+        clients_db.DB_PATH = Path(raw) / "clients.sqlite"
+        importlib.reload(card_link)
+        c = clients_db.create(name="Demo Tester Test", email="psycharts@mail.grokbot.com", phone="+19133918760")
+        clients_db.set_sms_consent(c["id"], bool(consent), "test")
+        view = main._verified_client(tokens.mint_verify_token(client_id=c["id"]))
+        assert view.get("phone") == "+19133918760" and "phone_e164" not in view, view
+        notify.send_email = lambda to, s, b, **k: (sent.append(("email", to)), {"ok": True})[1]
+        notify.send_sms = lambda *a, **k: (_ for _ in ()).throw(AssertionError("send_sms must not be used"))
+        spruce_api.send_spruce_sms = lambda to, b, **k: (sent.append(("sms", to)), {"ok": True})[1]
+        spruce_api.spruce_api_enabled = lambda: True
+        main.REMIND_SECRET = "test-staff-secret"
+        tok = tokens.mint_verify_token(client_id=c["id"])
+        out = main.api_internal_card_link(main.CardLinkRequest(verify_token=tok), _req("test-staff-secret"))
+        return out, sent
+    finally:
+        (clients_db.DB_PATH, notify.send_email, notify.send_sms, spruce_api.send_spruce_sms,
+         spruce_api.spruce_api_enabled, main.REMIND_SECRET) = saved
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_real_staff_view_row_consented_gets_spruce_sms():
+    out, sent = _real_row_endpoint(1)
+    assert out == {"status": "sent", "hint": "p********@mail.grokbot.com and the mobile ending 8760"}, out
+    assert sent == [("email", "psycharts@mail.grokbot.com"), ("sms", "+19133918760")], sent
+
+
+def test_real_staff_view_row_no_consent_no_sms():
+    out, sent = _real_row_endpoint(0)
+    assert out == {"status": "sent", "hint": "p********@mail.grokbot.com"}, out
+    assert sent == [("email", "psycharts@mail.grokbot.com")], sent

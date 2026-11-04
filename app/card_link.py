@@ -82,7 +82,7 @@ def send_card_link(
     """row comes from the verified login token only. Returns {status, hint}; never the address or token."""
     cid = str(row.get("id") or "")
     email = str(row.get("email") or "").strip()
-    phone = str(row.get("phone_e164") or "").strip()
+    phone = str(row.get("phone") or row.get("phone_e164") or "").strip()  # _staff_view uses "phone"
     texting = bool(send_sms and phone and int(row.get("sms_consent") or 0) == 1)
     hints = [h for h in (mask_email(email), mask_phone(phone) if texting else "") if h]
     hint = " and ".join(hints)
