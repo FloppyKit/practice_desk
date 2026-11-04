@@ -1524,6 +1524,26 @@ async def api_public_portal_upload(
     }
 
 
+class CardLinkRequest(BaseModel):
+    verify_token: str = ""
+
+
+@app.post("/api/internal/card-link")
+def api_internal_card_link(req: CardLinkRequest, request: Request):
+    """Card change from the logged-in chat: email (and Spruce text, with consent) the /pay link to the
+    on-file contact. Staff secret + login token. Returns only {status, hint}."""
+    from .card_link import send_card_link
+    from .notify import send_email
+    from .spruce_api import send_spruce_sms, spruce_api_enabled
+
+    _require_staff("", request)
+    row = _verified_client(req.verify_token.strip())
+    # Spruce only; never send_sms(), which can fall back to Twilio.
+    sms = (lambda to, body: send_spruce_sms(to, body)) if spruce_api_enabled() else None
+    return send_card_link(row, pay_url=f"{SITE_PUBLIC}/pay",
+                          send_email=lambda to, subj, body: send_email(to, subj, body), send_sms=sms)
+
+
 @app.post("/api/public/upcoming")
 def api_public_upcoming(req: PublicTokenRequest):
     """Next visits for a verified current patient. No chart."""
